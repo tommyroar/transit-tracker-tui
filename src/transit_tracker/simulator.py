@@ -59,20 +59,22 @@ class LEDSimulator:
         if not self.force_live and "mock" in self.state:
             return
 
-        api_url = self.config.api_url
+        # Strip trailing slash from API URL if present
+        api_url = self.config.api_url.rstrip("/")
         while self.running:
             try:
                 async with websockets.connect(api_url) as ws:
                     # Subscribe to all configured stops
                     for sub in self.config.subscriptions:
-                        await ws.send(json.dumps({
+                        sub_payload = {
                             "type": "schedule:subscribe",
                             "payload": {
                                 "feedId": sub.feed,
                                 "routeId": sub.route,
                                 "stopId": sub.stop
                             }
-                        }))
+                        }
+                        await ws.send(json.dumps(sub_payload))
 
                     async for message in ws:
                         if not self.running:
@@ -148,6 +150,17 @@ class LEDSimulator:
                         pass
 
                 for trip in stop_data.get("trips", []):
+                    # Filter: Only show trips for the subscribed route at this stop
+                    # We match on routeId or routeShortName
+                    target_route_id = sub.route.split(":")[-1] if ":" in sub.route else sub.route
+                    target_short_name = sub.label.split("-")[0].strip().split()[0] if sub.label else ""
+                    
+                    trip_route_id = trip.get("routeId", "").split(":")[-1] if ":" in trip.get("routeId", "") else trip.get("routeId", "")
+                    trip_short_name = trip.get("routeShortName", "")
+                    
+                    if not (trip_route_id == target_route_id or trip_short_name == target_short_name):
+                        continue
+
                     trip_id = trip.get("tripId")
                     if not trip_id: continue
                     
@@ -155,16 +168,19 @@ class LEDSimulator:
                     if any(d.get("trip_id") == trip_id for d in all_departures):
                         continue
 
-                    # Arrival from ISO string
-                    arrival_str = trip.get("predictedArrivalTime") or trip.get("scheduledArrivalTime")
-                    if not arrival_str: continue
+                    # Arrival from ISO string or Milliseconds
+                    arr_val = trip.get("predictedArrivalTime") or trip.get("scheduledArrivalTime")
+                    if not arr_val: continue
                     
-                    try:
-                        # ISO 8601 to timestamp
-                        dt = datetime.fromisoformat(arrival_str.replace("Z", "+00:00"))
-                        arr_time_ms = int(dt.timestamp() * 1000)
-                    except ValueError:
-                        continue
+                    if isinstance(arr_val, str):
+                        try:
+                            # ISO 8601 to timestamp
+                            dt = datetime.fromisoformat(arr_val.replace("Z", "+00:00"))
+                            arr_time_ms = int(dt.timestamp() * 1000)
+                        except ValueError:
+                            continue
+                    else:
+                        arr_time_ms = arr_val
 
                     raw_diff_sec = (arr_time_ms - current_time_ms) / 1000.0
                     eff_diff_sec = raw_diff_sec + offset_sec
@@ -172,8 +188,8 @@ class LEDSimulator:
                     raw_mins = int(raw_diff_sec / 60)
                     eff_mins = int(eff_diff_sec / 60)
 
-                    # Filter: hardware typically hides buses that have passed the offset
-                    if eff_mins >= 0:
+                    # Filter: Use raw_mins to match hardware (which shows buses even if behind offset)
+                    if raw_mins >= -2:
                         route_name = trip.get("routeShortName", "")
                         if not route_name:
                             # Guess from subscription label or route ID

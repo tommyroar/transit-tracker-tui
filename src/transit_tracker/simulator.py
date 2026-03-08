@@ -60,12 +60,13 @@ class LEDSimulator:
                     if not self.running: break
                     await asyncio.sleep(1)
 
-    def _render_led_string(self, text: str, color: str = "yellow") -> Text:
+    def _render_led_string(self, text: str, color: str = "yellow", force_upper: bool = False) -> Text:
         """Renders text as a dot-matrix style LED string using the bitmap font."""
         if not self.font:
             return Text(text, style=color, no_wrap=True)
             
-        canvas = self.font.draw(text.upper(), mode=1)
+        render_text = text.upper() if force_upper else text
+        canvas = self.font.draw(render_text, mode=1)
         pixels = canvas.todata(2)
         
         rich_text = Text(no_wrap=True)
@@ -106,6 +107,7 @@ class LEDSimulator:
                     route_id = trip.get("routeId")
                     route_name = trip.get("routeShortName", sub.route.split("_")[-1] if "_" in sub.route else sub.route)
                     headsign = trip.get("tripHeadsign", sub.label.split("-")[-1].strip() if "-" in sub.label else sub.label)
+                    is_live = trip.get("predicted", False)
                     
                     # Determine Color
                     if 0 <= diff_mins <= self.config.arrival_threshold_minutes:
@@ -117,26 +119,33 @@ class LEDSimulator:
                         "diff": diff_mins, 
                         "route": route_name, 
                         "headsign": headsign,
-                        "color": color
+                        "color": color,
+                        "live": is_live
                     })
 
         all_departures.sort(key=lambda x: x["diff"])
         
         lines = []
         if not self.state:
-            lines.append(self._render_led_string("CONNECTING TO API...", color="cyan"))
+            lines.append(self._render_led_string("Connecting...", color="cyan"))
         elif not all_departures:
-            lines.append(self._render_led_string("NO UPCOMING BUSES", color="white"))
+            lines.append(self._render_led_string("No Upcoming Buses", color="white"))
         else:
-            max_headsign = 15 if self.config.num_panels == 1 else 30
+            # 64px display = 16 characters (4px wide each)
+            char_width = 16 * self.config.num_panels
+            
             for dep in all_departures[:4]: 
-                eta = "DUE" if dep["diff"] <= 0 else f"{dep['diff']} MIN"
+                # Icon: '*' if live (dot-matrix icon)
+                icon = "*" if dep["live"] else " "
+                eta = "Due" if dep["diff"] <= 0 else f"{dep['diff']}m"
                 
-                if self.config.num_panels == 1:
-                    line_str = f"{dep['route']:>3} {dep['headsign'][:15]:<15} {eta:>6}"
-                else:
-                    line_str = f"{dep['route']:>3} {dep['headsign'][:30]:<30} {eta:>6}"
+                # Math for padding:
+                # Route(3) + Space(1) + ETA(3) + Space(1) + Icon(1) = 9 chars fixed
+                # Space(1) between parts = 10 chars used.
+                max_h = char_width - 10 
+                h_text = dep['headsign'][:max_h]
                 
+                line_str = f"{dep['route']:>2} {h_text:<{max_h}} {eta:>3} {icon}"
                 lines.append(self._render_led_string(line_str, color=dep["color"]))
 
         panel_title = f"[bold red]HUB75 {64 * self.config.num_panels}x32 LED SIMULATOR[/bold red]"

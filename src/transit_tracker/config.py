@@ -1,7 +1,7 @@
 import yaml
 import os
-from typing import List, Optional
-from pydantic import BaseModel, Field
+from typing import List, Optional, Union
+from pydantic import BaseModel, Field, model_validator
 
 GLOBAL_SETTINGS_DIR = os.path.expanduser("~/.config/transit-tracker")
 GLOBAL_SETTINGS_FILE = os.path.join(GLOBAL_SETTINGS_DIR, "settings.yaml")
@@ -35,15 +35,49 @@ class TransitSubscription(BaseModel):
     stop: str
     label: str
     direction: Optional[int] = None
-    time_offset: Optional[str] = None  # e.g., "-7min" or seconds
+    time_offset: Optional[str] = None
+
+class TransitStop(BaseModel):
+    stop_id: str
+    time_offset: str = "0min"
+    routes: List[str] = Field(default_factory=list)
+
+class TransitTrackerSettings(BaseModel):
+    base_url: str = "wss://tt.horner.tj/"
+    stops: List[TransitStop] = Field(default_factory=list)
 
 class TransitConfig(BaseModel):
+    # Compatibility with flat format
     api_url: str = Field(default="wss://tt.horner.tj")
     ntfy_topic: str = Field(default="transit-alerts")
     arrival_threshold_minutes: int = Field(default=5, ge=1)
     check_interval_seconds: int = Field(default=30, ge=10)
     num_panels: int = Field(default=1, ge=1, le=4)
     subscriptions: List[TransitSubscription] = Field(default_factory=list)
+    
+    # Compatibility with nested format
+    transit_tracker: Optional[TransitTrackerSettings] = None
+
+    @model_validator(mode="after")
+    def migrate_nested_config(self) -> "TransitConfig":
+        if self.transit_tracker and self.transit_tracker.stops:
+            # If nested stops exist, migrate them to subscriptions for the code
+            self.api_url = self.transit_tracker.base_url
+            for stop in self.transit_tracker.stops:
+                for route in stop.routes:
+                    # Avoid duplicates
+                    exists = any(s.stop == stop.stop_id and s.route == route for s in self.subscriptions)
+                    if not exists:
+                        agency_id = route.split("_")[0] if "_" in route else ""
+                        feed = "st" if agency_id == "40" else "kcm" if agency_id == "1" else "st"
+                        self.subscriptions.append(TransitSubscription(
+                            feed=feed,
+                            route=route,
+                            stop=stop.stop_id,
+                            label=f"Route {route}",
+                            time_offset=stop.time_offset
+                        ))
+        return self
 
     @classmethod
     def load(cls, path: str = "config.yaml") -> "TransitConfig":
@@ -54,7 +88,6 @@ class TransitConfig(BaseModel):
         return cls(**data)
 
     def save(self, path: str = "config.yaml") -> None:
-        # Convert to dict, exclude unset optional values
         data = self.model_dump(exclude_unset=True)
         with open(path, "w") as f:
             yaml.safe_dump(data, f, sort_keys=False)

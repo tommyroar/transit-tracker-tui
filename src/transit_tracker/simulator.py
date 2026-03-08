@@ -15,7 +15,7 @@ from .config import TransitConfig
 
 class LEDSimulator:
     def __init__(self, config: TransitConfig, force_live: bool = True):
-        # VERSION: 2026-03-08-WEBSOCKET
+        # VERSION: 2026-03-08-WEBSOCKET-FIXED
         self.config = config
         self.force_live = force_live
         self.state = {} # stopId -> { 'trips': [], 'timestamp': float }
@@ -64,30 +64,35 @@ class LEDSimulator:
         while self.running:
             try:
                 async with websockets.connect(api_url) as ws:
-                    # Subscribe to all configured stops
+                    # Construct routeStopPairs string: feed:route,feed:stop;...
+                    pairs = []
                     for sub in self.config.subscriptions:
-                        sub_payload = {
-                            "type": "schedule:subscribe",
-                            "payload": {
-                                "feedId": sub.feed,
-                                "routeId": sub.route,
-                                "stopId": sub.stop
-                            }
+                        # The API expects feedId:routeId,feedId:stopId
+                        r_id = sub.route if ":" in sub.route else f"{sub.feed}:{sub.route}"
+                        s_id = sub.stop if ":" in sub.stop else f"{sub.feed}:{sub.stop}"
+                        pairs.append(f"{r_id},{s_id}")
+                    
+                    pairs_str = ";".join(pairs)
+                    
+                    sub_payload = {
+                        "event": "schedule:subscribe",
+                        "data": {
+                            "routeStopPairs": pairs_str,
+                            "limit": 5
                         }
-                        await ws.send(json.dumps(sub_payload))
+                    }
+                    await ws.send(json.dumps(sub_payload))
 
                     async for message in ws:
                         if not self.running:
                             break
                         data = json.loads(message)
-                        if data.get("type") == "schedule":
-                            payload = data.get("payload", {})
-                            stop_id = payload.get("stopId")
-                            if stop_id:
-                                self.state[stop_id] = {
-                                    "trips": payload.get("trips", []),
-                                    "timestamp": time.time()
-                                }
+                        if data.get("event") == "schedule":
+                            d = data.get("data", {})
+                            self.state["live"] = {
+                                "trips": d.get("trips", []),
+                                "timestamp": time.time()
+                            }
             except Exception:
                 if self.running:
                     await asyncio.sleep(5) # Retry on connection loss
@@ -132,35 +137,9 @@ class LEDSimulator:
                     "live": mock_bus.get("live", False)
                 })
         else:
-            for stop_id, stop_data in self.state.items():
-                # Stale data check: ignore data older than 5 minutes
-                if now_ts - stop_data.get("timestamp", 0) > 300:
-                    continue
-
-                # Find subscription for this stop
-                sub = next((s for s in self.config.subscriptions if s.stop == stop_id), None)
-                if not sub: continue
-
-                offset_sec = 0
-                if sub.time_offset:
-                    try:
-                        clean_offset = sub.time_offset.lower().replace("min", "").strip()
-                        offset_sec = int(clean_offset) * 60 if "min" in sub.time_offset.lower() else int(clean_offset)
-                    except ValueError:
-                        pass
-
-                for trip in stop_data.get("trips", []):
-                    # Filter: Only show trips for the subscribed route at this stop
-                    # We match on routeId or routeShortName
-                    target_route_id = sub.route.split(":")[-1] if ":" in sub.route else sub.route
-                    target_short_name = sub.label.split("-")[0].strip().split()[0] if sub.label else ""
-                    
-                    trip_route_id = trip.get("routeId", "").split(":")[-1] if ":" in trip.get("routeId", "") else trip.get("routeId", "")
-                    trip_short_name = trip.get("routeShortName", "")
-                    
-                    if not (trip_route_id == target_route_id or trip_short_name == target_short_name):
-                        continue
-
+            live_data = self.state.get("live")
+            if live_data and (now_ts - live_data.get("timestamp", 0) <= 300):
+                for trip in live_data.get("trips", []):
                     trip_id = trip.get("tripId")
                     if not trip_id: continue
                     
@@ -168,19 +147,31 @@ class LEDSimulator:
                     if any(d.get("trip_id") == trip_id for d in all_departures):
                         continue
 
-                    # Arrival from ISO string or Milliseconds
-                    arr_val = trip.get("predictedArrivalTime") or trip.get("scheduledArrivalTime")
+                    # Arrival from confirmation: 'arrivalTime' is unix seconds
+                    arr_val = trip.get("arrivalTime") or trip.get("predictedArrivalTime") or trip.get("scheduledArrivalTime")
                     if not arr_val: continue
                     
                     if isinstance(arr_val, str):
                         try:
-                            # ISO 8601 to timestamp
                             dt = datetime.fromisoformat(arr_val.replace("Z", "+00:00"))
                             arr_time_ms = int(dt.timestamp() * 1000)
-                        except ValueError:
-                            continue
-                    else:
+                        except ValueError: continue
+                    elif arr_val < 10**11: # Likely seconds
+                        arr_time_ms = arr_val * 1000
+                    else: # Likely milliseconds
                         arr_time_ms = arr_val
+
+                    # Get subscription for this stop/route to get offset
+                    route_id = trip.get("routeId")
+                    stop_id = trip.get("stopId")
+                    sub = next((s for s in self.config.subscriptions if s.stop == stop_id and s.route == route_id), None)
+                    
+                    offset_sec = 0
+                    if sub and sub.time_offset:
+                        try:
+                            clean_offset = sub.time_offset.lower().replace("min", "").strip()
+                            offset_sec = int(clean_offset) * 60 if "min" in sub.time_offset.lower() else int(clean_offset)
+                        except ValueError: pass
 
                     raw_diff_sec = (arr_time_ms - current_time_ms) / 1000.0
                     eff_diff_sec = raw_diff_sec + offset_sec
@@ -188,18 +179,20 @@ class LEDSimulator:
                     raw_mins = int(raw_diff_sec / 60)
                     eff_mins = int(eff_diff_sec / 60)
 
-                    # Filter: Use raw_mins to match hardware (which shows buses even if behind offset)
+                    # Filter: Use raw_mins to match hardware behavior
                     if raw_mins >= -2:
-                        route_name = trip.get("routeShortName", "")
+                        route_name = trip.get("routeName") or trip.get("routeShortName")
                         if not route_name:
-                            # Guess from subscription label or route ID
-                            route_name = sub.label.split("-")[0].strip().split()[0] if sub.label else sub.route.split("_")[-1]
+                            route_name = sub.label.split("-")[0].strip().split()[0] if sub and sub.label else route_id.split("_")[-1]
                             
-                        headsign = trip.get("tripHeadsign", sub.label.split("-")[-1].strip() if "-" in sub.label else sub.label)
-                        is_live = "predictedArrivalTime" in trip
+                        headsign = trip.get("headsign") or trip.get("tripHeadsign")
+                        if not headsign and sub:
+                            headsign = sub.label.split("-")[-1].strip() if "-" in sub.label else sub.label
+                            
+                        is_live = trip.get("isRealtime", "predictedArrivalTime" in trip)
                         
-                        # Fix colors to match route names
-                        color = "cyan" if route_name == "14" else "yellow"
+                        color_hex = trip.get("routeColor")
+                        color = f"#{color_hex}" if color_hex else ("cyan" if route_name == "14" else "yellow")
 
                         if self.config.display_offset:
                             display_mins = eff_mins
@@ -213,7 +206,7 @@ class LEDSimulator:
                             "trip_id": trip_id,
                             "diff": display_mins, 
                             "route": route_name, 
-                            "headsign": headsign,
+                            "headsign": headsign or "Transit",
                             "color": color,
                             "live": is_live
                         })

@@ -29,9 +29,32 @@ class LEDSimulator:
             self.font = Font(font_path)
 
     async def _poll_oba(self):
-        # MOCK MODE: Bypass OBA poll if mock_state exists in config
-        if self.config.mock_state:
-            self.state = {"mock": {"all": self.config.mock_state, "timestamp": time.time()}}
+        # MOCK MODE: Priority 1: Explicit mock_state, Priority 2: Latest Capture
+        mock_data = self.config.mock_state
+        if not mock_data and self.config.captures:
+            # Parse the latest capture on the fly
+            latest = self.config.captures[-1]
+            display_text = latest.get("display", "").strip()
+            mock_data = []
+            for line in display_text.split('\n'):
+                # Simple parser for capture lines
+                parts = line.split()
+                if not parts: continue
+                route = parts[0]
+                live = "{LIVE}" in line
+                time_str = parts[-1].replace("{LIVE}", "").replace("m", "")
+                try:
+                    diff = int(time_str)
+                except ValueError:
+                    diff = 0
+                headsign = " ".join(line.replace("{LIVE}", " ").split()[1:-1])
+                mock_data.append({
+                    "route": route, "headsign": headsign, "diff": diff, 
+                    "live": live, "color": "cyan" if route == "14" else "yellow"
+                })
+
+        if mock_data:
+            self.state = {"mock": {"all": mock_data, "timestamp": time.time()}}
             return
 
         base_url = "https://api.pugetsound.onebusaway.org/api/where"

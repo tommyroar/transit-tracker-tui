@@ -60,8 +60,9 @@ class TransitConfig(BaseModel):
     scroll_headsigns: bool = Field(default=True)
     subscriptions: List[TransitSubscription] = Field(default_factory=list)
     
-    # Mocking for Testing
+    # Mocking and Testing
     mock_state: Optional[List[Dict[str, Any]]] = None
+    captures: List[Dict[str, Any]] = Field(default_factory=list)
     
     # Compatibility with nested format
     transit_tracker: Optional[TransitTrackerSettings] = None

@@ -292,16 +292,26 @@ def main_menu():
                         "Config Files",
                         "Device Config",
                         "Notifications",
-                        "Manage Stops",
-                        "Change Number of Panels",
+                        "4. Manage Stops",
+                        "5. Change Number of Panels",
+                        "6. Debug",
                         "Back"
-                    ]
-                ).ask()
-                
-                if not c_action or c_action == "Back":
-                    break
-                    
-                if c_action == "Config Files":
+                        ]
+                        ).ask()
+
+                        if not c_action or c_action == "Back":
+                        break
+
+                        if c_action == "6. Debug":
+                        d_action = questionary.rawselect(
+                        "Debug Menu",
+                        choices=["Run Mock Simulator", "Back"]
+                        ).ask()
+                        if d_action == "Run Mock Simulator":
+                        run_simulator(config, force_live=False)
+
+                        elif c_action == "1. Config Files":
+
                     f_action = questionary.rawselect(
                         "Config Files",
                         choices=["Load Config File", "Save Config File As...", "Back"]
@@ -400,21 +410,11 @@ def main_menu():
                     change_panels_wizard(config, config_path)
 
         elif action == "Simulator":
-            force_live = False
-            if config.mock_state or config.captures:
-                sim_mode = questionary.rawselect(
-                    "Select Simulator Mode:",
-                    choices=["Live Data", "Mock/Capture Data", "Back"]
-                ).ask()
-                
-                if not sim_mode or sim_mode == "Back":
-                    continue
-                force_live = (sim_mode == "Live Data")
-
             rprint(f"[dim]Using config: {config_path}[/dim]")
-            run_simulator(config, force_live=force_live)
-            
-        elif action == "Service Manager":
+            run_simulator(config, force_live=True)
+
+        elif action == "3. Service Manager":
+
             if status == "UNSUPPORTED":
                 print("Background service management is only supported on macOS.")
             else:

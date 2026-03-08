@@ -13,7 +13,7 @@ from rich.console import Console, Group
 from .config import TransitConfig
 
 class LEDSimulator:
-    def __init__(self, config: TransitConfig, force_live: bool = False):
+    def __init__(self, config: TransitConfig, force_live: bool = True):
         # VERSION: 2026-03-08-UNIFIED-POLL
         self.config = config
         self.force_live = force_live

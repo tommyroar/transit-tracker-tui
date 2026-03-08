@@ -115,11 +115,8 @@ class LEDSimulator:
                     headsign = trip.get("tripHeadsign", sub.label.split("-")[-1].strip() if "-" in sub.label else sub.label)
                     is_live = trip.get("predicted", False)
                     
-                    # Determine Color
-                    if 0 <= eff_mins <= self.config.arrival_threshold_minutes:
-                        color = "red"
-                    else:
-                        color = self.route_colors.get(route_id, "yellow")
+                    # Use route color from API or default to yellow
+                    color = self.route_colors.get(route_id, "yellow")
                     
                     # Respect time_display setting: "arrival" vs "departure"
                     display_mins = raw_mins if self.config.time_display == "arrival" else eff_mins
@@ -160,7 +157,7 @@ class LEDSimulator:
         return Panel(
             Group(*lines),
             title=panel_title,
-            subtitle=f"[dim]Mode: {self.config.time_display} | Threshold: {self.config.arrival_threshold_minutes}m | Ctrl+C to Exit[/dim]",
+            subtitle=f"[dim]Mode: {self.config.time_display} | Ctrl+C to Exit[/dim]",
             border_style="red",
             style="on black",
             padding=(0, 1),

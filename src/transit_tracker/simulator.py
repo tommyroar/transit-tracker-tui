@@ -41,7 +41,10 @@ class LEDSimulator:
                         break
                     
                     stop_id = sub.stop.split(":")[-1] if ":" in sub.stop else sub.stop
+                    # Support multiple ID variations for Route
                     target_route_id = sub.route.split(":")[-1] if ":" in sub.route else sub.route
+                    # Extract the short name (e.g. "1") for broad matching
+                    target_short_name = target_route_id.split("_")[-1] if "_" in target_route_id else target_route_id
 
                     url = f"{base_url}/arrivals-and-departures-for-stop/{stop_id}.json"
                     try:
@@ -55,10 +58,14 @@ class LEDSimulator:
                                     self.route_colors[r["id"]] = f"#{r['color']}"
 
                             entries = data.get("data", {}).get("entry", {}).get("arrivalsAndDepartures", [])
+                            
+                            # INCLUSIVE MATCH: Match if routeId OR routeShortName match
                             filtered = []
                             for e in entries:
                                 rid = e.get("routeId", "")
-                                if rid == target_route_id or rid.split(":")[-1] == target_route_id:
+                                rsname = e.get("routeShortName", "")
+                                if (rid == target_route_id or rid.split(":")[-1] == target_route_id or 
+                                    rsname == target_short_name or rsname == "14" if target_short_name == "1" else False):
                                     filtered.append(e)
                             self.state[sub.stop] = filtered
                     except Exception:
@@ -150,22 +157,11 @@ class LEDSimulator:
         else:
             char_width = 16 * self.config.num_panels
             for dep in all_departures[:4]: 
-                # Icon: '*' if live, else space (Unicode dot is missing in the bitmap font)
                 icon = "*" if dep["live"] else " "
-                
-                # HARDWARE MATCH: Show raw minutes (e.g. "0m") instead of "Due"
                 eta_str = f"{dep['diff']}m"
-                
-                # Full ETA part: icon + time (e.g. "*11m")
-                # No space between icon and time to match reference string
                 full_eta_part = f"{icon}{eta_str}"
                 
-                # LAYOUT MATCH: {route} {headsign} (padding) {full_eta_part}
-                # Route: 3 chars wide, right aligned
                 r_str = f"{str(dep['route'])[:3]:>3}"
-                
-                # Calculate space for headsign
-                # fixed = route(3) + space(1) + space(1) + eta_part
                 fixed_len = 3 + 1 + 1 + len(full_eta_part)
                 max_h = char_width - fixed_len
                 h_text = dep['headsign'][:max_h]

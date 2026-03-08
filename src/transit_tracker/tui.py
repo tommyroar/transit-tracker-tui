@@ -296,22 +296,21 @@ def main_menu():
                         "5. Change Number of Panels",
                         "6. Debug",
                         "Back"
-                        ]
-                        ).ask()
-
-                        if not c_action or c_action == "Back":
-                        break
-
-                        if c_action == "6. Debug":
-                        d_action = questionary.rawselect(
+                    ]
+                ).ask()
+                
+                if not c_action or c_action == "Back":
+                    break
+                    
+                if c_action == "6. Debug":
+                    d_action = questionary.rawselect(
                         "Debug Menu",
                         choices=["Run Mock Simulator", "Back"]
-                        ).ask()
-                        if d_action == "Run Mock Simulator":
+                    ).ask()
+                    if d_action == "Run Mock Simulator":
                         run_simulator(config, force_live=False)
 
-                        elif c_action == "1. Config Files":
-
+                elif c_action == "1. Config Files":
                     f_action = questionary.rawselect(
                         "Config Files",
                         choices=["Load Config File", "Save Config File As...", "Back"]

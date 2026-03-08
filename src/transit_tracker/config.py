@@ -46,6 +46,7 @@ class TransitTrackerSettings(BaseModel):
     base_url: str = "wss://tt.horner.tj/"
     time_display: str = "arrival"
     num_panels: int = 1
+    scroll_headsigns: bool = True
     stops: List[TransitStop] = Field(default_factory=list)
 
 class TransitConfig(BaseModel):
@@ -56,6 +57,7 @@ class TransitConfig(BaseModel):
     check_interval_seconds: int = Field(default=30, ge=10)
     num_panels: int = Field(default=1, ge=1, le=4)
     time_display: str = Field(default="arrival")
+    scroll_headsigns: bool = Field(default=True)
     subscriptions: List[TransitSubscription] = Field(default_factory=list)
     
     # Mocking for Testing
@@ -73,6 +75,8 @@ class TransitConfig(BaseModel):
                 self.time_display = self.transit_tracker.time_display
             if hasattr(self.transit_tracker, 'num_panels'):
                 self.num_panels = self.transit_tracker.num_panels
+            if hasattr(self.transit_tracker, 'scroll_headsigns'):
+                self.scroll_headsigns = self.transit_tracker.scroll_headsigns
             
             if self.transit_tracker.stops:
                 for stop in self.transit_tracker.stops:

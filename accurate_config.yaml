@@ -29,21 +29,26 @@ captures:
       14 Downtown Seattle {LIVE}0m
       554 Downtown Seattle {LIVE}4m
       14 Downtown Seattle {LIVE}30m
+  - time: "Sun Mar  8 15:03:41 PDT 2026"
+    display: |
+      14 Downtown Seattle {LIVE}12m
+      554 Downtown Seattle {LIVE}24m
+      14 Downtown Seattle {LIVE}42m
 
 # Current target for simulator matching
 mock_state:
   - route: "14"
     headsign: "Downtown Seattle"
-    diff: 0
+    diff: 12
     live: true
     color: "cyan"
   - route: "554"
     headsign: "Downtown Seattle"
-    diff: 4
+    diff: 24
     live: true
     color: "yellow"
   - route: "14"
     headsign: "Downtown Seattle"
-    diff: 30
+    diff: 42
     live: true
     color: "cyan"

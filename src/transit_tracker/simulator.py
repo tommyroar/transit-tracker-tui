@@ -2,6 +2,7 @@ import asyncio
 import httpx
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from bdfparser import Font
 from rich.live import Live
@@ -17,6 +18,7 @@ class LEDSimulator:
         self.state = {} # stopId -> list of departures
         self.route_colors = {} # routeId -> hex color
         self.running = True
+        self.start_time = time.time()
         
         # Load a tiny bitmap font that mimics LED displays
         font_path = os.path.join(os.path.dirname(__file__), "fonts", "tom-thumb.bdf")
@@ -43,9 +45,7 @@ class LEDSimulator:
                         break
                     
                     stop_id = sub.stop.split(":")[-1] if ":" in sub.stop else sub.stop
-                    # Support multiple ID variations for Route
                     target_route_id = sub.route.split(":")[-1] if ":" in sub.route else sub.route
-                    # Extract the short name (e.g. "1") for broad matching
                     target_short_name = target_route_id.split("_")[-1] if "_" in target_route_id else target_route_id
 
                     url = f"{base_url}/arrivals-and-departures-for-stop/{stop_id}.json"
@@ -61,7 +61,6 @@ class LEDSimulator:
 
                             entries = data.get("data", {}).get("entry", {}).get("arrivalsAndDepartures", [])
                             
-                            # INCLUSIVE MATCH: Match if routeId OR routeShortName match
                             filtered = []
                             for e in entries:
                                 rid = e.get("routeId", "")
@@ -100,6 +99,7 @@ class LEDSimulator:
         all_departures = []
         now = datetime.now(timezone.utc)
         current_time_ms = int(now.timestamp() * 1000)
+        elapsed = time.time() - self.start_time
 
         # MOCK STATE HANDLING
         if self.config.mock_state:
@@ -163,14 +163,34 @@ class LEDSimulator:
         else:
             char_width = 16 * self.config.num_panels
             for dep in all_departures[:4]: 
+                # Icon: '*' if live, else space (Unicode dot is missing in the bitmap font)
                 icon = "*" if dep["live"] else " "
+                
+                # HARDWARE MATCH: Show raw minutes (e.g. "0m") instead of "Due"
                 eta_str = f"{dep['diff']}m"
+                
+                # Full ETA part: icon + time (e.g. "*11m")
+                # No space between icon and time to match reference string
                 full_eta_part = f"{icon}{eta_str}"
                 
+                # LAYOUT MATCH: {route} {headsign} (padding) {full_eta_part}
+                # Route: 3 chars wide, right aligned
                 r_str = f"{str(dep['route'])[:3]:>3}"
+                
+                # Calculate space for headsign
+                # fixed = route(3) + space(1) + space(1) + eta_part
                 fixed_len = 3 + 1 + 1 + len(full_eta_part)
                 max_h = char_width - fixed_len
-                h_text = dep['headsign'][:max_h]
+                
+                headsign = dep['headsign']
+                if self.config.scroll_headsigns and len(headsign) > max_h:
+                    # Simple scrolling: shift by (elapsed * speed) mod (len + gap)
+                    # Use a gap of 4 spaces
+                    display_text = headsign + "    "
+                    shift = int(elapsed * 2) % len(display_text)
+                    h_text = (display_text[shift:] + display_text[:shift])[:max_h]
+                else:
+                    h_text = headsign[:max_h]
                 
                 line_str = f"{r_str} {h_text:<{max_h}} {full_eta_part}"
                 lines.append(self._render_led_string(line_str, color=dep["color"]))
@@ -192,9 +212,9 @@ class LEDSimulator:
     async def run(self):
         poll_task = asyncio.create_task(self._poll_oba())
         try:
-            with Live(self._generate_frame(), refresh_per_second=1, screen=True) as live:
+            with Live(self._generate_frame(), refresh_per_second=2, screen=True) as live:
                 while True:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(0.5)
                     live.update(self._generate_frame())
         except KeyboardInterrupt:
             pass

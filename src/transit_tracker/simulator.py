@@ -136,8 +136,12 @@ class LEDSimulator:
                         headsign = trip.get("tripHeadsign", sub.label.split("-")[-1].strip() if "-" in sub.label else sub.label)
                         is_live = trip.get("predicted", False)
                         
+                        # Determine Color: Use route color from API or default to yellow
                         color = self.route_colors.get(route_id, "yellow")
-                        display_mins = raw_mins if self.config.time_display == "arrival" else eff_mins
+                        
+                        # HARDWARE MATCH: The panel shows the time relative to the offset (Departure Time)
+                        # even when 'arrival' is configured.
+                        display_mins = eff_mins
 
                         all_departures.append({
                             "diff": display_mins, 

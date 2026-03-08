@@ -1,0 +1,18 @@
+transit_tracker:
+  base_url: "wss://tt.horner.tj/"
+  time_display: "arrival"
+  show_units: "short"
+  list_mode: "sequential"
+  scroll_headsigns: true
+  stops:
+    - stop_id: "st:1_8494"
+      time_offset: "-7min"
+      routes:
+        - "st:40_100240"
+    - stop_id: "st:1_11920"
+      time_offset: "-9min"
+      routes:
+        - "st:1_100039"
+  styles: []
+  abbreviations: []
+

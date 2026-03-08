@@ -271,29 +271,29 @@ def main_menu():
         has_ports = len(ports) > 0
         has_config = config_path is not None
 
-        action = questionary.select(
+        action = questionary.rawselect(
             "What would you like to do?",
             choices=[
-                "1. Configurator",
-                questionary.Choice("2. Simulator", disabled="Please load or save a config file first" if not has_config else None),
-                "3. Service Manager",
-                "4. Exit"
+                "Configurator",
+                questionary.Choice("Simulator", disabled="Please load or save a config file first" if not has_config else None),
+                "Service Manager",
+                "Exit"
             ]
         ).ask()
 
-        if not action or action == "4. Exit":
+        if not action or action == "Exit":
             break
             
-        elif action == "1. Configurator":
+        elif action == "Configurator":
             while True:
-                c_action = questionary.select(
+                c_action = questionary.rawselect(
                     "Configurator",
                     choices=[
-                        "1. Config Files",
-                        "2. Device Config",
-                        "3. Notifications",
-                        "4. Manage Stops",
-                        "5. Change Number of Panels",
+                        "Config Files",
+                        "Device Config",
+                        "Notifications",
+                        "Manage Stops",
+                        "Change Number of Panels",
                         "Back"
                     ]
                 ).ask()
@@ -301,13 +301,13 @@ def main_menu():
                 if not c_action or c_action == "Back":
                     break
                     
-                if c_action == "1. Config Files":
-                    f_action = questionary.select(
+                if c_action == "Config Files":
+                    f_action = questionary.rawselect(
                         "Config Files",
-                        choices=["1. Load Config File", "2. Save Config File As...", "Back"]
+                        choices=["Load Config File", "Save Config File As...", "Back"]
                     ).ask()
                     
-                    if f_action == "1. Load Config File":
+                    if f_action == "Load Config File":
                         new_path = questionary.path(
                             "Enter path to load config from:",
                             default=config_path or "config.yaml"
@@ -321,7 +321,7 @@ def main_menu():
                                 has_config = True
                             except Exception as e:
                                 print(f"Error loading config: {e}")
-                    elif f_action == "2. Save Config File As...":
+                    elif f_action == "Save Config File As...":
                         new_path = questionary.path(
                             "Enter path to save config to:",
                             default=config_path or "config.yaml"
@@ -336,25 +336,25 @@ def main_menu():
                             except Exception as e:
                                 print(f"Error saving config: {e}")
                                 
-                elif c_action == "2. Device Config":
-                    d_action = questionary.select(
+                elif c_action == "Device Config":
+                    d_action = questionary.rawselect(
                         "Device Config",
                         choices=[
-                            questionary.Choice("1. Flash Device", disabled="No device connected" if not has_ports else None),
-                            questionary.Choice("2. Download from Device", disabled="No device connected" if not has_ports else None),
+                            questionary.Choice("Flash Device", disabled="No device connected" if not has_ports else None),
+                            questionary.Choice("Download from Device", disabled="No device connected" if not has_ports else None),
                             "Back"
                         ]
                     ).ask()
                     
-                    if d_action == "1. Flash Device":
-                        selected_port = questionary.select(
+                    if d_action == "Flash Device":
+                        selected_port = questionary.rawselect(
                             "Select your Transit Tracker device:",
                             choices=ports
                         ).ask()
                         if selected_port:
                             flash_hardware(selected_port, config)
-                    elif d_action == "2. Download from Device":
-                        selected_port = questionary.select(
+                    elif d_action == "Download from Device":
+                        selected_port = questionary.rawselect(
                             "Select your Transit Tracker device:",
                             choices=ports
                         ).ask()
@@ -366,44 +366,44 @@ def main_menu():
                                 else:
                                     print("Configuration read into memory. Please save it to a file.")
 
-                elif c_action == "3. Notifications":
-                    n_action = questionary.select(
+                elif c_action == "Notifications":
+                    n_action = questionary.rawselect(
                         "Notifications",
                         choices=[
-                            questionary.Choice("1. Change Alert Threshold", disabled="Please load or save a config file first" if not has_config else None),
-                            "2. Add/Change ntfy.sh Endpoint",
+                            questionary.Choice("Change Alert Threshold", disabled="Please load or save a config file first" if not has_config else None),
+                            "Add/Change ntfy.sh Endpoint",
                             "Back"
                         ]
                     ).ask()
                     
-                    if n_action == "1. Change Alert Threshold":
+                    if n_action == "Change Alert Threshold":
                         change_threshold_wizard(config, config_path)
-                    elif n_action == "2. Add/Change ntfy.sh Endpoint":
+                    elif n_action == "Add/Change ntfy.sh Endpoint":
                         change_ntfy_wizard(config, config_path)
                         
-                elif c_action == "4. Manage Stops":
-                    s_action = questionary.select(
+                elif c_action == "Manage Stops":
+                    s_action = questionary.rawselect(
                         "Manage Stops",
                         choices=[
-                            questionary.Choice("1. Add a Stop", disabled="Please load or save a config file first" if not has_config else None),
-                            questionary.Choice("2. Remove a Stop", disabled="Please load or save a config file first" if not has_config else None),
+                            questionary.Choice("Add a Stop", disabled="Please load or save a config file first" if not has_config else None),
+                            questionary.Choice("Remove a Stop", disabled="Please load or save a config file first" if not has_config else None),
                             "Back"
                         ]
                     ).ask()
                     
-                    if s_action == "1. Add a Stop":
+                    if s_action == "Add a Stop":
                         asyncio.run(add_stop_wizard(config, config_path))
-                    elif s_action == "2. Remove a Stop":
+                    elif s_action == "Remove a Stop":
                         remove_stop_wizard(config, config_path)
                         
-                elif c_action == "5. Change Number of Panels":
+                elif c_action == "Change Number of Panels":
                     change_panels_wizard(config, config_path)
 
-        elif action == "2. Simulator":
+        elif action == "Simulator":
             rprint(f"[dim]Using config: {config_path}[/dim]")
             run_simulator(config)
             
-        elif action == "3. Service Manager":
+        elif action == "Service Manager":
             if status == "UNSUPPORTED":
                 print("Background service management is only supported on macOS.")
             else:

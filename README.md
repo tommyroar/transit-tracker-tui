@@ -70,8 +70,8 @@ subscriptions:
 
 This project is designed to run on specific LED matrix hardware. Below are the components used in this build:
 
-- **Waveshare RGB Full-Color LED Matrix Panel (64×32 Pixels):** 2.5mm pitch. Ordered on March 2, 2026 (Order # 113-9435943-2623440), and delivered on March 2, 2026.
-- **Adafruit ESP32-S3 LED Matrix Portal:** A specialized driver board for HUB75 panels. (Adafruit Order #3641312, shipped March 3, 2026). [Track Delivery](https://tools.usps.com/go/TrackConfirmAction?qtc_tLabels1=9405540106246002702780).
+- **Waveshare RGB Full-Color LED Matrix Panel (64×32 Pixels):** 2.5mm pitch.
+- **Adafruit ESP32-S3 LED Matrix Portal:** A specialized driver board for HUB75 panels.
 - **Related Hardware:** The system is built around the ESP32-S3 architecture and standard HUB75 64x32 RGB panels.
 
 ## 🛠️ Development

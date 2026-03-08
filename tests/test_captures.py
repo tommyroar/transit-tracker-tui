@@ -2,7 +2,6 @@ import os
 import sys
 import yaml
 import pytest
-from datetime import datetime, timezone
 from typing import List, Dict, Any
 
 # Add src to path
@@ -38,9 +37,22 @@ def parse_capture_line(line: str) -> Dict[str, Any]:
     }
 
 def get_captures():
-    config_path = os.path.join(os.path.dirname(__file__), "..", "accurate_config.yaml")
-    if not os.path.exists(config_path):
+    # Try multiple locations for the config file to support both local dev and build environments
+    possible_paths = [
+        "accurate_config.yaml",
+        "../accurate_config.yaml",
+        os.path.join(os.path.dirname(__file__), "..", "accurate_config.yaml")
+    ]
+    
+    config_path = None
+    for p in possible_paths:
+        if os.path.exists(p):
+            config_path = p
+            break
+            
+    if not config_path:
         return []
+        
     with open(config_path, "r") as f:
         data = yaml.safe_load(f)
     return data.get("captures", [])
@@ -85,29 +97,35 @@ def test_capture_match(capture):
         eta_part = f"{icon}{bus['diff']}m"
         r_str = f"{str(bus['route'])[:3]:>3}"
         
-        # Calculate padding for 32 chars
+        # char_width for 2 panels is 32
+        char_width = 32
         fixed_len = 3 + 1 + 1 + len(eta_part)
-        max_h = 32 - fixed_len
+        max_h = char_width - fixed_len
         h_text = bus['headsign'][:max_h]
         
         expected_rendered = f"{r_str} {h_text:<{max_h}} {eta_part}"
         
-        print(f"\nCapture Time: {capture['time']}")
-        print(f"  Line {i+1}:")
-        print(f"  Actual:   '{actual}'")
-        print(f"  Expected: '{expected_rendered}'")
+        # We don't print unless it fails, but we can use pytest's -s to see this
+        # print(f"\nCapture Time: {capture['time']} - Line {i+1}")
+        # print(f"  Actual:   '{actual}'")
+        # print(f"  Expected: '{expected_rendered}'")
         
         assert len(actual) == 32
         assert actual == expected_rendered
 
 if __name__ == "__main__":
-    # Test runner
+    # Allow running directly via python tests/test_captures.py
     caps = get_captures()
+    if not caps:
+        print("No captures found in accurate_config.yaml")
+        sys.exit(0)
+        
     passed = 0
     for cap in caps:
         try:
             test_capture_match(cap)
             passed += 1
+            print(f"PASS: {cap['time']}")
         except Exception as e:
             print(f"FAIL: {cap['time']} - {e}")
     

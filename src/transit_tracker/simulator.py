@@ -99,24 +99,33 @@ class LEDSimulator:
                 arr_time_ms = trip.get("predictedArrivalTime") or trip.get("scheduledArrivalTime")
                 if not arr_time_ms: continue
 
+                # Raw time from API
+                raw_diff_sec = (arr_time_ms - current_time_ms) / 1000.0
+                
                 # Apply offset
-                diff_sec = (arr_time_ms - current_time_ms) / 1000.0 + offset_sec
-                diff_mins = int(diff_sec / 60)
+                eff_diff_sec = raw_diff_sec + offset_sec
+                
+                raw_mins = int(raw_diff_sec / 60)
+                eff_mins = int(eff_diff_sec / 60)
 
-                if diff_mins >= -2:
+                # Filter: Hide buses that have already departed (even after offset)
+                if eff_mins >= -2:
                     route_id = trip.get("routeId")
                     route_name = trip.get("routeShortName", sub.route.split("_")[-1] if "_" in sub.route else sub.route)
                     headsign = trip.get("tripHeadsign", sub.label.split("-")[-1].strip() if "-" in sub.label else sub.label)
                     is_live = trip.get("predicted", False)
                     
                     # Determine Color
-                    if 0 <= diff_mins <= self.config.arrival_threshold_minutes:
+                    if 0 <= eff_mins <= self.config.arrival_threshold_minutes:
                         color = "red"
                     else:
                         color = self.route_colors.get(route_id, "yellow")
                     
+                    # Respect time_display setting: "arrival" vs "departure"
+                    display_mins = raw_mins if self.config.time_display == "arrival" else eff_mins
+
                     all_departures.append({
-                        "diff": diff_mins, 
+                        "diff": display_mins, 
                         "route": route_name, 
                         "headsign": headsign,
                         "color": color,
@@ -131,7 +140,7 @@ class LEDSimulator:
         elif not all_departures:
             lines.append(self._render_led_string("No Upcoming Buses", color="white"))
         else:
-            # 64px display = 16 characters (4px wide each)
+            # Layout matching display: "14 Downtown Seattle 7m *"
             char_width = 16 * self.config.num_panels
             
             for dep in all_departures[:4]: 
@@ -140,7 +149,6 @@ class LEDSimulator:
                 eta = "Due" if dep["diff"] <= 0 else f"{dep['diff']}m"
                 
                 # Math for padding:
-                # Route(3) + Space(1) + ETA(3) + Space(1) + Icon(1) = 9 chars fixed
                 # Space(1) between parts = 10 chars used.
                 max_h = char_width - 10 
                 h_text = dep['headsign'][:max_h]
@@ -152,7 +160,7 @@ class LEDSimulator:
         return Panel(
             Group(*lines),
             title=panel_title,
-            subtitle=f"[dim]Threshold: {self.config.arrival_threshold_minutes}m | Ctrl+C to Exit[/dim]",
+            subtitle=f"[dim]Mode: {self.config.time_display} | Threshold: {self.config.arrival_threshold_minutes}m | Ctrl+C to Exit[/dim]",
             border_style="red",
             style="on black",
             padding=(0, 1),

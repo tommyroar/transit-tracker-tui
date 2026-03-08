@@ -44,6 +44,8 @@ class TransitStop(BaseModel):
 
 class TransitTrackerSettings(BaseModel):
     base_url: str = "wss://tt.horner.tj/"
+    time_display: str = "arrival"
+    num_panels: int = 1
     stops: List[TransitStop] = Field(default_factory=list)
 
 class TransitConfig(BaseModel):
@@ -53,6 +55,7 @@ class TransitConfig(BaseModel):
     arrival_threshold_minutes: int = Field(default=5, ge=1)
     check_interval_seconds: int = Field(default=30, ge=10)
     num_panels: int = Field(default=1, ge=1, le=4)
+    time_display: str = Field(default="arrival") # "arrival" or "departure"
     subscriptions: List[TransitSubscription] = Field(default_factory=list)
     
     # Compatibility with nested format
@@ -60,23 +63,26 @@ class TransitConfig(BaseModel):
 
     @model_validator(mode="after")
     def migrate_nested_config(self) -> "TransitConfig":
-        if self.transit_tracker and self.transit_tracker.stops:
-            # If nested stops exist, migrate them to subscriptions for the code
-            self.api_url = self.transit_tracker.base_url
-            for stop in self.transit_tracker.stops:
-                for route in stop.routes:
-                    # Avoid duplicates
-                    exists = any(s.stop == stop.stop_id and s.route == route for s in self.subscriptions)
-                    if not exists:
-                        agency_id = route.split("_")[0] if "_" in route else ""
-                        feed = "st" if agency_id == "40" else "kcm" if agency_id == "1" else "st"
-                        self.subscriptions.append(TransitSubscription(
-                            feed=feed,
-                            route=route,
-                            stop=stop.stop_id,
-                            label=f"Route {route}",
-                            time_offset=stop.time_offset
-                        ))
+        if self.transit_tracker:
+            if hasattr(self.transit_tracker, 'base_url'):
+                self.api_url = self.transit_tracker.base_url
+            if hasattr(self.transit_tracker, 'time_display'):
+                self.time_display = self.transit_tracker.time_display
+            
+            if self.transit_tracker.stops:
+                for stop in self.transit_tracker.stops:
+                    for route in stop.routes:
+                        exists = any(s.stop == stop.stop_id and s.route == route for s in self.subscriptions)
+                        if not exists:
+                            agency_id = route.split("_")[0] if "_" in route else ""
+                            feed = "st" if agency_id == "40" else "kcm" if agency_id == "1" else "st"
+                            self.subscriptions.append(TransitSubscription(
+                                feed=feed,
+                                route=route,
+                                stop=stop.stop_id,
+                                label=f"Route {route}",
+                                time_offset=stop.time_offset
+                            ))
         return self
 
     @classmethod

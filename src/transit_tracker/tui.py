@@ -197,10 +197,15 @@ def change_panels_wizard(config: TransitConfig, config_path: str):
         print(f"Hardware setup updated to {val} panel(s).")
 
 def main_menu():
-    config_path = get_last_config_path()
+    # Prioritize accurate_config.yaml if it exists in the current directory
+    if os.path.exists("accurate_config.yaml"):
+        config_path = os.path.abspath("accurate_config.yaml")
+    else:
+        config_path = get_last_config_path()
     
     if config_path and os.path.exists(config_path):
         config = TransitConfig.load(config_path)
+        set_last_config_path(config_path) # Sync the 'last' path
     else:
         config_path = None
         config = TransitConfig()
@@ -286,6 +291,7 @@ def main_menu():
         elif action == "Change Number of Panels":
             change_panels_wizard(config, config_path)
         elif action == "Run Screen Simulator":
+            rprint(f"[dim]Using config: {config_path}[/dim]")
             run_simulator(config)
         elif action == "Flash Hardware Device":
             ports = list_serial_ports()

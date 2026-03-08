@@ -28,9 +28,11 @@ class LEDSimulator:
     async def _poll_oba(self):
         # MOCK MODE: Bypass OBA poll if mock_state exists in config
         if self.config.mock_state:
+            # print(f"[DEBUG] Using Mock State with {len(self.config.mock_state)} buses")
             self.state = {"mock": self.config.mock_state}
             return
 
+        # print("[DEBUG] Starting Live OBA Poll")
         base_url = "https://api.pugetsound.onebusaway.org/api/where"
         oba_key = "TEST"
 
@@ -156,7 +158,8 @@ class LEDSimulator:
         if not self.state and not self.config.mock_state:
             lines.append(self._render_led_string("Connecting...", color="cyan"))
         elif not all_departures:
-            lines.append(self._render_led_string("No Upcoming Buses", color="white"))
+            msg = "No Mock Buses" if self.config.mock_state else "No Live Buses"
+            lines.append(self._render_led_string(msg, color="white"))
         else:
             char_width = 16 * self.config.num_panels
             for dep in all_departures[:4]: 

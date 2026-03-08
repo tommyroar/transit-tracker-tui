@@ -2,7 +2,7 @@ import os
 import sys
 import yaml
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any
 
 # Add src to path
@@ -14,6 +14,7 @@ from transit_tracker.simulator import LEDSimulator
 def parse_capture_line(line: str) -> Dict[str, Any]:
     """Parses a line like '14 Downtown Seattle {LIVE}11m' into a bus dict."""
     parts = line.split()
+    if not parts: return None
     route = parts[0]
     live = "{LIVE}" in line
     # Time is at the end, remove '{LIVE}' and 'm'
@@ -21,13 +22,11 @@ def parse_capture_line(line: str) -> Dict[str, Any]:
     try:
         diff = int(time_str)
     except ValueError:
-        # Handle 'Now' or other non-int if they appear
         diff = 0
         
-    # Headsign is everything in between
-    # Find start of headsign (after route) and end (before {LIVE} or time)
     line_clean = line.replace("{LIVE}", " ").strip()
     parts_clean = line_clean.split()
+    if len(parts_clean) < 2: return None
     headsign = " ".join(parts_clean[1:-1])
     
     return {
@@ -47,65 +46,70 @@ def get_captures():
     return data.get("captures", [])
 
 @pytest.mark.parametrize("capture", get_captures())
-def test_simulator_output_matches_capture(capture):
+def test_capture_match(capture):
     """
-    Validates that the simulator's rendering logic produces strings that match 
-     the user's captured display output.
+    Validates that the simulator generates the exact LED strings from the capture data.
     """
-    display_lines = capture["display"].strip().split('\n')
-    expected_buses = [parse_capture_line(l) for l in display_lines]
+    display_text = capture["display"].strip()
+    expected_lines = display_text.split('\n')
     
-    # Setup config with mock state
+    # Setup mock buses from the capture string
+    mock_buses = []
+    for line in expected_lines:
+        bus = parse_capture_line(line)
+        if bus: mock_buses.append(bus)
+    
+    # Setup simulator with this mock state
     config = TransitConfig()
     config.num_panels = 2
-    config.mock_state = expected_buses
+    config.mock_state = mock_buses
     
     sim = LEDSimulator(config)
     
-    # We mock _render_led_string to capture the actual strings being sent to the "LEDs"
-    actual_rendered_strings = []
-    
+    # Capture rendered strings
+    actual_rendered = []
     def mock_render(text, color="yellow"):
-        actual_rendered_strings.append(text)
-        # Return a dummy Text object to keep the original logic happy
+        actual_rendered.append(text)
         from rich.text import Text
         return Text(text)
     
     sim._render_led_string = mock_render
     sim._generate_frame()
     
-    # Validation
-    assert len(actual_rendered_strings) == len(display_lines), "Number of rendered lines mismatch"
+    # Verification
+    assert len(actual_rendered) == len(mock_buses), "Number of rendered lines mismatch"
     
-    for i, actual in enumerate(actual_rendered_strings):
-        expected_raw = display_lines[i]
-        bus = expected_buses[i]
-        
-        # Reconstruction of the expected string based on simulator logic
+    for i, actual in enumerate(actual_rendered):
+        bus = mock_buses[i]
         icon = "*" if bus["live"] else " "
         eta_part = f"{icon}{bus['diff']}m"
         r_str = f"{str(bus['route'])[:3]:>3}"
         
-        # char_width for 2 panels is 32
-        char_width = 32
+        # Calculate padding for 32 chars
         fixed_len = 3 + 1 + 1 + len(eta_part)
-        max_h = char_width - fixed_len
+        max_h = 32 - fixed_len
         h_text = bus['headsign'][:max_h]
         
         expected_rendered = f"{r_str} {h_text:<{max_h}} {eta_part}"
         
-        print(f"\nLine {i+1}:")
+        print(f"\nCapture Time: {capture['time']}")
+        print(f"  Line {i+1}:")
         print(f"  Actual:   '{actual}'")
         print(f"  Expected: '{expected_rendered}'")
         
-        assert len(actual) == 32, f"Line {i+1} width is not 32"
-        assert actual == expected_rendered, f"Line {i+1} content mismatch"
+        assert len(actual) == 32
+        assert actual == expected_rendered
 
 if __name__ == "__main__":
-    # Allow running directly
-    for cap in get_captures():
+    # Test runner
+    caps = get_captures()
+    passed = 0
+    for cap in caps:
         try:
-            test_simulator_output_matches_capture(cap)
-            print(f"PASS: {cap['time']}")
-        except AssertionError as e:
+            test_capture_match(cap)
+            passed += 1
+        except Exception as e:
             print(f"FAIL: {cap['time']} - {e}")
+    
+    print(f"\nSummary: {passed}/{len(caps)} Captures Passed")
+    if passed < len(caps): sys.exit(1)

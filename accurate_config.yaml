@@ -18,6 +18,8 @@ transit_tracker:
   num_panels: 2
 
 # Reference Captures for Testing
+# Each capture represents a 'Gold Standard' state of the physical display.
+# Run 'uv run python tests/test_captures.py' to validate simulator logic against these.
 captures:
   - time: "Sun Mar  8 14:34:43 PDT 2026"
     display: |
@@ -39,21 +41,26 @@ captures:
       14 Downtown Seattle {LIVE}12m
       554 Downtown Seattle {LIVE}24m
       14 Downtown Seattle {LIVE}42m
+  - time: "Sun Mar  8 15:23:52 PDT 2026"
+    display: |
+      554 Downtown Seattle {LIVE}12m
+      14 Downtown Seattle {LIVE}22m
+      554 Downtown Seattle {LIVE}28m
 
-# Current target for simulator matching
+# Current target for simulator mock mode
 mock_state:
-  - route: "14"
-    headsign: "Downtown Seattle"
-    diff: 12
-    live: true
-    color: "cyan"
   - route: "554"
     headsign: "Downtown Seattle"
-    diff: 24
+    diff: 12
     live: true
     color: "yellow"
   - route: "14"
     headsign: "Downtown Seattle"
-    diff: 42
+    diff: 22
     live: true
     color: "cyan"
+  - route: "554"
+    headsign: "Downtown Seattle"
+    diff: 28
+    live: true
+    color: "yellow"

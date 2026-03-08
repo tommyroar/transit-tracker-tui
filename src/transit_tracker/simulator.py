@@ -41,7 +41,6 @@ class LEDSimulator:
                         break
                     
                     stop_id = sub.stop.split(":")[-1] if ":" in sub.stop else sub.stop
-                    # Support multiple ID variations for Route (e.g., st:1_100039 and 1_100039)
                     target_route_id = sub.route.split(":")[-1] if ":" in sub.route else sub.route
 
                     url = f"{base_url}/arrivals-and-departures-for-stop/{stop_id}.json"
@@ -56,7 +55,6 @@ class LEDSimulator:
                                     self.route_colors[r["id"]] = f"#{r['color']}"
 
                             entries = data.get("data", {}).get("entry", {}).get("arrivalsAndDepartures", [])
-                            # FUZZY MATCH: Match if raw routeId OR agency prefixed ID match
                             filtered = []
                             for e in entries:
                                 rid = e.get("routeId", "")
@@ -154,22 +152,25 @@ class LEDSimulator:
             for dep in all_departures[:4]: 
                 # Icon: '*' if live, else space (Unicode dot is missing in the bitmap font)
                 icon = "*" if dep["live"] else " "
-                eta = "Due" if dep["diff"] <= 0 else f"{dep['diff']}m"
                 
-                # ETA part: icon + time (e.g. "*11m")
-                eta_part = f"{icon}{eta}"
+                # HARDWARE MATCH: Show raw minutes (e.g. "0m") instead of "Due"
+                eta_str = f"{dep['diff']}m"
                 
-                # Calculate remaining space for headsign
-                # Format: {route} {headsign} {eta_part}
-                # route + space + space + eta_part
-                # Fixed length: route(3) + space(1) + space(1) + eta_part
-                fixed_len = 3 + 1 + 1 + len(eta_part)
+                # Full ETA part: icon + time (e.g. "*11m")
+                # No space between icon and time to match reference string
+                full_eta_part = f"{icon}{eta_str}"
+                
+                # LAYOUT MATCH: {route} {headsign} (padding) {full_eta_part}
+                # Route: 3 chars wide, right aligned
+                r_str = f"{str(dep['route'])[:3]:>3}"
+                
+                # Calculate space for headsign
+                # fixed = route(3) + space(1) + space(1) + eta_part
+                fixed_len = 3 + 1 + 1 + len(full_eta_part)
                 max_h = char_width - fixed_len
                 h_text = dep['headsign'][:max_h]
                 
-                # Construct line: {route} {headsign} (padding) {eta_part}
-                r_str = str(dep['route'])[:3]
-                line_str = f"{r_str:>3} {h_text:<{max_h}} {eta_part}"
+                line_str = f"{r_str} {h_text:<{max_h}} {full_eta_part}"
                 lines.append(self._render_led_string(line_str, color=dep["color"]))
 
         panel_title = f"[bold red]HUB75 {64 * self.config.num_panels}x32 LED SIMULATOR[/bold red]"

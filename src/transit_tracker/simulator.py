@@ -26,6 +26,11 @@ class LEDSimulator:
             self.font = Font(font_path)
 
     async def _poll_oba(self):
+        # MOCK MODE: Bypass OBA poll if mock_state exists in config
+        if self.config.mock_state:
+            self.state = {"mock": self.config.mock_state}
+            return
+
         base_url = "https://api.pugetsound.onebusaway.org/api/where"
         oba_key = "TEST"
 
@@ -36,7 +41,8 @@ class LEDSimulator:
                         break
                     
                     stop_id = sub.stop.split(":")[-1] if ":" in sub.stop else sub.stop
-                    route_id = sub.route.split(":")[-1] if ":" in sub.route else sub.route
+                    # Support multiple ID variations for Route (e.g., st:1_100039 and 1_100039)
+                    target_route_id = sub.route.split(":")[-1] if ":" in sub.route else sub.route
 
                     url = f"{base_url}/arrivals-and-departures-for-stop/{stop_id}.json"
                     try:
@@ -44,14 +50,18 @@ class LEDSimulator:
                         if response.status_code == 200:
                             data = response.json()
                             
-                            # Extract route colors from references
                             routes_ref = data.get("data", {}).get("references", {}).get("routes", [])
                             for r in routes_ref:
                                 if "color" in r and r["color"]:
                                     self.route_colors[r["id"]] = f"#{r['color']}"
 
                             entries = data.get("data", {}).get("entry", {}).get("arrivalsAndDepartures", [])
-                            filtered = [e for e in entries if e.get("routeId") == route_id]
+                            # FUZZY MATCH: Match if raw routeId OR agency prefixed ID match
+                            filtered = []
+                            for e in entries:
+                                rid = e.get("routeId", "")
+                                if rid == target_route_id or rid.split(":")[-1] == target_route_id:
+                                    filtered.append(e)
                             self.state[sub.stop] = filtered
                     except Exception:
                         pass
@@ -84,76 +94,81 @@ class LEDSimulator:
         now = datetime.now(timezone.utc)
         current_time_ms = int(now.timestamp() * 1000)
 
-        for sub in self.config.subscriptions:
-            offset_sec = 0
-            if sub.time_offset:
-                try:
-                    # Support formats like "-7min" or "-420"
-                    clean_offset = sub.time_offset.lower().replace("min", "").strip()
-                    offset_sec = int(clean_offset) * 60 if "min" in sub.time_offset.lower() else int(clean_offset)
-                except ValueError:
-                    pass
+        # MOCK STATE HANDLING
+        if self.config.mock_state:
+            for mock_bus in self.config.mock_state:
+                all_departures.append({
+                    "diff": mock_bus.get("diff", 0),
+                    "route": mock_bus.get("route", "??"),
+                    "headsign": mock_bus.get("headsign", "Mock Data"),
+                    "color": mock_bus.get("color", "yellow"),
+                    "live": mock_bus.get("live", False)
+                })
+        else:
+            for sub in self.config.subscriptions:
+                offset_sec = 0
+                if sub.time_offset:
+                    try:
+                        clean_offset = sub.time_offset.lower().replace("min", "").strip()
+                        offset_sec = int(clean_offset) * 60 if "min" in sub.time_offset.lower() else int(clean_offset)
+                    except ValueError:
+                        pass
 
-            trips = self.state.get(sub.stop, [])
-            for trip in trips:
-                arr_time_ms = trip.get("predictedArrivalTime") or trip.get("scheduledArrivalTime")
-                if not arr_time_ms: continue
+                trips = self.state.get(sub.stop, [])
+                for trip in trips:
+                    arr_time_ms = trip.get("predictedArrivalTime") or trip.get("scheduledArrivalTime")
+                    if not arr_time_ms: continue
 
-                # Raw time from API
-                raw_diff_sec = (arr_time_ms - current_time_ms) / 1000.0
-                
-                # Apply offset
-                eff_diff_sec = raw_diff_sec + offset_sec
-                
-                raw_mins = int(raw_diff_sec / 60)
-                eff_mins = int(eff_diff_sec / 60)
-
-                # Filter: Hide buses that have already departed (even after offset)
-                if eff_mins >= -2:
-                    route_id = trip.get("routeId")
-                    route_name = trip.get("routeShortName", sub.route.split("_")[-1] if "_" in sub.route else sub.route)
-                    headsign = trip.get("tripHeadsign", sub.label.split("-")[-1].strip() if "-" in sub.label else sub.label)
-                    is_live = trip.get("predicted", False)
+                    raw_diff_sec = (arr_time_ms - current_time_ms) / 1000.0
+                    eff_diff_sec = raw_diff_sec + offset_sec
                     
-                    # Use route color from API or default to yellow
-                    color = self.route_colors.get(route_id, "yellow")
-                    
-                    # Respect time_display setting: "arrival" vs "departure"
-                    display_mins = raw_mins if self.config.time_display == "arrival" else eff_mins
+                    raw_mins = int(raw_diff_sec / 60)
+                    eff_mins = int(eff_diff_sec / 60)
 
-                    all_departures.append({
-                        "diff": display_mins, 
-                        "route": route_name, 
-                        "headsign": headsign,
-                        "color": color,
-                        "live": is_live
-                    })
+                    if eff_mins >= -2:
+                        route_id = trip.get("routeId")
+                        route_name = trip.get("routeShortName", sub.route.split("_")[-1] if "_" in sub.route else sub.route)
+                        headsign = trip.get("tripHeadsign", sub.label.split("-")[-1].strip() if "-" in sub.label else sub.label)
+                        is_live = trip.get("predicted", False)
+                        
+                        color = self.route_colors.get(route_id, "yellow")
+                        display_mins = raw_mins if self.config.time_display == "arrival" else eff_mins
+
+                        all_departures.append({
+                            "diff": display_mins, 
+                            "route": route_name, 
+                            "headsign": headsign,
+                            "color": color,
+                            "live": is_live
+                        })
 
         all_departures.sort(key=lambda x: x["diff"])
         
         lines = []
-        if not self.state:
+        if not self.state and not self.config.mock_state:
             lines.append(self._render_led_string("Connecting...", color="cyan"))
         elif not all_departures:
             lines.append(self._render_led_string("No Upcoming Buses", color="white"))
         else:
-            # Layout matching display: "14 Downtown Seattle 7m *"
             char_width = 16 * self.config.num_panels
-            
             for dep in all_departures[:4]: 
-                # Icon: '*' if live (dot-matrix icon)
                 icon = "*" if dep["live"] else " "
                 eta = "Due" if dep["diff"] <= 0 else f"{dep['diff']}m"
                 
-                # Math for padding:
-                # Space(1) between parts = 10 chars used.
-                max_h = char_width - 10 
+                # Dynamic layout calculation
+                # 14 Downtown Seattle 7m *
+                # [R] (Space) [Destination] (Space) [ETA] (Space) [LIVE]
+                fixed_len = len(str(dep['route'])) + 1 + len(eta) + 1 + 1 + 1
+                max_h = char_width - fixed_len
                 h_text = dep['headsign'][:max_h]
                 
-                line_str = f"{dep['route']:>2} {h_text:<{max_h}} {eta:>3} {icon}"
+                line_str = f"{dep['route']} {h_text:<{max_h}} {eta} {icon}"
                 lines.append(self._render_led_string(line_str, color=dep["color"]))
 
         panel_title = f"[bold red]HUB75 {64 * self.config.num_panels}x32 LED SIMULATOR[/bold red]"
+        if self.config.mock_state:
+            panel_title += " [yellow](MOCK DATA)[/yellow]"
+
         return Panel(
             Group(*lines),
             title=panel_title,
@@ -182,8 +197,8 @@ class LEDSimulator:
                 pass
 
 def run_simulator(config: TransitConfig):
-    if not config.subscriptions:
-        Console().print("[bold red]Error:[/bold red] No stops configured.")
+    if not config.subscriptions and not config.mock_state:
+        Console().print("[bold red]Error:[/bold red] No stops or mock state configured.")
         return
     sim = LEDSimulator(config)
     try:

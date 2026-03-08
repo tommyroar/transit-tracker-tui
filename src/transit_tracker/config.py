@@ -1,6 +1,6 @@
 import yaml
 import os
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict
 from pydantic import BaseModel, Field, model_validator
 
 GLOBAL_SETTINGS_DIR = os.path.expanduser("~/.config/transit-tracker")
@@ -55,8 +55,11 @@ class TransitConfig(BaseModel):
     arrival_threshold_minutes: int = Field(default=5, ge=1)
     check_interval_seconds: int = Field(default=30, ge=10)
     num_panels: int = Field(default=1, ge=1, le=4)
-    time_display: str = Field(default="arrival") # "arrival" or "departure"
+    time_display: str = Field(default="arrival")
     subscriptions: List[TransitSubscription] = Field(default_factory=list)
+    
+    # Mocking for Testing
+    mock_state: Optional[List[Dict[str, Any]]] = None
     
     # Compatibility with nested format
     transit_tracker: Optional[TransitTrackerSettings] = None

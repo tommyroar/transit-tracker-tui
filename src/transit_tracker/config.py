@@ -40,6 +40,7 @@ class TransitSubscription(BaseModel):
 class TransitStop(BaseModel):
     stop_id: str
     time_offset: str = "0min"
+    label: Optional[str] = None
     routes: List[str] = Field(default_factory=list)
 
 class TransitTrackerSettings(BaseModel):
@@ -86,15 +87,24 @@ class TransitConfig(BaseModel):
             if self.transit_tracker.stops:
                 for stop in self.transit_tracker.stops:
                     for route in stop.routes:
-                        exists = any(s.stop == stop.stop_id and s.route == route for s in self.subscriptions)
-                        if not exists:
-                            agency_id = route.split("_")[0] if "_" in route else ""
-                            feed = "st" if agency_id == "40" else "kcm" if agency_id == "1" else "st"
+                        # Find existing or create new
+                        sub = next((s for s in self.subscriptions if s.stop == stop.stop_id and s.route == route), None)
+                        
+                        agency_id = route.split("_")[0] if "_" in route else ""
+                        feed = "st" if agency_id == "40" else "kcm" if agency_id == "1" else "st"
+                        
+                        label = stop.label if stop.label else f"Route {route}"
+                        
+                        if sub:
+                            sub.feed = feed
+                            sub.time_offset = stop.time_offset
+                            sub.label = label
+                        else:
                             self.subscriptions.append(TransitSubscription(
                                 feed=feed,
                                 route=route,
                                 stop=stop.stop_id,
-                                label=f"Route {route}",
+                                label=label,
                                 time_offset=stop.time_offset
                             ))
         return self

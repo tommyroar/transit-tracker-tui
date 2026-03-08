@@ -121,6 +121,7 @@ class LEDSimulator:
     def _generate_frame(self, reference_time: Optional[datetime] = None) -> Panel:
         all_departures = []
         now = reference_time or datetime.now(timezone.utc)
+        # API timestamps are UTC milliseconds
         current_time_ms = int(now.timestamp() * 1000)
         now_ts = now.timestamp()
         
@@ -142,6 +143,21 @@ class LEDSimulator:
             live_data = self.state.get("live")
             if live_data and (now_ts - live_data.get("timestamp", 0) <= 300):
                 for trip in live_data.get("trips", []):
+                    # Filter: Only show trips that match one of our subscriptions
+                    trip_route_id = trip.get("routeId", "")
+                    trip_stop_id = trip.get("stopId", "")
+                    
+                    # Find subscription (robust match for prefixed/unprefixed)
+                    sub = None
+                    for s in self.config.subscriptions:
+                        if (s.route == trip_route_id or s.route.split(":")[-1] == trip_route_id or (trip_route_id and trip_route_id.split(":")[-1] == s.route)) and \
+                           (s.stop == trip_stop_id or s.stop.split(":")[-1] == trip_stop_id or (trip_stop_id and trip_stop_id.split(":")[-1] == s.stop)):
+                            sub = s
+                            break
+                    
+                    if not sub:
+                        continue
+
                     trip_id = trip.get("tripId")
                     if not trip_id: continue
                     
@@ -150,6 +166,7 @@ class LEDSimulator:
                         continue
 
                     # Arrival from confirmation: 'arrivalTime' is unix seconds
+                    # Also support 'predictedArrivalTime' / 'scheduledArrivalTime' (ISO or ms) for legacy
                     arr_val = trip.get("arrivalTime") or trip.get("predictedArrivalTime") or trip.get("scheduledArrivalTime")
                     if not arr_val: continue
                     
@@ -158,16 +175,11 @@ class LEDSimulator:
                             dt = datetime.fromisoformat(arr_val.replace("Z", "+00:00"))
                             arr_time_ms = int(dt.timestamp() * 1000)
                         except ValueError: continue
-                    elif arr_val < 10**11: # Likely seconds
-                        arr_time_ms = arr_val * 1000
-                    else: # Likely milliseconds
+                    elif arr_val > 10**12: # Likely milliseconds (e.g. 1773012765000)
                         arr_time_ms = arr_val
+                    else: # Likely seconds (e.g. 1773012765)
+                        arr_time_ms = arr_val * 1000
 
-                    # Get subscription for this stop/route to get offset
-                    route_id = trip.get("routeId")
-                    stop_id = trip.get("stopId")
-                    sub = next((s for s in self.config.subscriptions if s.stop == stop_id and s.route == route_id), None)
-                    
                     offset_sec = 0
                     if sub and sub.time_offset:
                         try:
@@ -181,7 +193,7 @@ class LEDSimulator:
                     raw_mins = int(raw_diff_sec / 60)
                     eff_mins = int(eff_diff_sec / 60)
 
-                    # Determine which value to display and filter on
+                    # Filter: Use raw_mins to match hardware behavior
                     if self.config.display_offset:
                         display_mins = eff_mins
                         should_show = eff_mins >= 0
@@ -192,7 +204,7 @@ class LEDSimulator:
                     if should_show:
                         route_name = trip.get("routeName") or trip.get("routeShortName")
                         if not route_name:
-                            route_name = sub.label.split("-")[0].strip().split()[0] if sub and sub.label else route_id.split("_")[-1]
+                            route_name = sub.label.split("-")[0].strip().split()[0] if sub and sub.label else sub.route.split("_")[-1]
                             
                         headsign = trip.get("headsign") or trip.get("tripHeadsign")
                         if not headsign and sub:

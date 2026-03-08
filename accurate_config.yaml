@@ -101,13 +101,3 @@ mock_state:
     diff: 28
     live: true
     color: "yellow"
-
-subscriptions:
-- feed: st
-  route: st:40_100240
-  stop: st:1_8494
-  label: "554 Downtown Seattle"
-- feed: st
-  route: st:1_100039
-  stop: st:1_11920
-  label: "14 Downtown Seattle"

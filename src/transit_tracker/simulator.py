@@ -157,7 +157,7 @@ class LEDSimulator:
         return Panel(
             Group(*lines),
             title=panel_title,
-            subtitle=f"[dim]Mode: {self.config.time_display} | Ctrl+C to Exit[/dim]",
+            subtitle="[dim]Ctrl+C to Exit[/dim]",
             border_style="red",
             style="on black",
             padding=(0, 1),

@@ -14,9 +14,9 @@ from .config import TransitConfig
 
 class LEDSimulator:
     def __init__(self, config: TransitConfig):
-        # VERSION: 2026-03-08-FINAL-SYNC
+        # VERSION: 2026-03-08-TESTABLE
         self.config = config
-        self.state = {} # stopId -> list of departures
+        self.state = {} # (stopId, routeId) -> list of departures
         self.route_colors = {} # routeId -> hex color
         self.running = True
         self.start_time = time.time()
@@ -31,7 +31,7 @@ class LEDSimulator:
     async def _poll_oba(self):
         # MOCK MODE: Bypass OBA poll if mock_state exists in config
         if self.config.mock_state:
-            self.state = {"mock": self.config.mock_state}
+            self.state = {("mock", "all"): self.config.mock_state}
             return
 
         base_url = "https://api.pugetsound.onebusaway.org/api/where"
@@ -43,11 +43,11 @@ class LEDSimulator:
                     if not self.running:
                         break
                     
-                    stop_id = sub.stop.split(":")[-1] if ":" in sub.stop else sub.stop
+                    stop_id_clean = sub.stop.split(":")[-1] if ":" in sub.stop else sub.stop
                     target_route_id = sub.route.split(":")[-1] if ":" in sub.route else sub.route
                     target_short_name = target_route_id.split("_")[-1] if "_" in target_route_id else target_route_id
 
-                    url = f"{base_url}/arrivals-and-departures-for-stop/{stop_id}.json"
+                    url = f"{base_url}/arrivals-and-departures-for-stop/{stop_id_clean}.json"
                     try:
                         response = await client.get(url, params={"key": oba_key})
                         if response.status_code == 200:
@@ -68,7 +68,8 @@ class LEDSimulator:
                                 if (rid == target_route_id or rid.split(":")[-1] == target_route_id or 
                                     rsname == target_short_name or (target_short_name == "1" and rsname == "14")):
                                     filtered.append(e)
-                            self.state[sub.stop] = filtered
+                            
+                            self.state[(sub.stop, sub.route)] = filtered
                     except Exception:
                         pass
                 
@@ -95,11 +96,13 @@ class LEDSimulator:
             rich_text.append("\n")
         return rich_text
 
-    def _generate_frame(self) -> Panel:
+    def _generate_frame(self, reference_time: Optional[datetime] = None) -> Panel:
         all_departures = []
-        now = datetime.now(timezone.utc)
+        now = reference_time or datetime.now(timezone.utc)
         current_time_ms = int(now.timestamp() * 1000)
-        elapsed = time.time() - self.start_time
+        
+        # If we have a reference time, we use 0 elapsed for scrolling to keep it predictable
+        elapsed = 0 if reference_time else (time.time() - self.start_time)
 
         # MOCK STATE HANDLING
         if self.config.mock_state:
@@ -112,7 +115,10 @@ class LEDSimulator:
                     "live": mock_bus.get("live", False)
                 })
         else:
-            for sub in self.config.subscriptions:
+            for (stop_id, route_id), trips in self.state.items():
+                sub = next((s for s in self.config.subscriptions if s.stop == stop_id and s.route == route_id), None)
+                if not sub: continue
+
                 offset_sec = 0
                 if sub.time_offset:
                     try:
@@ -121,7 +127,6 @@ class LEDSimulator:
                     except ValueError:
                         pass
 
-                trips = self.state.get(sub.stop, [])
                 for trip in trips:
                     arr_time_ms = trip.get("predictedArrivalTime") or trip.get("scheduledArrivalTime")
                     if not arr_time_ms: continue
@@ -132,16 +137,13 @@ class LEDSimulator:
                     raw_mins = int(raw_diff_sec / 60)
                     eff_mins = int(eff_diff_sec / 60)
 
-                    # Show bus if it hasn't actually left (raw_mins >= -2)
                     if raw_mins >= -2:
-                        route_id = trip.get("routeId")
+                        route_id_api = trip.get("routeId")
                         route_name = trip.get("routeShortName", sub.route.split("_")[-1] if "_" in sub.route else sub.route)
                         headsign = trip.get("tripHeadsign", sub.label.split("-")[-1].strip() if "-" in sub.label else sub.label)
                         is_live = trip.get("predicted", False)
-                        color = self.route_colors.get(route_id, "yellow")
+                        color = self.route_colors.get(route_id_api, "yellow")
 
-                        # DYNAMIC TIME DISPLAY: Respect the config setting
-                        # Hardware seems to show Arrival Time (raw) when configured as 'arrival'
                         display_mins = raw_mins if self.config.time_display == "arrival" else eff_mins
 
                         all_departures.append({
@@ -163,11 +165,7 @@ class LEDSimulator:
         else:
             char_width = 16 * self.config.num_panels
             for dep in all_departures[:4]: 
-                # Icon: '*' if live, else space
                 icon = "*" if dep["live"] else " "
-                
-                # Format time: Match panel exactly (e.g. "12m" or "0m")
-                # Panel does NOT show 'Now' or 'Due' in Arrival mode
                 eta_str = f"{dep['diff']}m"
                 full_eta_part = f"{icon}{eta_str}"
                 

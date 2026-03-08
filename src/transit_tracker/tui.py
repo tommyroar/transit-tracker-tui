@@ -196,6 +196,20 @@ def change_panels_wizard(config: TransitConfig, config_path: str):
         config.save(config_path)
         print(f"Hardware setup updated to {val} panel(s).")
 
+def change_ntfy_wizard(config: TransitConfig, config_path: str):
+    val = questionary.text(
+        "Enter ntfy.sh topic:",
+        default=config.ntfy_topic or "transit-alerts"
+    ).ask()
+    
+    if val:
+        config.ntfy_topic = val
+        if config_path:
+            config.save(config_path)
+            print(f"ntfy.sh topic updated to {val} and saved.")
+        else:
+            print(f"ntfy.sh topic updated to {val} (in-memory).")
+
 def main_menu():
     # Prioritize accurate_config.yaml if it exists in the current directory
     if os.path.exists("accurate_config.yaml"):
@@ -257,97 +271,143 @@ def main_menu():
         has_ports = len(ports) > 0
         has_config = config_path is not None
 
-        choices = [
-            questionary.Choice("Add a Stop", disabled="Please load or save a config file first" if not has_config else None),
-            questionary.Choice("Remove a Stop", disabled="Please load or save a config file first" if not has_config else None),
-            questionary.Choice("Change Alert Threshold", disabled="Please load or save a config file first" if not has_config else None),
-            questionary.Choice("Change Number of Panels", disabled="Please load or save a config file first" if not has_config else None),
-            questionary.Choice("Run Screen Simulator", disabled="Please load or save a config file first" if not has_config else None),
-            questionary.Choice("Flash Hardware Device", disabled="No device connected" if not has_ports else None),
-            questionary.Choice("Read from Hardware Device", disabled="No device connected" if not has_ports else None),
-            "Load Config File",
-            "Save Config File As...",
-        ]
-        
-        if status != "UNSUPPORTED":
-            choices.append("Manage Service...")
-            
-        choices.append("Exit")
-
         action = questionary.select(
             "What would you like to do?",
-            choices=choices
+            choices=[
+                "1. Configurator",
+                questionary.Choice("2. Simulator", disabled="Please load or save a config file first" if not has_config else None),
+                "3. Service Manager",
+                "4. Exit"
+            ]
         ).ask()
 
-        if not action or action == "Exit":
+        if not action or action == "4. Exit":
             break
-        elif action == "Add a Stop":
-            # add_stop_wizard is the only remaining async function since it hits the web API
-            asyncio.run(add_stop_wizard(config, config_path))
-        elif action == "Remove a Stop":
-            remove_stop_wizard(config, config_path)
-        elif action == "Change Alert Threshold":
-            change_threshold_wizard(config, config_path)
-        elif action == "Change Number of Panels":
-            change_panels_wizard(config, config_path)
-        elif action == "Run Screen Simulator":
+            
+        elif action == "1. Configurator":
+            while True:
+                c_action = questionary.select(
+                    "Configurator",
+                    choices=[
+                        "1. Config Files",
+                        "2. Device Config",
+                        "3. Notifications",
+                        "4. Manage Stops",
+                        "5. Change Number of Panels",
+                        "Back"
+                    ]
+                ).ask()
+                
+                if not c_action or c_action == "Back":
+                    break
+                    
+                if c_action == "1. Config Files":
+                    f_action = questionary.select(
+                        "Config Files",
+                        choices=["1. Load Config File", "2. Save Config File As...", "Back"]
+                    ).ask()
+                    
+                    if f_action == "1. Load Config File":
+                        new_path = questionary.path(
+                            "Enter path to load config from:",
+                            default=config_path or "config.yaml"
+                        ).ask()
+                        if new_path:
+                            try:
+                                config = TransitConfig.load(new_path)
+                                config_path = new_path
+                                set_last_config_path(new_path)
+                                print(f"Loaded config from {new_path}")
+                                has_config = True
+                            except Exception as e:
+                                print(f"Error loading config: {e}")
+                    elif f_action == "2. Save Config File As...":
+                        new_path = questionary.path(
+                            "Enter path to save config to:",
+                            default=config_path or "config.yaml"
+                        ).ask()
+                        if new_path:
+                            try:
+                                config.save(new_path)
+                                config_path = new_path
+                                set_last_config_path(new_path)
+                                print(f"Saved config to {new_path}")
+                                has_config = True
+                            except Exception as e:
+                                print(f"Error saving config: {e}")
+                                
+                elif c_action == "2. Device Config":
+                    d_action = questionary.select(
+                        "Device Config",
+                        choices=[
+                            questionary.Choice("1. Flash Device", disabled="No device connected" if not has_ports else None),
+                            questionary.Choice("2. Download from Device", disabled="No device connected" if not has_ports else None),
+                            "Back"
+                        ]
+                    ).ask()
+                    
+                    if d_action == "1. Flash Device":
+                        selected_port = questionary.select(
+                            "Select your Transit Tracker device:",
+                            choices=ports
+                        ).ask()
+                        if selected_port:
+                            flash_hardware(selected_port, config)
+                    elif d_action == "2. Download from Device":
+                        selected_port = questionary.select(
+                            "Select your Transit Tracker device:",
+                            choices=ports
+                        ).ask()
+                        if selected_port:
+                            if load_hardware_config(selected_port, config):
+                                if config_path:
+                                    config.save(config_path)
+                                    print("Configuration updated and saved to file.")
+                                else:
+                                    print("Configuration read into memory. Please save it to a file.")
+
+                elif c_action == "3. Notifications":
+                    n_action = questionary.select(
+                        "Notifications",
+                        choices=[
+                            questionary.Choice("1. Change Alert Threshold", disabled="Please load or save a config file first" if not has_config else None),
+                            "2. Add/Change ntfy.sh Endpoint",
+                            "Back"
+                        ]
+                    ).ask()
+                    
+                    if n_action == "1. Change Alert Threshold":
+                        change_threshold_wizard(config, config_path)
+                    elif n_action == "2. Add/Change ntfy.sh Endpoint":
+                        change_ntfy_wizard(config, config_path)
+                        
+                elif c_action == "4. Manage Stops":
+                    s_action = questionary.select(
+                        "Manage Stops",
+                        choices=[
+                            questionary.Choice("1. Add a Stop", disabled="Please load or save a config file first" if not has_config else None),
+                            questionary.Choice("2. Remove a Stop", disabled="Please load or save a config file first" if not has_config else None),
+                            "Back"
+                        ]
+                    ).ask()
+                    
+                    if s_action == "1. Add a Stop":
+                        asyncio.run(add_stop_wizard(config, config_path))
+                    elif s_action == "2. Remove a Stop":
+                        remove_stop_wizard(config, config_path)
+                        
+                elif c_action == "5. Change Number of Panels":
+                    change_panels_wizard(config, config_path)
+
+        elif action == "2. Simulator":
             rprint(f"[dim]Using config: {config_path}[/dim]")
             run_simulator(config)
-        elif action == "Flash Hardware Device":
-            ports = list_serial_ports()
-            if not ports:
-                print("No serial ports found. Please connect your device.")
+            
+        elif action == "3. Service Manager":
+            if status == "UNSUPPORTED":
+                print("Background service management is only supported on macOS.")
             else:
-                selected_port = questionary.select(
-                    "Select your Transit Tracker device:",
-                    choices=ports
-                ).ask()
-                if selected_port:
-                    flash_hardware(selected_port, config)
-        elif action == "Read from Hardware Device":
-            ports = list_serial_ports()
-            if not ports:
-                print("No serial ports found. Please connect your device.")
-            else:
-                selected_port = questionary.select(
-                    "Select your Transit Tracker device:",
-                    choices=ports
-                ).ask()
-                if selected_port:
-                    if load_hardware_config(selected_port, config):
-                        if config_path:
-                            config.save(config_path)
-                            print("Configuration updated and saved to file.")
-                        else:
-                            print("Configuration read into memory. Please save it to a file.")
-        elif action == "Load Config File":
-            new_path = questionary.path(
-                "Enter path to load config from:",
-                default=config_path or "config.yaml"
-            ).ask()
-            if new_path:
-                try:
-                    config = TransitConfig.load(new_path)
-                    config_path = new_path
-                    set_last_config_path(new_path)
-                    print(f"Loaded config from {new_path}")
-                except Exception as e:
-                    print(f"Error loading config: {e}")
-        elif action == "Save Config File As...":
-            new_path = questionary.path(
-                "Enter path to save config to:",
-                default=config_path or "config.yaml"
-            ).ask()
-            if new_path:
-                try:
-                    config = TransitConfig.save(new_path)
-                    config_path = new_path
-                    set_last_config_path(new_path)
-                    print(f"Saved config to {new_path}")
-                except Exception as e:
-                    print(f"Error saving config: {e}")
-        elif action == "Manage Service...":
-            manage_service_menu()
+                manage_service_menu()
 
 def hardware_monitor():
     known_ports = set(list_serial_ports())

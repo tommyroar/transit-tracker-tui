@@ -130,17 +130,16 @@ class LEDSimulator:
                     raw_mins = int(raw_diff_sec / 60)
                     eff_mins = int(eff_diff_sec / 60)
 
-                    if eff_mins >= -2:
+                    if raw_mins >= -2:
                         route_id = trip.get("routeId")
                         route_name = trip.get("routeShortName", sub.route.split("_")[-1] if "_" in sub.route else sub.route)
                         headsign = trip.get("tripHeadsign", sub.label.split("-")[-1].strip() if "-" in sub.label else sub.label)
                         is_live = trip.get("predicted", False)
-                        
-                        # Determine Color: Use route color from API or default to yellow
+
+                        # Use route color from API or default to yellow
                         color = self.route_colors.get(route_id, "yellow")
-                        
+
                         # HARDWARE MATCH: The panel shows the time relative to the offset (Departure Time)
-                        # even when 'arrival' is configured.
                         display_mins = eff_mins
 
                         all_departures.append({

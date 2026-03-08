@@ -152,17 +152,24 @@ class LEDSimulator:
         else:
             char_width = 16 * self.config.num_panels
             for dep in all_departures[:4]: 
-                icon = "*" if dep["live"] else " "
+                # Icon: '●' if live, else space
+                icon = "●" if dep["live"] else " "
                 eta = "Due" if dep["diff"] <= 0 else f"{dep['diff']}m"
                 
-                # Dynamic layout calculation
-                # 14 Downtown Seattle 7m *
-                # [R] (Space) [Destination] (Space) [ETA] (Space) [LIVE]
-                fixed_len = len(str(dep['route'])) + 1 + len(eta) + 1 + 1 + 1
+                # ETA part: icon + time (e.g. "●11m")
+                eta_part = f"{icon}{eta}"
+                
+                # Calculate remaining space for headsign
+                # Format: {route} {headsign} {eta_part}
+                # route + space + space + eta_part
+                # Fixed length: route(3) + space(1) + space(1) + eta_part
+                fixed_len = 3 + 1 + 1 + len(eta_part)
                 max_h = char_width - fixed_len
                 h_text = dep['headsign'][:max_h]
                 
-                line_str = f"{dep['route']} {h_text:<{max_h}} {eta} {icon}"
+                # Construct line: {route} {headsign} (padding) {eta_part}
+                r_str = str(dep['route'])[:3]
+                line_str = f"{r_str:>3} {h_text:<{max_h}} {eta_part}"
                 lines.append(self._render_led_string(line_str, color=dep["color"]))
 
         panel_title = f"[bold red]HUB75 {64 * self.config.num_panels}x32 LED SIMULATOR[/bold red]"

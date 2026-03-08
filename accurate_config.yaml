@@ -15,4 +15,25 @@ transit_tracker:
         - "st:1_100039"
   styles: []
   abbreviations: []
-
+  num_panels: 2
+reference_display_time: "Sun Mar  8 14:34:43 PDT 2026"
+reference_display_string: |
+  14 Downtown Seattle {LIVE}11m
+  554 Downtown Seattle {LIVE}15m
+  14 Downtown Seattle {LIVE}41m
+mock_state:
+  - route: "14"
+    headsign: "Downtown Seattle"
+    diff: 11
+    live: true
+    color: "cyan"
+  - route: "554"
+    headsign: "Downtown Seattle"
+    diff: 15
+    live: true
+    color: "yellow"
+  - route: "14"
+    headsign: "Downtown Seattle"
+    diff: 41
+    live: true
+    color: "cyan"

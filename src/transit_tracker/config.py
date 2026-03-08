@@ -1,6 +1,6 @@
 import yaml
 import os
-from typing import List, Optional, Union, Dict
+from typing import List, Optional, Union, Dict, Any
 from pydantic import BaseModel, Field, model_validator
 
 GLOBAL_SETTINGS_DIR = os.path.expanduser("~/.config/transit-tracker")
@@ -71,6 +71,8 @@ class TransitConfig(BaseModel):
                 self.api_url = self.transit_tracker.base_url
             if hasattr(self.transit_tracker, 'time_display'):
                 self.time_display = self.transit_tracker.time_display
+            if hasattr(self.transit_tracker, 'num_panels'):
+                self.num_panels = self.transit_tracker.num_panels
             
             if self.transit_tracker.stops:
                 for stop in self.transit_tracker.stops:

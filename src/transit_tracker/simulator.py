@@ -152,11 +152,11 @@ class LEDSimulator:
         else:
             char_width = 16 * self.config.num_panels
             for dep in all_departures[:4]: 
-                # Icon: '●' if live, else space
-                icon = "●" if dep["live"] else " "
+                # Icon: '*' if live, else space (Unicode dot is missing in the bitmap font)
+                icon = "*" if dep["live"] else " "
                 eta = "Due" if dep["diff"] <= 0 else f"{dep['diff']}m"
                 
-                # ETA part: icon + time (e.g. "●11m")
+                # ETA part: icon + time (e.g. "*11m")
                 eta_part = f"{icon}{eta}"
                 
                 # Calculate remaining space for headsign

@@ -18,6 +18,11 @@ class LEDSimulator:
         self.config = config
         self.force_live = force_live
         self.state = {} # stopId -> { routeId -> [arrivals], 'timestamp' -> float }
+        
+        # Initialize mock state immediately if present and not forcing live
+        if not self.force_live and self.config.mock_state:
+            self.state = {"mock": {"all": self.config.mock_state, "timestamp": time.time()}}
+
         self.route_colors = {} # routeId -> hex color
         self.running = True
         self.start_time = time.time()
@@ -95,15 +100,22 @@ class LEDSimulator:
                             # Process all subscriptions for this stop at once
                             new_stop_state = {"timestamp": time.time()}
                             for sub in subs:
+                                # target_route_id: e.g. "40_100240"
                                 target_route_id = sub.route.split(":")[-1] if ":" in sub.route else sub.route
-                                target_short_name = target_route_id.split("_")[-1] if "_" in target_route_id else target_route_id
+                                
+                                # try to extract short name from label (e.g. "554 - Downtown" -> "554")
+                                label_name = sub.label.split("-")[0].strip().split()[0] if sub.label else ""
                                 
                                 filtered = []
                                 for e in entries:
                                     rid = e.get("routeId", "")
                                     rsname = e.get("routeShortName", "")
-                                    if (rid == target_route_id or rid.split(":")[-1] == target_route_id or 
-                                        rsname == target_short_name or (target_short_name == "1" and rsname == "14")):
+                                    # Match on full ID or short name
+                                    if (rid == target_route_id or 
+                                        rid.split(":")[-1] == target_route_id or 
+                                        rsname == label_name or
+                                        (label_name == "14" and rsname == "14") or
+                                        (label_name == "554" and rsname == "554")):
                                         filtered.append(e)
                                 new_stop_state[sub.route] = filtered
                             
@@ -195,7 +207,13 @@ class LEDSimulator:
                             is_live = trip.get("predicted", False)
                             color = self.route_colors.get(route_id_api, "yellow")
 
-                            display_mins = raw_mins if self.config.time_display == "arrival" else eff_mins
+                            if self.config.display_offset:
+                                display_mins = eff_mins
+                            else:
+                                display_mins = raw_mins if self.config.time_display == "arrival" else eff_mins
+                            
+                            if display_mins < 0:
+                                display_mins = 0
 
                             all_departures.append({
                                 "diff": display_mins, 
@@ -215,7 +233,7 @@ class LEDSimulator:
             lines.append(self._render_led_string(msg, color="white"))
         else:
             char_width = 16 * self.config.num_panels
-            for dep in all_departures[:4]: 
+            for dep in all_departures[:3]: 
                 icon = "*" if dep["live"] else " "
                 eta_str = f"{dep['diff']}m"
                 full_eta_part = f"{icon}{eta_str}"

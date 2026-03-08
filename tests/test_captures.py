@@ -51,7 +51,7 @@ def test_capture_match(capture):
     Validates that the simulator generates the exact LED strings from the capture data.
     """
     display_text = capture["display"].strip()
-    expected_lines = display_text.split('\n')
+    expected_lines = display_text.split('\n')[:3]
     
     # Setup mock buses from the capture string
     mock_buses = []
@@ -64,7 +64,7 @@ def test_capture_match(capture):
     config.num_panels = 2
     config.mock_state = mock_buses
     
-    sim = LEDSimulator(config)
+    sim = LEDSimulator(config, force_live=False)
     
     # Capture rendered strings
     actual_rendered = []
@@ -77,6 +77,7 @@ def test_capture_match(capture):
     sim._generate_frame()
     
     # Verification
+    assert len(actual_rendered) <= 3, "Too many lines rendered"
     assert len(actual_rendered) == len(mock_buses), "Number of rendered lines mismatch"
     
     for i, actual in enumerate(actual_rendered):
@@ -85,14 +86,15 @@ def test_capture_match(capture):
         eta_part = f"{icon}{bus['diff']}m"
         r_str = f"{str(bus['route'])[:3]:>3}"
         
-        # Calculate padding for 32 chars
+        # Calculate padding for full width (16 chars per 64px panel)
+        total_width = 16 * config.num_panels
         fixed_len = 3 + 1 + 1 + len(eta_part)
-        max_h = 32 - fixed_len
+        max_h = total_width - fixed_len
         h_text = bus['headsign'][:max_h]
         
         expected_rendered = f"{r_str} {h_text:<{max_h}} {eta_part}"
         
-        assert len(actual) == 32
+        assert len(actual) == total_width
         assert actual == expected_rendered
 
 if __name__ == "__main__":

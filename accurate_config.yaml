@@ -4,13 +4,16 @@ transit_tracker:
   show_units: "short"
   list_mode: "sequential"
   scroll_headsigns: true
+  display_offset: false
   stops:
     - stop_id: "st:1_8494"
       time_offset: "-7min"
+      label: "554 Downtown Seattle"
       routes:
         - "st:40_100240"
     - stop_id: "st:1_11920"
       time_offset: "-9min"
+      label: "14 Downtown Seattle"
       routes:
         - "st:1_100039"
   styles: []
@@ -55,6 +58,13 @@ captures:
       554 Downtown Seattle {LIVE}12m
       14 Downtown Seattle {LIVE}22m
       554 Downtown Seattle {LIVE}28m
+  - time: "Sun Mar  8 15:53:00 PDT 2026"
+    display: |
+      554 Downtown Seattle {LIVE}0m
+      14 Downtown Seattle {LIVE}22m
+      554 Downtown Seattle {LIVE}27m
+    simulator: |
+      554 Downtown Seattle {LIVE}8m
 
 # Current target for simulator mock mode
 mock_state:
@@ -73,3 +83,13 @@ mock_state:
     diff: 28
     live: true
     color: "yellow"
+
+subscriptions:
+- feed: st
+  route: st:40_100240
+  stop: st:1_8494
+  label: "554 Downtown Seattle"
+- feed: st
+  route: st:1_100039
+  stop: st:1_11920
+  label: "14 Downtown Seattle"

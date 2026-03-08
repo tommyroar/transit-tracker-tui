@@ -10,6 +10,7 @@ from rich.live import Live
 from rich.text import Text
 from rich.panel import Panel
 from rich.console import Console, Group
+from typing import Optional
 
 from .config import TransitConfig
 
@@ -88,6 +89,7 @@ class LEDSimulator:
                             break
                         data = json.loads(message)
                         if data.get("event") == "schedule":
+                            # The TJ Horner API returns all subscribed trips in one update
                             d = data.get("data", {})
                             self.state["live"] = {
                                 "trips": d.get("trips", []),
@@ -179,8 +181,15 @@ class LEDSimulator:
                     raw_mins = int(raw_diff_sec / 60)
                     eff_mins = int(eff_diff_sec / 60)
 
-                    # Filter: Use raw_mins to match hardware behavior
-                    if raw_mins >= -2:
+                    # Determine which value to display and filter on
+                    if self.config.display_offset:
+                        display_mins = eff_mins
+                        should_show = eff_mins >= 0
+                    else:
+                        display_mins = raw_mins if self.config.time_display == "arrival" else eff_mins
+                        should_show = raw_mins >= -2
+
+                    if should_show:
                         route_name = trip.get("routeName") or trip.get("routeShortName")
                         if not route_name:
                             route_name = sub.label.split("-")[0].strip().split()[0] if sub and sub.label else route_id.split("_")[-1]
@@ -194,11 +203,6 @@ class LEDSimulator:
                         color_hex = trip.get("routeColor")
                         color = f"#{color_hex}" if color_hex else ("cyan" if route_name == "14" else "yellow")
 
-                        if self.config.display_offset:
-                            display_mins = eff_mins
-                        else:
-                            display_mins = raw_mins if self.config.time_display == "arrival" else eff_mins
-                        
                         if display_mins < 0:
                             display_mins = 0
 

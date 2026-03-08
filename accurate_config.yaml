@@ -4,7 +4,7 @@ transit_tracker:
   show_units: "short"
   list_mode: "sequential"
   scroll_headsigns: true
-  display_offset: false
+  display_offset: true
   stops:
     - stop_id: "st:1_8494"
       time_offset: "-7min"
@@ -74,6 +74,15 @@ captures:
       554 Downtown Seattle {LIVE}0m
       14 Downtown Seattle {LIVE}21m
       554 Downtown Seattle {LIVE}28m
+  - time: "Sun Mar  8 16:22:05 PDT 2026"
+    display: |
+      554 Downtown Seattle {LIVE}3m
+      14 Downtown Seattle {LIVE}22m
+      554 Downtown Seattle {LIVE}27m
+    simulator: |
+      14 Downtown Seattle {LIVE}3m
+      554 Downtown Seattle {LIVE}10m
+      14 Downtown Seattle {LIVE}32m
 
 # Current target for simulator mock mode
 mock_state:

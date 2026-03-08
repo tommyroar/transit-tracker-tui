@@ -14,12 +14,13 @@ from .config import TransitConfig
 
 class LEDSimulator:
     def __init__(self, config: TransitConfig):
+        # VERSION: 2026-03-08-FINAL-SYNC
         self.config = config
         self.state = {} # stopId -> list of departures
         self.route_colors = {} # routeId -> hex color
         self.running = True
         self.start_time = time.time()
-        
+
         # Load a tiny bitmap font that mimics LED displays
         font_path = os.path.join(os.path.dirname(__file__), "fonts", "tom-thumb.bdf")
         if not os.path.exists(font_path):
@@ -30,11 +31,9 @@ class LEDSimulator:
     async def _poll_oba(self):
         # MOCK MODE: Bypass OBA poll if mock_state exists in config
         if self.config.mock_state:
-            # print(f"[DEBUG] Using Mock State with {len(self.config.mock_state)} buses")
             self.state = {"mock": self.config.mock_state}
             return
 
-        # print("[DEBUG] Starting Live OBA Poll")
         base_url = "https://api.pugetsound.onebusaway.org/api/where"
         oba_key = "TEST"
 
@@ -65,8 +64,9 @@ class LEDSimulator:
                             for e in entries:
                                 rid = e.get("routeId", "")
                                 rsname = e.get("routeShortName", "")
+                                # INCLUSIVE MATCH: Route 1 and 14 are synonymous for this user's stop
                                 if (rid == target_route_id or rid.split(":")[-1] == target_route_id or 
-                                    rsname == target_short_name or rsname == "14" if target_short_name == "1" else False):
+                                    rsname == target_short_name or (target_short_name == "1" and rsname == "14")):
                                     filtered.append(e)
                             self.state[sub.stop] = filtered
                     except Exception:
@@ -132,17 +132,17 @@ class LEDSimulator:
                     raw_mins = int(raw_diff_sec / 60)
                     eff_mins = int(eff_diff_sec / 60)
 
+                    # Show bus if it hasn't actually left (raw_mins >= -2)
                     if raw_mins >= -2:
                         route_id = trip.get("routeId")
                         route_name = trip.get("routeShortName", sub.route.split("_")[-1] if "_" in sub.route else sub.route)
                         headsign = trip.get("tripHeadsign", sub.label.split("-")[-1].strip() if "-" in sub.label else sub.label)
                         is_live = trip.get("predicted", False)
-
-                        # Use route color from API or default to yellow
                         color = self.route_colors.get(route_id, "yellow")
 
-                        # HARDWARE MATCH: The panel shows the time relative to the offset (Departure Time)
-                        display_mins = eff_mins
+                        # DYNAMIC TIME DISPLAY: Respect the config setting
+                        # Hardware seems to show Arrival Time (raw) when configured as 'arrival'
+                        display_mins = raw_mins if self.config.time_display == "arrival" else eff_mins
 
                         all_departures.append({
                             "diff": display_mins, 
@@ -163,29 +163,20 @@ class LEDSimulator:
         else:
             char_width = 16 * self.config.num_panels
             for dep in all_departures[:4]: 
-                # Icon: '*' if live, else space (Unicode dot is missing in the bitmap font)
+                # Icon: '*' if live, else space
                 icon = "*" if dep["live"] else " "
                 
-                # HARDWARE MATCH: Show raw minutes (e.g. "0m") instead of "Due"
+                # Format time: Match panel exactly (e.g. "12m" or "0m")
+                # Panel does NOT show 'Now' or 'Due' in Arrival mode
                 eta_str = f"{dep['diff']}m"
-                
-                # Full ETA part: icon + time (e.g. "*11m")
-                # No space between icon and time to match reference string
                 full_eta_part = f"{icon}{eta_str}"
                 
-                # LAYOUT MATCH: {route} {headsign} (padding) {full_eta_part}
-                # Route: 3 chars wide, right aligned
                 r_str = f"{str(dep['route'])[:3]:>3}"
-                
-                # Calculate space for headsign
-                # fixed = route(3) + space(1) + space(1) + eta_part
                 fixed_len = 3 + 1 + 1 + len(full_eta_part)
                 max_h = char_width - fixed_len
                 
                 headsign = dep['headsign']
                 if self.config.scroll_headsigns and len(headsign) > max_h:
-                    # Simple scrolling: shift by (elapsed * speed) mod (len + gap)
-                    # Use a gap of 4 spaces
                     display_text = headsign + "    "
                     shift = int(elapsed * 2) % len(display_text)
                     h_text = (display_text[shift:] + display_text[:shift])[:max_h]
@@ -212,9 +203,9 @@ class LEDSimulator:
     async def run(self):
         poll_task = asyncio.create_task(self._poll_oba())
         try:
-            with Live(self._generate_frame(), refresh_per_second=2, screen=True) as live:
+            with Live(self._generate_frame(), refresh_per_second=4, screen=True) as live:
                 while True:
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.25)
                     live.update(self._generate_frame())
         except KeyboardInterrupt:
             pass

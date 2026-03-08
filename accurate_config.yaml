@@ -34,6 +34,11 @@ captures:
       14 Downtown Seattle {LIVE}12m
       554 Downtown Seattle {LIVE}24m
       14 Downtown Seattle {LIVE}42m
+  - time: "Sun Mar  8 15:15:19 PDT 2026"
+    display: |
+      14 Downtown Seattle {LIVE}12m
+      554 Downtown Seattle {LIVE}24m
+      14 Downtown Seattle {LIVE}42m
 
 # Current target for simulator matching
 mock_state:

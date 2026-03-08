@@ -13,9 +13,10 @@ from rich.console import Console, Group
 from .config import TransitConfig
 
 class LEDSimulator:
-    def __init__(self, config: TransitConfig):
+    def __init__(self, config: TransitConfig, force_live: bool = False):
         # VERSION: 2026-03-08-UNIFIED-POLL
         self.config = config
+        self.force_live = force_live
         self.state = {} # stopId -> { routeId -> [arrivals], 'timestamp' -> float }
         self.route_colors = {} # routeId -> hex color
         self.running = True
@@ -30,28 +31,30 @@ class LEDSimulator:
 
     async def _poll_oba(self):
         # MOCK MODE: Priority 1: Explicit mock_state, Priority 2: Latest Capture
-        mock_data = self.config.mock_state
-        if not mock_data and self.config.captures:
-            # Parse the latest capture on the fly
-            latest = self.config.captures[-1]
-            display_text = latest.get("display", "").strip()
-            mock_data = []
-            for line in display_text.split('\n'):
-                # Simple parser for capture lines
-                parts = line.split()
-                if not parts: continue
-                route = parts[0]
-                live = "{LIVE}" in line
-                time_str = parts[-1].replace("{LIVE}", "").replace("m", "")
-                try:
-                    diff = int(time_str)
-                except ValueError:
-                    diff = 0
-                headsign = " ".join(line.replace("{LIVE}", " ").split()[1:-1])
-                mock_data.append({
-                    "route": route, "headsign": headsign, "diff": diff, 
-                    "live": live, "color": "cyan" if route == "14" else "yellow"
-                })
+        mock_data = None
+        if not self.force_live:
+            mock_data = self.config.mock_state
+            if not mock_data and self.config.captures:
+                # Parse the latest capture on the fly
+                latest = self.config.captures[-1]
+                display_text = latest.get("display", "").strip()
+                mock_data = []
+                for line in display_text.split('\n'):
+                    # Simple parser for capture lines
+                    parts = line.split()
+                    if not parts: continue
+                    route = parts[0]
+                    live = "{LIVE}" in line
+                    time_str = parts[-1].replace("{LIVE}", "").replace("m", "")
+                    try:
+                        diff = int(time_str)
+                    except ValueError:
+                        diff = 0
+                    headsign = " ".join(line.replace("{LIVE}", " ").split()[1:-1])
+                    mock_data.append({
+                        "route": route, "headsign": headsign, "diff": diff, 
+                        "live": live, "color": "cyan" if route == "14" else "yellow"
+                    })
 
         if mock_data:
             self.state = {"mock": {"all": mock_data, "timestamp": time.time()}}
@@ -144,9 +147,9 @@ class LEDSimulator:
         elapsed = 0 if reference_time else (time.time() - self.start_time)
 
         # MOCK STATE HANDLING
-        if self.config.mock_state:
-            # Check for "mock" key or just use the list if mock_state is already formatted
-            mock_data = self.state.get("mock", {}).get("all", self.config.mock_state)
+        is_mock = "mock" in self.state
+        if is_mock:
+            mock_data = self.state["mock"]["all"]
             for mock_bus in mock_data:
                 all_departures.append({
                     "diff": mock_bus.get("diff", 0),
@@ -205,10 +208,10 @@ class LEDSimulator:
         all_departures.sort(key=lambda x: x["diff"])
         
         lines = []
-        if not self.state and not self.config.mock_state:
+        if not self.state:
             lines.append(self._render_led_string("Connecting...", color="cyan"))
         elif not all_departures:
-            msg = "No Mock Buses" if self.config.mock_state else "No Live Buses"
+            msg = "No Mock Buses" if is_mock else "No Live Buses"
             lines.append(self._render_led_string(msg, color="white"))
         else:
             char_width = 16 * self.config.num_panels
@@ -233,8 +236,10 @@ class LEDSimulator:
                 lines.append(self._render_led_string(line_str, color=dep["color"]))
 
         panel_title = f"[bold red]HUB75 {64 * self.config.num_panels}x32 LED SIMULATOR[/bold red]"
-        if self.config.mock_state:
+        if is_mock:
             panel_title += " [yellow](MOCK DATA)[/yellow]"
+        else:
+            panel_title += " [green](LIVE)[/green]"
 
         return Panel(
             Group(*lines),
@@ -263,11 +268,11 @@ class LEDSimulator:
             except asyncio.CancelledError:
                 pass
 
-def run_simulator(config: TransitConfig):
-    if not config.subscriptions and not config.mock_state:
-        Console().print("[bold red]Error:[/bold red] No stops or mock state configured.")
+def run_simulator(config: TransitConfig, force_live: bool = False):
+    if not config.subscriptions and not config.mock_state and not config.captures:
+        Console().print("[bold red]Error:[/bold red] No stops or mock state/captures configured.")
         return
-    sim = LEDSimulator(config)
+    sim = LEDSimulator(config, force_live=force_live)
     try:
         asyncio.run(sim.run())
     except KeyboardInterrupt:

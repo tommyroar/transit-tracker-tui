@@ -400,8 +400,19 @@ def main_menu():
                     change_panels_wizard(config, config_path)
 
         elif action == "Simulator":
+            force_live = False
+            if config.mock_state or config.captures:
+                sim_mode = questionary.rawselect(
+                    "Select Simulator Mode:",
+                    choices=["Live Data", "Mock/Capture Data", "Back"]
+                ).ask()
+                
+                if not sim_mode or sim_mode == "Back":
+                    continue
+                force_live = (sim_mode == "Live Data")
+
             rprint(f"[dim]Using config: {config_path}[/dim]")
-            run_simulator(config)
+            run_simulator(config, force_live=force_live)
             
         elif action == "Service Manager":
             if status == "UNSUPPORTED":

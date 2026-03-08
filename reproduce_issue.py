@@ -13,7 +13,8 @@ from transit_tracker.simulator import LEDSimulator
 
 async def reproduce():
     # Use the live configuration from accurate_config.yaml
-    config = TransitConfig.load("accurate_config.yaml")
+    config_path = os.path.join(os.path.dirname(__file__), "accurate_config.yaml")
+    config = TransitConfig.load(config_path)
     
     print(f"Total subscriptions: {len(config.subscriptions)}")
     for i, sub in enumerate(config.subscriptions):

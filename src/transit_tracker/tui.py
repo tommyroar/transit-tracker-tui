@@ -211,8 +211,13 @@ def change_ntfy_wizard(config: TransitConfig, config_path: str):
             print(f"ntfy.sh topic updated to {val} (in-memory).")
 
 def main_menu():
-    # Prioritize accurate_config.yaml if it exists in the current directory
-    if os.path.exists("accurate_config.yaml"):
+    # Prioritize accurate_config.yaml in the project root
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    workspace_accurate_config = os.path.join(project_root, "accurate_config.yaml")
+    
+    if os.path.exists(workspace_accurate_config):
+        config_path = workspace_accurate_config
+    elif os.path.exists("accurate_config.yaml"):
         config_path = os.path.abspath("accurate_config.yaml")
     else:
         config_path = get_last_config_path()

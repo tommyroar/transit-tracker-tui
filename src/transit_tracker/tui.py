@@ -43,14 +43,8 @@ def quick_select(message, choices, default=None):
     # Create the prompt WITHOUT the key_bindings kwarg to avoid conflict
     prompt = questionary.select(message, choices=prefixed_choices, default=default)
     
-    def pre_run():
-        from prompt_toolkit.application.current import get_app
-        from prompt_toolkit.key_binding.key_bindings import merge_key_bindings
-        app = get_app()
-        
-        # Merge our number bindings with the existing ones (arrows, enter, etc.)
-        app.key_bindings = merge_key_bindings([app.key_bindings, kb])
-
+    from prompt_toolkit.key_binding.key_bindings import merge_key_bindings
+    
     @kb.add("1")
     @kb.add("2")
     @kb.add("3")
@@ -67,16 +61,27 @@ def quick_select(message, choices, default=None):
         # Access the choices from the current application's layout
         # In questionary, the control is usually a ChoiceControl
         try:
-            available_choices = event.app.layout.current_control.choices
-            if idx < len(available_choices):
-                # Move selection and exit immediately
-                event.app.layout.current_control.selected_choice_index = idx
-                event.app.exit(result=available_choices[idx].value)
-        except AttributeError:
+            # We must find the correct ChoiceControl in the layout
+            from questionary.prompts.common import ChoiceControl
+            # The current_control is the ChoiceControl
+            control = event.app.layout.current_control
+            if isinstance(control, ChoiceControl):
+                available_choices = control.choices
+                if idx < len(available_choices):
+                    # Move selection and exit immediately
+                    control.selected_choice_index = idx
+                    event.app.exit(result=available_choices[idx].value)
+        except Exception:
             # Fallback if the layout is different than expected
             pass
 
-    return prompt.ask(patch_stdout=True, pre_run=pre_run)
+    # Merge our number bindings with the existing ones (arrows, enter, etc.)
+    prompt.application.key_bindings = merge_key_bindings([
+        prompt.application.key_bindings, 
+        kb
+    ])
+
+    return prompt.ask(patch_stdout=True)
 
 def check_service_status():
     if sys.platform != "darwin":

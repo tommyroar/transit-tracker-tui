@@ -40,9 +40,17 @@ def quick_select(message, choices, default=None):
         else:
             prefixed_choices.append(c)
 
-    # Create the prompt with the keybindings
-    prompt = questionary.select(message, choices=prefixed_choices, default=default, key_bindings=kb)
+    # Create the prompt WITHOUT the key_bindings kwarg to avoid conflict
+    prompt = questionary.select(message, choices=prefixed_choices, default=default)
     
+    def pre_run():
+        from prompt_toolkit.application.current import get_app
+        from prompt_toolkit.key_binding.key_bindings import merge_key_bindings
+        app = get_app()
+        
+        # Merge our number bindings with the existing ones (arrows, enter, etc.)
+        app.key_bindings = merge_key_bindings([app.key_bindings, kb])
+
     @kb.add("1")
     @kb.add("2")
     @kb.add("3")
@@ -56,15 +64,19 @@ def quick_select(message, choices, default=None):
         key = event.key_sequence[0].key
         idx = int(key) - 1
         
-        # Get actual choices from the prompt
-        available_choices = prompt.unsafe_ask().content_control.choices
-        if idx < len(available_choices):
-            # Move selection to the index and confirm
-            prompt.unsafe_ask().content_control.selected_choice_index = idx
-            event.app.exit(result=available_choices[idx].value)
+        # Access the choices from the current application's layout
+        # In questionary, the control is usually a ChoiceControl
+        try:
+            available_choices = event.app.layout.current_control.choices
+            if idx < len(available_choices):
+                # Move selection and exit immediately
+                event.app.layout.current_control.selected_choice_index = idx
+                event.app.exit(result=available_choices[idx].value)
+        except AttributeError:
+            # Fallback if the layout is different than expected
+            pass
 
-    # We need to use the internal prompt_toolkit application to apply keybindings
-    return prompt.ask(patch_stdout=True)
+    return prompt.ask(patch_stdout=True, pre_run=pre_run)
 
 def check_service_status():
     if sys.platform != "darwin":

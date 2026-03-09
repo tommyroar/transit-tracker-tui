@@ -18,7 +18,7 @@ PLIST_NAME = "org.eastsideurbanism.transit-tracker.plist"
 PLIST_PATH = os.path.expanduser(f"~/Library/LaunchAgents/{PLIST_NAME}")
 
 from prompt_toolkit.key_binding import KeyBindings
-from questionary.prompts.common import Choice
+from questionary.prompts.common import Choice, ChoiceControl
 
 def quick_select(message, choices, default=None):
     """
@@ -55,25 +55,32 @@ def quick_select(message, choices, default=None):
     @kb.add("8")
     @kb.add("9")
     def _(event):
-        key = event.key_sequence[0].key
-        idx = int(key) - 1
+        # Determine index from key
+        key_char = event.key_sequence[0].key
+        # prompt_toolkit keys might be strings like "1" or Key objects
+        if hasattr(key_char, "value"): # It's a Key object
+            key_char = key_char.value
+            
+        if not str(key_char).isdigit():
+            return
+            
+        idx = int(key_char) - 1
         
-        # Access the choices from the current application's layout
-        # In questionary, the control is usually a ChoiceControl
-        try:
-            # We must find the correct ChoiceControl in the layout
-            from questionary.prompts.common import ChoiceControl
-            # The current_control is the ChoiceControl
+        # Find the ChoiceControl in the layout
+        # We search both current_control and the entire layout objects
+        control = None
+        if isinstance(event.app.layout.current_control, ChoiceControl):
             control = event.app.layout.current_control
-            if isinstance(control, ChoiceControl):
-                available_choices = control.choices
-                if idx < len(available_choices):
-                    # Move selection and exit immediately
-                    control.selected_choice_index = idx
-                    event.app.exit(result=available_choices[idx].value)
-        except Exception:
-            # Fallback if the layout is different than expected
-            pass
+        else:
+            for obj in event.app.layout.find_objects():
+                if isinstance(obj, ChoiceControl):
+                    control = obj
+                    break
+        
+        if control and idx < len(control.choices):
+            # Move selection and exit immediately
+            control.selected_choice_index = idx
+            event.app.exit(result=control.choices[idx].value)
 
     # Merge our number bindings with the existing ones (arrows, enter, etc.)
     prompt.application.key_bindings = merge_key_bindings([

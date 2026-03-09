@@ -40,8 +40,8 @@ def quick_select(message, choices, default=None):
         else:
             prefixed_choices.append(c)
 
-    # Create the prompt but don't ask yet
-    prompt = questionary.select(message, choices=prefixed_choices, default=default)
+    # Create the prompt with the keybindings
+    prompt = questionary.select(message, choices=prefixed_choices, default=default, key_bindings=kb)
     
     @kb.add("1")
     @kb.add("2")
@@ -64,7 +64,7 @@ def quick_select(message, choices, default=None):
             event.app.exit(result=available_choices[idx].value)
 
     # We need to use the internal prompt_toolkit application to apply keybindings
-    return prompt.ask(patch_stdout=True, kbd=kb)
+    return prompt.ask(patch_stdout=True)
 
 def check_service_status():
     if sys.platform != "darwin":

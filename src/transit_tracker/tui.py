@@ -210,9 +210,35 @@ def change_ntfy_wizard(config: TransitConfig, config_path: str):
         else:
             print(f"ntfy.sh topic updated to {val} (in-memory).")
 
+def change_api_mode_wizard(config: TransitConfig, config_path: str):
+    mode = questionary.select(
+        "Select API Mode:",
+        choices=[
+            questionary.Choice("Local (Internal Proxy)", value=True),
+            questionary.Choice("Cloud (Public Endpoint)", value=False)
+        ],
+        default="Local (Internal Proxy)" if config.use_local_api else "Cloud (Public Endpoint)"
+    ).ask()
+    
+    if mode is not None:
+        config.use_local_api = mode
+        if not mode:
+            # If switching to cloud, ask for the URL or use default
+            url = questionary.text(
+                "Enter Public API URL:",
+                default=config.api_url if "localhost" not in config.api_url else "wss://tt.horner.tj/"
+            ).ask()
+            if url:
+                config.api_url = url
+        else:
+            config.api_url = "ws://localhost:8000/"
+            
+        config.save(config_path)
+        print(f"API mode updated to {'Local' if mode else 'Cloud'}.")
+
 def main_menu():
     # Prioritize accurate_config.yaml in the project root
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "transit-tracker-tui"))
     workspace_accurate_config = os.path.join(project_root, "accurate_config.yaml")
     
     if os.path.exists(workspace_accurate_config):
@@ -294,20 +320,24 @@ def main_menu():
                 c_action = questionary.rawselect(
                     "Configurator",
                     choices=[
-                        "Config Files",
-                        "Device Config",
-                        "Notifications",
-                        "4. Manage Stops",
-                        "5. Change Number of Panels",
-                        "6. Debug",
+                        "1. Config Files",
+                        "2. Device Config",
+                        "3. Notifications",
+                        "4. API Settings",
+                        "5. Manage Stops",
+                        "6. Change Number of Panels",
+                        "7. Debug",
                         "Back"
                     ]
                 ).ask()
                 
                 if not c_action or c_action == "Back":
                     break
+
+                if c_action == "4. API Settings":
+                    change_api_mode_wizard(config, config_path)
                     
-                if c_action == "6. Debug":
+                if c_action == "7. Debug":
                     d_action = questionary.rawselect(
                         "Debug Menu",
                         choices=["Run Mock Simulator", "Back"]
@@ -350,7 +380,7 @@ def main_menu():
                             except Exception as e:
                                 print(f"Error saving config: {e}")
                                 
-                elif c_action == "Device Config":
+                elif c_action == "2. Device Config":
                     d_action = questionary.rawselect(
                         "Device Config",
                         choices=[
@@ -380,7 +410,7 @@ def main_menu():
                                 else:
                                     print("Configuration read into memory. Please save it to a file.")
 
-                elif c_action == "Notifications":
+                elif c_action == "3. Notifications":
                     n_action = questionary.rawselect(
                         "Notifications",
                         choices=[
@@ -395,7 +425,7 @@ def main_menu():
                     elif n_action == "Add/Change ntfy.sh Endpoint":
                         change_ntfy_wizard(config, config_path)
                         
-                elif c_action == "Manage Stops":
+                elif c_action == "5. Manage Stops":
                     s_action = questionary.rawselect(
                         "Manage Stops",
                         choices=[
@@ -410,7 +440,7 @@ def main_menu():
                     elif s_action == "Remove a Stop":
                         remove_stop_wizard(config, config_path)
                         
-                elif c_action == "Change Number of Panels":
+                elif c_action == "6. Change Number of Panels":
                     change_panels_wizard(config, config_path)
 
         elif action == "Simulator":

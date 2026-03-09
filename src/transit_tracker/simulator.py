@@ -261,7 +261,8 @@ class LEDSimulator:
         if is_mock:
             panel_title += " [yellow](MOCK DATA)[/yellow]"
         else:
-            panel_title += " [green](LIVE)[/green]"
+            source = "LOCAL" if "localhost" in self.config.api_url or "127.0.0.1" in self.config.api_url else self.config.api_url.replace("wss://", "").replace("ws://", "").split('/')[0]
+            panel_title += f" [green](LIVE from {source})[/green]"
 
         return Panel(
             Group(*lines),

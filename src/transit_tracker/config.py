@@ -54,6 +54,7 @@ class TransitTrackerSettings(BaseModel):
 class TransitConfig(BaseModel):
     # Compatibility with flat format
     api_url: str = Field(default="wss://tt.horner.tj")
+    use_local_api: bool = Field(default=True)
     ntfy_topic: str = Field(default="transit-alerts")
     arrival_threshold_minutes: int = Field(default=5, ge=1)
     check_interval_seconds: int = Field(default=30, ge=10)

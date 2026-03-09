@@ -17,6 +17,55 @@ from .simulator import run_simulator
 PLIST_NAME = "org.eastsideurbanism.transit-tracker.plist"
 PLIST_PATH = os.path.expanduser(f"~/Library/LaunchAgents/{PLIST_NAME}")
 
+from prompt_toolkit.key_binding import KeyBindings
+from questionary.prompts.common import Choice
+
+def quick_select(message, choices, default=None):
+    """
+    A custom selector that supports arrow navigation AND direct selection
+    via numbers (1-9) without hitting return.
+    """
+    kb = KeyBindings()
+    
+    # Prepend numbers to choice titles for UI clarity
+    prefixed_choices = []
+    for i, c in enumerate(choices):
+        prefix = f"{i+1}. "
+        if isinstance(c, str):
+            prefixed_choices.append(Choice(title=f"{prefix}{c}", value=c))
+        elif isinstance(c, Choice):
+            if not c.title.startswith(prefix):
+                c.title = f"{prefix}{c.title}"
+            prefixed_choices.append(c)
+        else:
+            prefixed_choices.append(c)
+
+    # Create the prompt but don't ask yet
+    prompt = questionary.select(message, choices=prefixed_choices, default=default)
+    
+    @kb.add("1")
+    @kb.add("2")
+    @kb.add("3")
+    @kb.add("4")
+    @kb.add("5")
+    @kb.add("6")
+    @kb.add("7")
+    @kb.add("8")
+    @kb.add("9")
+    def _(event):
+        key = event.key_sequence[0].key
+        idx = int(key) - 1
+        
+        # Get actual choices from the prompt
+        available_choices = prompt.unsafe_ask().content_control.choices
+        if idx < len(available_choices):
+            # Move selection to the index and confirm
+            prompt.unsafe_ask().content_control.selected_choice_index = idx
+            event.app.exit(result=available_choices[idx].value)
+
+    # We need to use the internal prompt_toolkit application to apply keybindings
+    return prompt.ask(patch_stdout=True, kbd=kb)
+
 def check_service_status():
     if sys.platform != "darwin":
         return "UNSUPPORTED"
@@ -30,13 +79,13 @@ def manage_service_menu():
             print("Background service management is only supported on macOS.")
             break
             
-        action = questionary.select(
+        action = quick_select(
             f"Manage Service (Status: {status})",
             choices=[
                 "Start Service" if status == "STOPPED" else "Stop Service",
                 "Back"
             ]
-        ).ask()
+        )
         
         if not action or action == "Back":
             break
@@ -104,10 +153,10 @@ async def add_stop_wizard(config: TransitConfig, config_path: str):
             for r in routes
         ]
         
-        selected_route = questionary.select(
+        selected_route = quick_select(
             "Select a route:",
             choices=route_choices
-        ).ask()
+        )
 
         if not selected_route:
             return
@@ -124,10 +173,10 @@ async def add_stop_wizard(config: TransitConfig, config_path: str):
             for s in stops
         ]
 
-        selected_stop = questionary.select(
+        selected_stop = quick_select(
             "Select a stop:",
             choices=stop_choices
-        ).ask()
+        )
 
         if not selected_stop:
             return
@@ -161,10 +210,10 @@ def remove_stop_wizard(config: TransitConfig, config_path: str):
         for idx, sub in enumerate(config.subscriptions)
     ]
     
-    selected_idx = questionary.select(
+    selected_idx = quick_select(
         "Select a stop to remove:",
         choices=choices
-    ).ask()
+    )
 
     if selected_idx is not None:
         removed = config.subscriptions.pop(selected_idx)
@@ -185,11 +234,11 @@ def change_threshold_wizard(config: TransitConfig, config_path: str):
         print("Invalid input.")
 
 def change_panels_wizard(config: TransitConfig, config_path: str):
-    val = questionary.select(
+    val = quick_select(
         "Select number of chained LED panels:",
         choices=["1", "2", "3", "4"],
         default=str(config.num_panels)
-    ).ask()
+    )
     
     if val:
         config.num_panels = int(val)
@@ -211,14 +260,14 @@ def change_ntfy_wizard(config: TransitConfig, config_path: str):
             print(f"ntfy.sh topic updated to {val} (in-memory).")
 
 def change_api_mode_wizard(config: TransitConfig, config_path: str):
-    mode = questionary.select(
+    mode = quick_select(
         "Select API Mode:",
         choices=[
             questionary.Choice("Local (Internal Proxy)", value=True),
             questionary.Choice("Cloud (Public Endpoint)", value=False)
         ],
         default="Local (Internal Proxy)" if config.use_local_api else "Cloud (Public Endpoint)"
-    ).ask()
+    )
     
     if mode is not None:
         config.use_local_api = mode
@@ -302,7 +351,7 @@ def main_menu():
         has_ports = len(ports) > 0
         has_config = config_path is not None
 
-        action = questionary.rawselect(
+        action = quick_select(
             "What would you like to do?",
             choices=[
                 "Configurator",
@@ -310,46 +359,46 @@ def main_menu():
                 "Service Manager",
                 "Exit"
             ]
-        ).ask()
+        )
 
         if not action or action == "Exit":
             break
             
         elif action == "Configurator":
             while True:
-                c_action = questionary.rawselect(
+                c_action = quick_select(
                     "Configurator",
                     choices=[
-                        "1. Config Files",
-                        "2. Device Config",
-                        "3. Notifications",
-                        "4. API Settings",
-                        "5. Manage Stops",
-                        "6. Change Number of Panels",
-                        "7. Debug",
+                        "Config Files",
+                        "Device Config",
+                        "Notifications",
+                        "API Settings",
+                        "Manage Stops",
+                        "Change Number of Panels",
+                        "Debug",
                         "Back"
                     ]
-                ).ask()
+                )
                 
                 if not c_action or c_action == "Back":
                     break
 
-                if c_action == "4. API Settings":
+                if c_action == "API Settings":
                     change_api_mode_wizard(config, config_path)
                     
-                if c_action == "7. Debug":
-                    d_action = questionary.rawselect(
+                if c_action == "Debug":
+                    d_action = quick_select(
                         "Debug Menu",
                         choices=["Run Mock Simulator", "Back"]
-                    ).ask()
+                    )
                     if d_action == "Run Mock Simulator":
                         run_simulator(config, force_live=False)
 
-                elif c_action == "1. Config Files":
-                    f_action = questionary.rawselect(
+                elif c_action == "Config Files":
+                    f_action = quick_select(
                         "Config Files",
                         choices=["Load Config File", "Save Config File As...", "Back"]
-                    ).ask()
+                    )
                     
                     if f_action == "Load Config File":
                         new_path = questionary.path(
@@ -380,28 +429,28 @@ def main_menu():
                             except Exception as e:
                                 print(f"Error saving config: {e}")
                                 
-                elif c_action == "2. Device Config":
-                    d_action = questionary.rawselect(
+                elif c_action == "Device Config":
+                    d_action = quick_select(
                         "Device Config",
                         choices=[
                             questionary.Choice("Flash Device", disabled="No device connected" if not has_ports else None),
                             questionary.Choice("Download from Device", disabled="No device connected" if not has_ports else None),
                             "Back"
                         ]
-                    ).ask()
+                    )
                     
                     if d_action == "Flash Device":
-                        selected_port = questionary.rawselect(
+                        selected_port = quick_select(
                             "Select your Transit Tracker device:",
                             choices=ports
-                        ).ask()
+                        )
                         if selected_port:
                             flash_hardware(selected_port, config)
                     elif d_action == "Download from Device":
-                        selected_port = questionary.rawselect(
+                        selected_port = quick_select(
                             "Select your Transit Tracker device:",
                             choices=ports
-                        ).ask()
+                        )
                         if selected_port:
                             if load_hardware_config(selected_port, config):
                                 if config_path:
@@ -410,37 +459,37 @@ def main_menu():
                                 else:
                                     print("Configuration read into memory. Please save it to a file.")
 
-                elif c_action == "3. Notifications":
-                    n_action = questionary.rawselect(
+                elif c_action == "Notifications":
+                    n_action = quick_select(
                         "Notifications",
                         choices=[
                             questionary.Choice("Change Alert Threshold", disabled="Please load or save a config file first" if not has_config else None),
                             "Add/Change ntfy.sh Endpoint",
                             "Back"
                         ]
-                    ).ask()
+                    )
                     
                     if n_action == "Change Alert Threshold":
                         change_threshold_wizard(config, config_path)
                     elif n_action == "Add/Change ntfy.sh Endpoint":
                         change_ntfy_wizard(config, config_path)
                         
-                elif c_action == "5. Manage Stops":
-                    s_action = questionary.rawselect(
+                elif c_action == "Manage Stops":
+                    s_action = quick_select(
                         "Manage Stops",
                         choices=[
                             questionary.Choice("Add a Stop", disabled="Please load or save a config file first" if not has_config else None),
                             questionary.Choice("Remove a Stop", disabled="Please load or save a config file first" if not has_config else None),
                             "Back"
                         ]
-                    ).ask()
+                    )
                     
                     if s_action == "Add a Stop":
                         asyncio.run(add_stop_wizard(config, config_path))
                     elif s_action == "Remove a Stop":
                         remove_stop_wizard(config, config_path)
                         
-                elif c_action == "6. Change Number of Panels":
+                elif c_action == "Change Number of Panels":
                     change_panels_wizard(config, config_path)
 
         elif action == "Simulator":

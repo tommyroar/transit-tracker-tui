@@ -56,19 +56,59 @@ class MicroFont:
         'Z': [0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F],
         ' ': [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
         'm': [0x00, 0x00, 0x1A, 0x15, 0x15, 0x15, 0x15],
-        '*': [0x04, 0x15, 0x0E, 0x1F, 0x0E, 0x15, 0x04], # Placeholder for LIVE
+        '*': [ # Default/Full LIVE icon
+            [0x04, 0x15, 0x0E, 0x1F, 0x0E, 0x15, 0x04]
+        ],
         '.': [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04],
         '-': [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00],
         '?': [0x0E, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04],
     }
 
+    # Animated LIVE icon frames
+    LIVE_FRAMES = [
+        [0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], # Dot
+        [0x04, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00], # Expanding 1
+        [0x04, 0x0A, 0x11, 0x00, 0x00, 0x00, 0x00], # Expanding 2
+        [0x04, 0x0A, 0x11, 0x00, 0x00, 0x00, 0x00], # Hold
+        [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], # Blink out
+    ]
+
     @classmethod
-    def get_bitmap(cls, text: str) -> list[list[int]]:
+    def get_bitmap(cls, text: str, elapsed: float = 0.0) -> list[list[int]]:
         rows = [[] for _ in range(7)]
+        # Split text into segments to handle '*' animation
+        segments = []
+        curr = ""
         for char in text:
-            glyph = cls.GLYPHS.get(char.upper(), cls.GLYPHS['?'])
+            if char == '*':
+                if curr: segments.append(curr)
+                segments.append('*')
+                curr = ""
+            else:
+                curr += char
+        if curr: segments.append(curr)
+
+        for seg in segments:
+            if seg == '*':
+                # Animate LIVE icon: 5 frames, 0.15s each
+                idx = int(elapsed * 6.6) % len(cls.LIVE_FRAMES)
+                glyph = cls.LIVE_FRAMES[idx]
+            else:
+                for char in seg:
+                    glyph = cls.GLYPHS.get(char.upper(), cls.GLYPHS['?'])
+                    # If it's a list of lists (multiple frames), take first
+                    if isinstance(glyph[0], list):
+                        glyph = glyph[0]
+                    
+                    for i in range(7):
+                        bits = glyph[i]
+                        for b in range(4, -1, -1):
+                            rows[i].append(1 if (bits & (1 << b)) else 0)
+                        rows[i].append(0) # Gap
+                continue
+
+            # Append the animated glyph to rows
             for i in range(7):
-                # 5 bits for the char + 1 bit gap
                 bits = glyph[i]
                 for b in range(4, -1, -1):
                     rows[i].append(1 if (bits & (1 << b)) else 0)
@@ -77,7 +117,7 @@ class MicroFont:
 
 class LEDSimulator:
     def __init__(self, config: TransitConfig, force_live: bool = True):
-        # VERSION: 2026-03-08-PIXEL-ACCURATE
+        # VERSION: 2026-03-08-ANIMATED
         self.config = config
         self.force_live = force_live
         self.state = {} # stopId -> { 'trips': [], 'timestamp': float }
@@ -154,7 +194,7 @@ class LEDSimulator:
                 if self.running:
                     await asyncio.sleep(5) # Retry on connection loss
 
-    def _render_led_string(self, text_or_spans: Union[str, list[tuple[str, str]]], color: str = "yellow", force_upper: bool = False) -> Text:
+    def _render_led_string(self, text_or_spans: Union[str, list[tuple[str, str]]], color: str = "yellow", elapsed: float = 0.0) -> Text:
         """Renders text as a dot-matrix style LED string using the MicroFont."""
         if isinstance(text_or_spans, str):
             spans = [(text_or_spans, color)]
@@ -163,7 +203,7 @@ class LEDSimulator:
 
         all_pixel_spans = []
         for t, c in spans:
-            bitmap = self.microfont.get_bitmap(t)
+            bitmap = self.microfont.get_bitmap(t, elapsed=elapsed)
             all_pixel_spans.append((bitmap, c))
 
         if not all_pixel_spans:
@@ -188,7 +228,8 @@ class LEDSimulator:
         current_time_ms = int(now.timestamp() * 1000)
         now_ts = now.timestamp()
         
-        elapsed = 0 if reference_time else (time.time() - self.start_time)
+        real_elapsed = time.time() - self.start_time
+        elapsed = 0 if reference_time else real_elapsed
 
         # MOCK STATE HANDLING
         is_mock = "mock" in self.state
@@ -300,10 +341,10 @@ class LEDSimulator:
         
         lines = []
         if not self.state:
-            lines.append(self._render_led_string("Connecting...", color="cyan"))
+            lines.append(self._render_led_string("Connecting...", color="cyan", elapsed=elapsed))
         elif not all_departures:
             msg = "No Mock Buses" if is_mock else "No Live Buses"
-            lines.append(self._render_led_string(msg, color="white"))
+            lines.append(self._render_led_string(msg, color="white", elapsed=elapsed))
         else:
             # 64px per panel / 6px per char (5px glyph + 1px gap) = ~10.6 chars per panel.
             char_width = int(64 * self.config.num_panels / 6)
@@ -347,7 +388,7 @@ class LEDSimulator:
                     (f"{h_text:<{max_h_len}} ", "white"),
                     (full_eta_part, "bright_blue")
                 ]
-                lines.append(self._render_led_string(spans))
+                lines.append(self._render_led_string(spans, elapsed=elapsed))
 
         panel_title = f"[bold red]HUB75 {64 * self.config.num_panels}x32 LED SIMULATOR[/bold red]"
         if is_mock:

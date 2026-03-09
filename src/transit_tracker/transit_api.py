@@ -92,5 +92,52 @@ class TransitAPI:
         except Exception as e:
             raise TransitAPIError(f"Failed to fetch stops: {e}")
 
+    async def get_arrivals(self, stop_id: str) -> List[Dict[str, Any]]:
+        """
+        Fetches real-time arrivals for a specific stop.
+        """
+        # Strip internal feed prefix if present (e.g. 'st:1_8494' -> '1_8494')
+        clean_stop_id = stop_id
+        if ":" in stop_id and "_" in stop_id:
+            # Check if the colon is before the underscore (likely our prefix)
+            colon_idx = stop_id.find(":")
+            underscore_idx = stop_id.find("_")
+            if colon_idx < underscore_idx:
+                clean_stop_id = stop_id[colon_idx+1:]
+
+        url = f"{self.oba_base_url}/arrivals-and-departures-for-stop/{urllib.parse.quote(clean_stop_id)}.json"
+        params = {"key": self.oba_key}
+        
+        try:
+            response = await self.client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            if data.get("code") == 200:
+                arrivals = data["data"]["entry"]["arrivalsAndDepartures"]
+                # Include references for route names/colors if needed
+                routes = {r["id"]: r for r in data["data"]["references"].get("routes", [])}
+                
+                results = []
+                for arr in arrivals:
+                    route_id = arr["routeId"]
+                    route_info = routes.get(route_id, {})
+                    
+                    results.append({
+                        "tripId": arr["tripId"],
+                        "routeId": route_id,
+                        "stopId": stop_id,
+                        "arrivalTime": arr.get("predictedArrivalTime") or arr.get("scheduledArrivalTime"),
+                        "predictedArrivalTime": arr.get("predictedArrivalTime"),
+                        "scheduledArrivalTime": arr.get("scheduledArrivalTime"),
+                        "routeName": route_info.get("shortName") or arr.get("routeShortName"),
+                        "headsign": arr.get("tripHeadsign"),
+                        "isRealtime": arr.get("predictedArrivalTime") is not None,
+                        "routeColor": route_info.get("color")
+                    })
+                return results
+            return []
+        except Exception as e:
+            raise TransitAPIError(f"Failed to fetch arrivals: {e}")
+
     async def close(self):
         await self.client.aclose()

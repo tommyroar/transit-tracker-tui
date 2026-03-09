@@ -9,6 +9,43 @@ A lightweight, terminal-based transit notification service for macOS. It monitor
 - **Background Daemon:** Runs silently in the background on your Mac using `launchd`.
 - **Push Notifications:** Pushes rich alerts to your phone via `ntfy.sh` (e.g., "Bus 554 arriving in 5 mins!").
 
+## 🏗️ Architecture
+
+The project supports two primary modes of operation: connecting to a cloud-based proxy or hosting a local WebSocket server that interacts directly with transit APIs.
+
+### 1. Default Configuration (Cloud)
+*The hardware connects directly to the public WebSocket API hosted by TJ Horner.*
+
+```mermaid
+sequenceDiagram
+    participant HW as LED Matrix (ESP32)
+    participant Cloud as tt.horner.tj (Remote)
+    participant API as Transit API (OneBusAway)
+
+    HW->>Cloud: WebSocket Connection (Subscribe)
+    Cloud->>API: Poll Arrival Data
+    API-->>Cloud: XML/JSON Response
+    Cloud-->>HW: Push Real-time Updates (JSON)
+```
+
+### 2. Local WebSocket Host
+*The hardware connects to this Python service running on your local network, which proxies the data and manages local notifications.*
+
+```mermaid
+sequenceDiagram
+    participant HW as LED Matrix (ESP32)
+    participant Py as transit-tracker (Local Python)
+    participant API as Transit API (OneBusAway)
+    participant NTFY as ntfy.sh (Push Service)
+
+    HW->>Py: WebSocket Connection (websocket_server.py)
+    Py->>API: Fetch Arrival Data (transit_api.py)
+    API-->>Py: Raw Transit Data
+    Py-->>HW: Proxy Updates to Display
+    Note over Py: logic in websocket_service.py
+    Py->>NTFY: Trigger Push Notifications
+```
+
 ## 📦 Installation
 
 This project is built and managed using `uv`. To install it globally as a self-contained command-line tool, run the following from the project directory:
@@ -70,8 +107,8 @@ subscriptions:
 
 This project is designed to run on specific LED matrix hardware. Below are the components used in this build:
 
-- **Waveshare RGB Full-Color LED Matrix Panel (64×32 Pixels):** 2.5mm pitch.
-- **Adafruit ESP32-S3 LED Matrix Portal:** A specialized driver board for HUB75 panels.
+- **Waveshare RGB Full-Color LED Matrix Panel (64×32 Pixels):** 2.5mm pitch. Ordered on March 2, 2026 (Order # 113-9435943-2623440), and delivered on March 2, 2026.
+- **Adafruit ESP32-S3 LED Matrix Portal:** A specialized driver board for HUB75 panels. (Adafruit Order #3641312, shipped March 3, 2026). [Track Delivery](https://tools.usps.com/go/TrackConfirmAction?qtc_tLabels1=9405540106246002702780).
 - **Related Hardware:** The system is built around the ESP32-S3 architecture and standard HUB75 64x32 RGB panels.
 
 ## 🛠️ Development

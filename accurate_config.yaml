@@ -95,7 +95,7 @@ mock_state:
     headsign: "Downtown Seattle"
     diff: 22
     live: true
-    color: "cyan"
+    color: "pink"
   - route: "554"
     headsign: "Downtown Seattle"
     diff: 28

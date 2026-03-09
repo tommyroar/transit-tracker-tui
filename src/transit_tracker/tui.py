@@ -18,7 +18,7 @@ PLIST_NAME = "org.eastsideurbanism.transit-tracker.plist"
 PLIST_PATH = os.path.expanduser(f"~/Library/LaunchAgents/{PLIST_NAME}")
 
 from prompt_toolkit.key_binding import KeyBindings
-from questionary.prompts.common import Choice, ChoiceControl
+from questionary.prompts.common import Choice, InquirerControl
 
 def quick_select(message, choices, default=None):
     """
@@ -66,20 +66,20 @@ def quick_select(message, choices, default=None):
             
         idx = int(key_char) - 1
         
-        # Find the ChoiceControl in the layout
+        # Find the InquirerControl in the layout
         # We search both current_control and the entire layout objects
         control = None
-        if isinstance(event.app.layout.current_control, ChoiceControl):
+        if isinstance(event.app.layout.current_control, InquirerControl):
             control = event.app.layout.current_control
         else:
             for obj in event.app.layout.find_objects():
-                if isinstance(obj, ChoiceControl):
+                if isinstance(obj, InquirerControl):
                     control = obj
                     break
         
         if control and idx < len(control.choices):
             # Move selection and exit immediately
-            control.selected_choice_index = idx
+            control.pointed_at = idx
             event.app.exit(result=control.choices[idx].value)
 
     # Merge our number bindings with the existing ones (arrows, enter, etc.)

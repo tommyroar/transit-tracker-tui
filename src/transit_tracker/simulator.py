@@ -10,18 +10,80 @@ from rich.live import Live
 from rich.text import Text
 from rich.panel import Panel
 from rich.console import Console, Group
-from typing import Optional
+from typing import Optional, Union
 
 from .config import TransitConfig
 
+class MicroFont:
+    """A minimal 5x7 proportional-style font implementation for exact LED simulation."""
+    # 5x7 glyph data (each list is 7 rows, each row is a 5-bit integer)
+    GLYPHS = {
+        '0': [0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E],
+        '1': [0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E],
+        '2': [0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F],
+        '3': [0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E],
+        '4': [0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02],
+        '5': [0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E],
+        '6': [0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E],
+        '7': [0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08],
+        '8': [0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E],
+        '9': [0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C],
+        'A': [0x04, 0x0A, 0x11, 0x11, 0x1F, 0x11, 0x11],
+        'B': [0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E],
+        'C': [0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E],
+        'D': [0x1C, 0x12, 0x11, 0x11, 0x11, 0x12, 0x1C],
+        'E': [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F],
+        'F': [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10],
+        'G': [0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F],
+        'H': [0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
+        'I': [0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E],
+        'J': [0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0C],
+        'K': [0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11],
+        'L': [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F],
+        'M': [0x11, 0x1B, 0x15, 0x11, 0x11, 0x11, 0x11],
+        'N': [0x11, 0x11, 0x19, 0x15, 0x13, 0x11, 0x11],
+        'O': [0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E],
+        'P': [0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10],
+        'Q': [0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D],
+        'R': [0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11],
+        'S': [0x0E, 0x11, 0x10, 0x0E, 0x01, 0x11, 0x0E],
+        'T': [0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
+        'U': [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E],
+        'V': [0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04],
+        'W': [0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11],
+        'X': [0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11],
+        'Y': [0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04],
+        'Z': [0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F],
+        ' ': [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+        'm': [0x00, 0x00, 0x1A, 0x15, 0x15, 0x15, 0x15],
+        '*': [0x04, 0x15, 0x0E, 0x1F, 0x0E, 0x15, 0x04], # Placeholder for LIVE
+        '.': [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04],
+        '-': [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00],
+        '?': [0x0E, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04],
+    }
+
+    @classmethod
+    def get_bitmap(cls, text: str) -> list[list[int]]:
+        rows = [[] for _ in range(7)]
+        for char in text:
+            glyph = cls.GLYPHS.get(char.upper(), cls.GLYPHS['?'])
+            for i in range(7):
+                # 5 bits for the char + 1 bit gap
+                bits = glyph[i]
+                for b in range(4, -1, -1):
+                    rows[i].append(1 if (bits & (1 << b)) else 0)
+                rows[i].append(0) # Gap
+        return rows
+
 class LEDSimulator:
     def __init__(self, config: TransitConfig, force_live: bool = True):
-        # VERSION: 2026-03-08-WEBSOCKET-FIXED
+        # VERSION: 2026-03-08-PIXEL-ACCURATE
         self.config = config
         self.force_live = force_live
         self.state = {} # stopId -> { 'trips': [], 'timestamp': float }
         self.running = True
         self.start_time = time.time()
+        self.microfont = MicroFont()
 
         # Initialize mock state immediately if present and not forcing live
         if not self.force_live and (self.config.mock_state or self.config.captures):
@@ -45,16 +107,9 @@ class LEDSimulator:
                     headsign = " ".join(line.replace("{LIVE}", " ").split()[1:-1])
                     mock_data.append({
                         "route": route, "headsign": headsign, "diff": diff, 
-                        "live": live, "color": "cyan" if route == "14" else "yellow"
+                        "live": live, "color": "hot_pink" if route == "14" else "yellow"
                     })
             self.state = {"mock": {"trips": mock_data, "timestamp": time.time()}}
-
-        # Load a tiny bitmap font that mimics LED displays
-        font_path = os.path.join(os.path.dirname(__file__), "fonts", "tom-thumb.bdf")
-        if not os.path.exists(font_path):
-            self.font = None
-        else:
-            self.font = Font(font_path)
 
     async def _listen_websocket(self):
         if not self.force_live and "mock" in self.state:
@@ -99,22 +154,30 @@ class LEDSimulator:
                 if self.running:
                     await asyncio.sleep(5) # Retry on connection loss
 
-    def _render_led_string(self, text: str, color: str = "yellow", force_upper: bool = False) -> Text:
-        """Renders text as a dot-matrix style LED string using the bitmap font."""
-        if not self.font:
-            return Text(text, style=color, no_wrap=True)
-            
-        render_text = text.upper() if force_upper else text
-        canvas = self.font.draw(render_text, mode=1)
-        pixels = canvas.todata(2)
-        
+    def _render_led_string(self, text_or_spans: Union[str, list[tuple[str, str]]], color: str = "yellow", force_upper: bool = False) -> Text:
+        """Renders text as a dot-matrix style LED string using the MicroFont."""
+        if isinstance(text_or_spans, str):
+            spans = [(text_or_spans, color)]
+        else:
+            spans = text_or_spans
+
+        all_pixel_spans = []
+        for t, c in spans:
+            bitmap = self.microfont.get_bitmap(t)
+            all_pixel_spans.append((bitmap, c))
+
+        if not all_pixel_spans:
+            return Text()
+
         rich_text = Text(no_wrap=True)
-        for row in pixels:
-            for pixel in row:
-                if pixel:
-                    rich_text.append("●", style=f"bold {color}")
-                else:
-                    rich_text.append("·", style="dim black")
+        for r in range(7): # 7 rows for 5x7 font
+            for bitmap, c in all_pixel_spans:
+                row = bitmap[r]
+                for pixel in row:
+                    if pixel:
+                        rich_text.append("●", style=f"bold {c}")
+                    else:
+                        rich_text.append("·", style="dim black")
             rich_text.append("\n")
         return rich_text
 
@@ -202,7 +265,7 @@ class LEDSimulator:
                         should_show = raw_mins >= -2
 
                     if should_show:
-                        route_name = trip.get("routeName") or trip.get("routeShortName")
+                        route_name = str(trip.get("routeName") or trip.get("routeShortName") or "")
                         if not route_name:
                             route_name = sub.label.split("-")[0].strip().split()[0] if sub and sub.label else sub.route.split("_")[-1]
                             
@@ -213,7 +276,13 @@ class LEDSimulator:
                         is_live = trip.get("isRealtime", "predictedArrivalTime" in trip)
                         
                         color_hex = trip.get("routeColor")
-                        color = f"#{color_hex}" if color_hex else ("cyan" if route_name == "14" else "yellow")
+                        # Match IMG_3077: route 14 is hot_pink
+                        if "14" in route_name:
+                            color = "hot_pink"
+                        elif color_hex:
+                            color = f"#{color_hex}"
+                        else:
+                            color = "yellow"
 
                         if display_mins < 0:
                             display_mins = 0
@@ -236,26 +305,49 @@ class LEDSimulator:
             msg = "No Mock Buses" if is_mock else "No Live Buses"
             lines.append(self._render_led_string(msg, color="white"))
         else:
-            char_width = 16 * self.config.num_panels
+            # 64px per panel / 6px per char (5px glyph + 1px gap) = ~10.6 chars per panel.
+            char_width = int(64 * self.config.num_panels / 6)
             for dep in all_departures[:3]: 
                 icon = "*" if dep["live"] else " "
                 eta_str = f"{dep['diff']}m"
                 full_eta_part = f"{icon}{eta_str}"
                 
-                r_str = f"{str(dep['route'])[:3]:>3}"
+                r_str = f"{str(dep['route'])[:3]:<3}"
                 fixed_len = 3 + 1 + 1 + len(full_eta_part)
-                max_h = char_width - fixed_len
+                max_h_len = char_width - fixed_len
                 
                 headsign = dep['headsign']
-                if self.config.scroll_headsigns and len(headsign) > max_h:
-                    display_text = headsign + "    "
-                    shift = int(elapsed * 2) % len(display_text)
-                    h_text = (display_text[shift:] + display_text[:shift])[:max_h]
+                if self.config.scroll_headsigns and len(headsign) > max_h_len:
+                    # Ping-pong scroll
+                    overflow = len(headsign) - max_h_len
+                    scroll_speed = 0.2  # Seconds per character
+                    scroll_duration = overflow * scroll_speed
+                    wait_duration = 2.0
+                    total_cycle = (wait_duration + scroll_duration) * 2
+                    
+                    cycle_pos = elapsed % total_cycle
+                    
+                    if cycle_pos < wait_duration:
+                        shift = 0
+                    elif cycle_pos < (wait_duration + scroll_duration):
+                        progress = (cycle_pos - wait_duration) / scroll_duration
+                        shift = int(progress * overflow)
+                    elif cycle_pos < (wait_duration * 2 + scroll_duration):
+                        shift = overflow
+                    else:
+                        progress = (cycle_pos - (wait_duration * 2 + scroll_duration)) / scroll_duration
+                        shift = overflow - int(progress * overflow)
+                        
+                    h_text = headsign[shift : shift + max_h_len]
                 else:
-                    h_text = headsign[:max_h]
+                    h_text = headsign[:max_h_len]
                 
-                line_str = f"{r_str} {h_text:<{max_h}} {full_eta_part}"
-                lines.append(self._render_led_string(line_str, color=dep["color"]))
+                spans = [
+                    (f"{r_str} ", dep["color"]),
+                    (f"{h_text:<{max_h_len}} ", "white"),
+                    (full_eta_part, "bright_blue")
+                ]
+                lines.append(self._render_led_string(spans))
 
         panel_title = f"[bold red]HUB75 {64 * self.config.num_panels}x32 LED SIMULATOR[/bold red]"
         if is_mock:
@@ -277,9 +369,9 @@ class LEDSimulator:
     async def run(self):
         ws_task = asyncio.create_task(self._listen_websocket())
         try:
-            with Live(self._generate_frame(), refresh_per_second=4, screen=True) as live:
+            with Live(self._generate_frame(), refresh_per_second=10, screen=True) as live:
                 while True:
-                    await asyncio.sleep(0.25)
+                    await asyncio.sleep(0.1)
                     live.update(self._generate_frame())
         except KeyboardInterrupt:
             pass

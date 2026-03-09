@@ -34,7 +34,7 @@ def parse_capture_line(line: str) -> Dict[str, Any]:
         "headsign": headsign,
         "diff": diff,
         "live": live,
-        "color": "cyan" if route == "14" else "yellow"
+        "color": "pink" if route == "14" else "yellow"
     }
 
 def get_captures():
@@ -68,7 +68,11 @@ def test_capture_match(capture):
     
     # Capture rendered strings
     actual_rendered = []
-    def mock_render(text, color="yellow"):
+    def mock_render(text_or_spans, color="yellow"):
+        if isinstance(text_or_spans, list):
+            text = "".join(t for t, c in text_or_spans)
+        else:
+            text = text_or_spans
         actual_rendered.append(text)
         from rich.text import Text
         return Text(text)

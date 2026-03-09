@@ -9,12 +9,12 @@ A lightweight, terminal-based transit notification service for macOS. It monitor
 - **Background Daemon:** Runs silently in the background on your Mac using `launchd`.
 - **Push Notifications:** Pushes rich alerts to your phone via `ntfy.sh` (e.g., "Bus 554 arriving in 5 mins!").
 
-## 🏗️ Architecture & Evolution
+## 🏗️ Architecture
 
-The project is evolving from a cloud-dependent configuration to a fully self-hosted local service.
+The project supports two primary modes of operation: connecting to a cloud-based proxy or hosting a local WebSocket server that interacts directly with transit APIs.
 
 ### 1. Default Configuration (Cloud)
-*The hardware connects to a remote service that proxies the transit data.*
+*The hardware connects directly to the public WebSocket API hosted by TJ Horner.*
 
 ```mermaid
 sequenceDiagram
@@ -22,41 +22,28 @@ sequenceDiagram
     participant Cloud as tt.horner.tj (Remote)
     participant API as Transit API (OneBusAway)
 
-    HW->>Cloud: WebSocket Connection
-    Cloud->>API: Fetch Arrival Data
-    API-->>Cloud: JSON Response
-    Cloud->>HW: Update Display (Binary/Proto)
+    HW->>Cloud: WebSocket Connection (Subscribe)
+    Cloud->>API: Poll Arrival Data
+    API-->>Cloud: XML/JSON Response
+    Cloud-->>HW: Push Real-time Updates (JSON)
 ```
 
-### 2. Desired State (Self-Hosted Docker)
-*Running the original service logic locally within a container.*
+### 2. Local WebSocket Host
+*The hardware connects to this Python service running on your local network, which proxies the data and manages local notifications.*
 
 ```mermaid
 sequenceDiagram
     participant HW as LED Matrix (ESP32)
-    participant Docker as Local Docker Container
+    participant Py as transit-tracker (Local Python)
     participant API as Transit API (OneBusAway)
+    participant NTFY as ntfy.sh (Push Service)
 
-    HW->>Docker: WebSocket Connection
-    Docker->>API: Fetch Arrival Data
-    API-->>Docker: JSON Response
-    Docker->>HW: Update Display (Binary/Proto)
-```
-
-### 3. Future State (Python-Native API)
-*Directly serving data from this Python package, removing Docker overhead and enabling tighter integration with local notifications.*
-
-```mermaid
-sequenceDiagram
-    participant HW as LED Matrix (ESP32)
-    participant Py as transit-tracker (Python Service)
-    participant API as Transit API (OneBusAway)
-
-    HW->>Py: WebSocket Connection (websocket_service.py)
+    HW->>Py: WebSocket Connection (websocket_server.py)
     Py->>API: Fetch Arrival Data (transit_api.py)
     API-->>Py: Raw Transit Data
-    Note over Py: Logic in simulator.py / hardware.py
-    Py->>HW: Update Display (Binary/Proto)
+    Py-->>HW: Proxy Updates to Display
+    Note over Py: logic in websocket_service.py
+    Py->>NTFY: Trigger Push Notifications
 ```
 
 ## 📦 Installation

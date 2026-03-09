@@ -302,7 +302,7 @@ def main_menu():
         has_ports = len(ports) > 0
         has_config = config_path is not None
 
-        action = questionary.rawselect(
+        action = questionary.select(
             "What would you like to do?",
             choices=[
                 "Configurator",
@@ -317,7 +317,7 @@ def main_menu():
             
         elif action == "Configurator":
             while True:
-                c_action = questionary.rawselect(
+                c_action = questionary.select(
                     "Configurator",
                     choices=[
                         "1. Config Files",
@@ -338,7 +338,7 @@ def main_menu():
                     change_api_mode_wizard(config, config_path)
                     
                 if c_action == "7. Debug":
-                    d_action = questionary.rawselect(
+                    d_action = questionary.select(
                         "Debug Menu",
                         choices=["Run Mock Simulator", "Back"]
                     ).ask()
@@ -346,7 +346,7 @@ def main_menu():
                         run_simulator(config, force_live=False)
 
                 elif c_action == "1. Config Files":
-                    f_action = questionary.rawselect(
+                    f_action = questionary.select(
                         "Config Files",
                         choices=["Load Config File", "Save Config File As...", "Back"]
                     ).ask()
@@ -381,7 +381,7 @@ def main_menu():
                                 print(f"Error saving config: {e}")
                                 
                 elif c_action == "2. Device Config":
-                    d_action = questionary.rawselect(
+                    d_action = questionary.select(
                         "Device Config",
                         choices=[
                             questionary.Choice("Flash Device", disabled="No device connected" if not has_ports else None),
@@ -391,14 +391,14 @@ def main_menu():
                     ).ask()
                     
                     if d_action == "Flash Device":
-                        selected_port = questionary.rawselect(
+                        selected_port = questionary.select(
                             "Select your Transit Tracker device:",
                             choices=ports
                         ).ask()
                         if selected_port:
                             flash_hardware(selected_port, config)
                     elif d_action == "Download from Device":
-                        selected_port = questionary.rawselect(
+                        selected_port = questionary.select(
                             "Select your Transit Tracker device:",
                             choices=ports
                         ).ask()
@@ -411,7 +411,7 @@ def main_menu():
                                     print("Configuration read into memory. Please save it to a file.")
 
                 elif c_action == "3. Notifications":
-                    n_action = questionary.rawselect(
+                    n_action = questionary.select(
                         "Notifications",
                         choices=[
                             questionary.Choice("Change Alert Threshold", disabled="Please load or save a config file first" if not has_config else None),
@@ -426,7 +426,7 @@ def main_menu():
                         change_ntfy_wizard(config, config_path)
                         
                 elif c_action == "5. Manage Stops":
-                    s_action = questionary.rawselect(
+                    s_action = questionary.select(
                         "Manage Stops",
                         choices=[
                             questionary.Choice("Add a Stop", disabled="Please load or save a config file first" if not has_config else None),

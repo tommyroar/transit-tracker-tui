@@ -19,3 +19,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local configuration
+.local/

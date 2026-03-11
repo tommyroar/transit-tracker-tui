@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 import websockets
@@ -195,7 +196,7 @@ class LEDSimulator:
 
     def _render_trip_row(self, dep: dict, elapsed: float) -> list[Text]:
         """Renders a single trip row (7 lines) matching hardware layout exactly."""
-        display_width = 64 * self.config.num_panels
+        display_width = self.config.panel_width * self.config.num_panels
         
         # 1. Prepare segments
         route_text = str(dep['route'])
@@ -293,14 +294,12 @@ class LEDSimulator:
             rich_lines.append(line)
         return rich_lines
 
-    def _generate_frame(self, reference_time: Optional[datetime] = None) -> Panel:
+    def get_upcoming_departures(self, reference_time: Optional[datetime] = None) -> list[dict]:
+        """Returns a list of sorted departures currently being tracked."""
         all_departures = []
         now = reference_time or datetime.now(timezone.utc)
         current_time_ms = int(now.timestamp() * 1000)
         now_ts = now.timestamp()
-        
-        real_elapsed = time.time() - self.start_time
-        elapsed = 0 if reference_time else real_elapsed
 
         # MOCK STATE HANDLING
         is_mock = "mock" in self.state
@@ -308,6 +307,7 @@ class LEDSimulator:
             mock_data = self.state["mock"]["trips"]
             for mock_bus in mock_data:
                 all_departures.append({
+                    "trip_id": mock_bus.get("trip_id", str(time.time())), 
                     "diff": mock_bus.get("diff", 0),
                     "route": mock_bus.get("route", "??"),
                     "headsign": mock_bus.get("headsign", "Mock Data"),
@@ -342,26 +342,37 @@ class LEDSimulator:
                     elif arr_val > 10**12: arr_time_ms = arr_val
                     else: arr_time_ms = arr_val * 1000
 
-                    offset_sec = 0
+                    # Calculate Offset
+                    # The configurator says: "set travel time to 5 minutes" to subtract 5 mins.
+                    # If the user has "-7min" or "7min", we should treat it as an adjustment.
+                    offset_min = 0
                     if sub and sub.time_offset:
                         try:
-                            clean_offset = sub.time_offset.lower().replace("min", "").strip()
-                            offset_sec = int(clean_offset) * 60 if "min" in sub.time_offset.lower() else int(clean_offset)
+                            # Extract numeric value regardless of sign or unit
+                            match = re.search(r"(-?\d+)", sub.time_offset)
+                            if match:
+                                offset_min = int(match.group(1))
                         except ValueError: pass
 
                     raw_diff_sec = (arr_time_ms - current_time_ms) / 1000.0
-                    eff_diff_sec = raw_diff_sec + offset_sec
                     raw_mins = int(raw_diff_sec / 60)
-                    eff_mins = int(eff_diff_sec / 60)
-
-                    if self.config.display_offset:
-                        display_mins = eff_mins
-                        should_show = eff_mins >= 0
+                    
+                    # Effective time is Raw - Travel Time.
+                    # If offset is negative (like -7min), adding it subtracts the time.
+                    # If offset is positive (like 7min), we should subtract it.
+                    # Most users (and the configurator) provide a positive "travel time".
+                    if offset_min > 0:
+                        eff_mins = raw_mins - offset_min
                     else:
-                        display_mins = raw_mins if self.config.time_display == "arrival" else eff_mins
-                        should_show = raw_mins >= -2
+                        eff_mins = raw_mins + offset_min # Adding negative offset subtracts it
 
-                    if should_show:
+                    # ALWAYS display effective minutes to match hardware observation
+                    display_mins = eff_mins
+                    
+                    # Filter logic:
+                    # 1. Bus must not have left the stop yet (raw_mins >= -1)
+                    # 2. User must still be able to catch it (eff_mins >= -1)
+                    if raw_mins >= -1 and eff_mins >= -1:
                         route_name = str(trip.get("routeName") or trip.get("routeShortName") or "")
                         if not route_name:
                             route_name = sub.label.split("-")[0].strip().split()[0] if sub and sub.label else sub.route.split("_")[-1]
@@ -384,6 +395,23 @@ class LEDSimulator:
                         })
 
         all_departures.sort(key=lambda x: x["diff"])
+        return all_departures
+
+    def get_current_display_text(self) -> str:
+        """Returns a string representation of the current display (e.g., '14 Downtown 2m')."""
+        deps = self.get_upcoming_departures()
+        lines = []
+        for d in deps[:3]:
+            live_flag = "{LIVE}" if d['live'] else ""
+            lines.append(f"{d['route']} {d['headsign']} {live_flag}{d['diff']}m")
+        return "\n".join(lines)
+
+    def _generate_frame(self, reference_time: Optional[datetime] = None) -> Panel:
+        all_departures = self.get_upcoming_departures(reference_time)
+        
+        real_elapsed = time.time() - self.start_time
+        elapsed = 0 if reference_time else real_elapsed
+        is_mock = "mock" in self.state
         
         all_lines = []
         if not all_departures:

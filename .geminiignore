@@ -1,0 +1,12 @@
+.venv/
+**/__pycache__/
+.pytest_cache/
+.DS_Store
+.playwright-mcp/
+node_modules/
+dist/
+build/
+*.log
+*.lock
+.git/
+.local/

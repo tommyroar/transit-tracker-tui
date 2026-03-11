@@ -1,11 +1,17 @@
 import os
 from pydantic import ValidationError
 import pytest
+import sys
+
+# Add src to path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
+
 from transit_tracker.config import TransitConfig, TransitSubscription
 
 def test_default_config():
     config = TransitConfig()
-    assert config.api_url == "wss://tt.horner.tj"
+    # The configurator default has a trailing slash
+    assert config.api_url == "wss://tt.horner.tj/"
     assert config.arrival_threshold_minutes == 5
     assert len(config.subscriptions) == 0
 
@@ -20,11 +26,18 @@ def test_config_validation():
 
 def test_config_save_load(tmp_path):
     config_path = tmp_path / "test_config.yaml"
+    # Use the nested transit_tracker structure as it's the source of truth
     config = TransitConfig(
         arrival_threshold_minutes=10,
-        subscriptions=[
-            TransitSubscription(feed="st", route="1", stop="2", label="Test Stop")
-        ]
+        transit_tracker={
+            "stops": [
+                {
+                    "stop_id": "2",
+                    "label": "Test Stop",
+                    "routes": ["st:1"]
+                }
+            ]
+        }
     )
     config.save(str(config_path))
     
@@ -34,3 +47,4 @@ def test_config_save_load(tmp_path):
     assert loaded.arrival_threshold_minutes == 10
     assert len(loaded.subscriptions) == 1
     assert loaded.subscriptions[0].label == "Test Stop"
+    assert loaded.subscriptions[0].stop == "2"

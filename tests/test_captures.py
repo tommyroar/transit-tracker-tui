@@ -38,9 +38,17 @@ def parse_capture_line(line: str) -> Dict[str, Any]:
     }
 
 def get_captures():
-    config_path = os.path.join(os.path.dirname(__file__), "..", "accurate_config.yaml")
-    if not os.path.exists(config_path):
+    # Check root and .local/
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "..", "accurate_config.yaml"),
+        os.path.join(os.path.dirname(__file__), "..", ".local", "accurate_config.yaml")
+    ]
+    
+    config_path = next((c for c in candidates if os.path.exists(c)), None)
+    
+    if not config_path:
         return []
+        
     with open(config_path, "r") as f:
         data = yaml.safe_load(f)
     return data.get("captures", [])
@@ -98,7 +106,7 @@ def test_capture_match(capture):
         eta_part = f"{icon}{bus['diff']}m"
         r_str = f"{str(bus['route'])[:3]:<3}"
         
-        total_width = int(64 * config.num_panels / 6)
+        total_width = int(config.panel_width * config.num_panels / 6)
         fixed_len = 3 + 1 + 1 + len(eta_part)
         max_h = total_width - fixed_len
         h_text = bus['headsign'][:max_h]
@@ -116,7 +124,7 @@ def test_capture_match(capture):
         r_str = f"{str(bus['route'])[:3]:<3}"
         
         # Calculate padding for full width (16 chars per 64px panel)
-        total_width = int(64 * config.num_panels / 6)
+        total_width = int(config.panel_width * config.num_panels / 6)
         fixed_len = 3 + 1 + 1 + len(eta_part)
         max_h = total_width - fixed_len
         h_text = bus['headsign'][:max_h]

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from ..config import TransitConfig
 
 # Notifications are temporarily separated to src/transit_tracker/notifications/ntfy.py
-# from ..notifications.ntfy import send_ntfy
+# from .notifications.ntfy import send_ntfy
 
 async def run_service(config: TransitConfig = None):
     if config is None:

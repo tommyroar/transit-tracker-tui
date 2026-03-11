@@ -84,12 +84,34 @@ class TransitServer:
         
         for stop_id in stops:
             try:
-                arrivals = await self.get_arrivals_cached(stop_id)
-                # Filter arrivals to only include those in our subscriptions
-                relevant_routes = set(s["routeId"] for s in subs if s["stopId"] == stop_id)
+                # OBA expects clean stop ID
+                clean_stop_id = stop_id
+                if ":" in stop_id and "_" in stop_id:
+                    colon_idx = stop_id.find(":")
+                    underscore_idx = stop_id.find("_")
+                    if colon_idx < underscore_idx:
+                        clean_stop_id = stop_id[colon_idx+1:]
+                
+                arrivals = await self.get_arrivals_cached(clean_stop_id)
+                
+                # Normalize relevant route IDs for comparison
+                def normalize_route(r_id):
+                    if ":" in r_id and "_" in r_id:
+                        c_idx = r_id.find(":")
+                        u_idx = r_id.find("_")
+                        if c_idx < u_idx:
+                            return r_id[c_idx+1:]
+                    return r_id
+
+                relevant_routes = set(normalize_route(s["routeId"]) for s in subs if s["stopId"] == stop_id)
+                
                 for arr in arrivals:
-                    if not relevant_routes or arr["routeId"] in relevant_routes:
-                        all_trips.append(arr)
+                    arr_route_id = normalize_route(arr["routeId"])
+                    if not relevant_routes or arr_route_id in relevant_routes:
+                        # Ensure the response has the original stopId from sub
+                        arr_copy = arr.copy()
+                        arr_copy["stopId"] = stop_id
+                        all_trips.append(arr_copy)
             except Exception as e:
                 print(f"[SERVER] Error fetching arrivals for {stop_id}: {e}")
 

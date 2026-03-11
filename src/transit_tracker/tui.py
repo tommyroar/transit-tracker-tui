@@ -52,8 +52,31 @@ PLIST_PATH = os.path.expanduser(f"~/Library/LaunchAgents/{PLIST_NAME}")
 def check_service_status():
     if sys.platform != "darwin":
         return "UNSUPPORTED"
+    
+    # Check 1: Official macOS LaunchAgent
     res = os.system(f"launchctl list {PLIST_NAME.replace('.plist', '')} > /dev/null 2>&1")
-    return "RUNNING" if res == 0 else "STOPPED"
+    if res == 0:
+        return "RUNNING (MANAGED)"
+    
+    # Check 2: Manual background process (pgrep -f "transit-tracker service")
+    # We use -f to match the full command line, and exclude our own grep/ps
+    try:
+        import subprocess
+        # Search for the specific service command, excluding the current TUI process
+        proc = subprocess.run(
+            ["pgrep", "-f", "transit-tracker service"], 
+            capture_output=True, 
+            text=True
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            # Double check it's not just the current TUI or a random grep
+            pids = proc.stdout.strip().split("\n")
+            if len(pids) > 0:
+                return "RUNNING (MANUAL)"
+    except Exception:
+        pass
+
+    return "STOPPED"
 
 def manage_service_menu():
     while True:
@@ -65,7 +88,7 @@ def manage_service_menu():
         action = questionary.select(
             f"Manage Service (Status: {status})",
             choices=[
-                "Start Service" if status == "STOPPED" else "Stop Service",
+                "Start Service" if "RUNNING" not in status else "Stop Service",
                 "Back"
             ]
         ).ask()
@@ -249,7 +272,7 @@ def change_api_mode_wizard(config: TransitConfig, config_path: str):
             questionary.Choice("Local (Internal Proxy)", value=True),
             questionary.Choice("Cloud (Public Endpoint)", value=False)
         ],
-        default="Local (Internal Proxy)" if config.use_local_api else "Cloud (Public Endpoint)"
+        default=config.use_local_api
     ).ask()
     
     if mode is not None:
@@ -273,25 +296,19 @@ def main_menu():
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     
     # Configuration search order:
-    # 1. accurate_config.yaml (root)
-    # 2. .local/accurate_config.yaml
-    # 3. config.yaml (root)
-    # 4. .local/config.yaml
-    # 5. Last used path from global settings
+    # 1. Last used path from global settings (Persists user choice)
+    # 2. accurate_config.yaml (root or .local)
+    # 3. config.yaml (root or .local)
     
-    candidates = [
-        os.path.join(project_root, "accurate_config.yaml"),
-        os.path.join(project_root, ".local", "accurate_config.yaml"),
-        os.path.join(project_root, "config.yaml"),
-        os.path.join(project_root, ".local", "config.yaml")
-    ]
-    
-    config_path = next((c for c in candidates if os.path.exists(c)), None)
-    
-    if not config_path:
-        last_path = get_last_config_path()
-        if last_path and os.path.exists(last_path):
-            config_path = last_path
+    config_path = get_last_config_path()
+    if not config_path or not os.path.exists(config_path):
+        candidates = [
+            os.path.join(project_root, "accurate_config.yaml"),
+            os.path.join(project_root, ".local", "accurate_config.yaml"),
+            os.path.join(project_root, "config.yaml"),
+            os.path.join(project_root, ".local", "config.yaml")
+        ]
+        config_path = next((c for c in candidates if os.path.exists(c)), None)
             
     if config_path:
         config = TransitConfig.load(config_path)
@@ -317,7 +334,7 @@ def main_menu():
             direction_str = str(sub.direction) if sub.direction is not None else "N/A"
             table.add_row(sub.label, sub.feed, sub.route, sub.stop, direction_str)
             
-        status_color = "green" if status == "RUNNING" else "red"
+        status_color = "green" if "RUNNING" in status else "red"
         status_text = Text(f"Service Status: {status}", style=f"bold {status_color}")
         
         threshold_text = Text(f"Alert Threshold: {config.arrival_threshold_minutes} minutes", style="yellow")

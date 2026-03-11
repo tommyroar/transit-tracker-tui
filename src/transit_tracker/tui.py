@@ -14,6 +14,38 @@ from .transit_api import TransitAPI
 from .hardware import list_serial_ports, flash_hardware, load_hardware_config
 from .simulator import run_simulator
 
+def pick_file(mode="load", default_path=None):
+    """Opens a native file chooser dialog."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        
+        root = tk.Tk()
+        root.withdraw() # Hide the main window
+        root.attributes("-topmost", True) # Bring to front
+        
+        initial_dir = os.path.dirname(default_path) if default_path else os.getcwd()
+        
+        if mode == "load":
+            file_path = filedialog.askopenfilename(
+                title="Select Transit Tracker Config",
+                initialdir=initial_dir,
+                filetypes=[("YAML files", "*.yaml"), ("All files", "*.*")]
+            )
+        else:
+            file_path = filedialog.asksaveasfilename(
+                title="Save Transit Tracker Config",
+                initialdir=initial_dir,
+                defaultextension=".yaml",
+                filetypes=[("YAML files", "*.yaml"), ("All files", "*.*")]
+            )
+            
+        root.destroy()
+        return file_path if file_path else None
+    except Exception as e:
+        print(f"Error opening file picker: {e}")
+        return None
+
 PLIST_NAME = "org.eastsideurbanism.transit-tracker.plist"
 PLIST_PATH = os.path.expanduser(f"~/Library/LaunchAgents/{PLIST_NAME}")
 
@@ -237,23 +269,36 @@ def change_api_mode_wizard(config: TransitConfig, config_path: str):
         print(f"API mode updated to {'Local' if mode else 'Cloud'}.")
 
 def main_menu():
-    # Prioritize accurate_config.yaml in the project root
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "transit-tracker-tui"))
-    workspace_accurate_config = os.path.join(project_root, "accurate_config.yaml")
+    # Find project root (two levels up from src/transit_tracker)
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     
-    if os.path.exists(workspace_accurate_config):
-        config_path = workspace_accurate_config
-    elif os.path.exists("accurate_config.yaml"):
-        config_path = os.path.abspath("accurate_config.yaml")
-    else:
-        config_path = get_last_config_path()
+    # Configuration search order:
+    # 1. accurate_config.yaml (root)
+    # 2. .local/accurate_config.yaml
+    # 3. config.yaml (root)
+    # 4. .local/config.yaml
+    # 5. Last used path from global settings
     
-    if config_path and os.path.exists(config_path):
+    candidates = [
+        os.path.join(project_root, "accurate_config.yaml"),
+        os.path.join(project_root, ".local", "accurate_config.yaml"),
+        os.path.join(project_root, "config.yaml"),
+        os.path.join(project_root, ".local", "config.yaml")
+    ]
+    
+    config_path = next((c for c in candidates if os.path.exists(c)), None)
+    
+    if not config_path:
+        last_path = get_last_config_path()
+        if last_path and os.path.exists(last_path):
+            config_path = last_path
+            
+    if config_path:
         config = TransitConfig.load(config_path)
-        set_last_config_path(config_path) # Sync the 'last' path
+        set_last_config_path(config_path)
     else:
-        config_path = None
         config = TransitConfig()
+        config_path = os.path.join(project_root, ".local", "config.yaml") if os.path.exists(".local") else "config.yaml"
 
     console = Console()
 
@@ -320,13 +365,13 @@ def main_menu():
                 c_action = questionary.select(
                     "Configurator",
                     choices=[
-                        "1. Config Files",
-                        "2. Device Config",
-                        "3. Notifications",
-                        "4. API Settings",
-                        "5. Manage Stops",
-                        "6. Change Number of Panels",
-                        "7. Debug",
+                        "Config Files",
+                        "Device Config",
+                        "Notifications",
+                        "API Settings",
+                        "Manage Stops",
+                        "Change Number of Panels",
+                        "Debug",
                         "Back"
                     ]
                 ).ask()
@@ -334,10 +379,10 @@ def main_menu():
                 if not c_action or c_action == "Back":
                     break
 
-                if c_action == "4. API Settings":
+                if c_action == "API Settings":
                     change_api_mode_wizard(config, config_path)
                     
-                if c_action == "7. Debug":
+                if c_action == "Debug":
                     d_action = questionary.select(
                         "Debug Menu",
                         choices=["Run Mock Simulator", "Back"]
@@ -345,13 +390,24 @@ def main_menu():
                     if d_action == "Run Mock Simulator":
                         run_simulator(config, force_live=False)
 
-                elif c_action == "1. Config Files":
+                elif c_action == "Config Files":
                     f_action = questionary.select(
                         "Config Files",
-                        choices=["Load Config File", "Save Config File As...", "Back"]
+                        choices=["Load Config File (Picker)", "Load Config File (Manual Path)", "Save Config File As...", "Back"]
                     ).ask()
                     
-                    if f_action == "Load Config File":
+                    if f_action == "Load Config File (Picker)":
+                        new_path = pick_file(mode="load", default_path=config_path)
+                        if new_path:
+                            try:
+                                config = TransitConfig.load(new_path)
+                                config_path = new_path
+                                set_last_config_path(new_path)
+                                print(f"Loaded config from {new_path}")
+                                has_config = True
+                            except Exception as e:
+                                print(f"Error loading config: {e}")
+                    elif f_action == "Load Config File (Manual Path)":
                         new_path = questionary.path(
                             "Enter path to load config from:",
                             default=config_path or "config.yaml"
@@ -366,10 +422,13 @@ def main_menu():
                             except Exception as e:
                                 print(f"Error loading config: {e}")
                     elif f_action == "Save Config File As...":
-                        new_path = questionary.path(
-                            "Enter path to save config to:",
-                            default=config_path or "config.yaml"
-                        ).ask()
+                        new_path = pick_file(mode="save", default_path=config_path)
+                        if not new_path:
+                            new_path = questionary.path(
+                                "Enter path to save config to (fallback):",
+                                default=config_path or "config.yaml"
+                            ).ask()
+                            
                         if new_path:
                             try:
                                 config.save(new_path)
@@ -380,7 +439,7 @@ def main_menu():
                             except Exception as e:
                                 print(f"Error saving config: {e}")
                                 
-                elif c_action == "2. Device Config":
+                elif c_action == "Device Config":
                     d_action = questionary.select(
                         "Device Config",
                         choices=[
@@ -410,7 +469,7 @@ def main_menu():
                                 else:
                                     print("Configuration read into memory. Please save it to a file.")
 
-                elif c_action == "3. Notifications":
+                elif c_action == "Notifications":
                     n_action = questionary.select(
                         "Notifications",
                         choices=[
@@ -425,7 +484,7 @@ def main_menu():
                     elif n_action == "Add/Change ntfy.sh Endpoint":
                         change_ntfy_wizard(config, config_path)
                         
-                elif c_action == "5. Manage Stops":
+                elif c_action == "Manage Stops":
                     s_action = questionary.select(
                         "Manage Stops",
                         choices=[
@@ -440,14 +499,14 @@ def main_menu():
                     elif s_action == "Remove a Stop":
                         remove_stop_wizard(config, config_path)
                         
-                elif c_action == "6. Change Number of Panels":
+                elif c_action == "Change Number of Panels":
                     change_panels_wizard(config, config_path)
 
         elif action == "Simulator":
             rprint(f"[dim]Using config: {config_path}[/dim]")
             run_simulator(config, force_live=True)
 
-        elif action == "3. Service Manager":
+        elif action == "Service Manager":
 
             if status == "UNSUPPORTED":
                 print("Background service management is only supported on macOS.")

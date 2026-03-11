@@ -1,7 +1,8 @@
 import yaml
 import os
+import re
 from typing import List, Optional, Union, Dict, Any
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
 
 GLOBAL_SETTINGS_DIR = os.path.expanduser("~/.config/transit-tracker")
 GLOBAL_SETTINGS_FILE = os.path.join(GLOBAL_SETTINGS_DIR, "settings.yaml")
@@ -35,7 +36,7 @@ class TransitSubscription(BaseModel):
     stop: str
     label: str
     direction: Optional[int] = None
-    time_offset: Optional[str] = None
+    time_offset: str = "0min"
 
 class TransitStop(BaseModel):
     stop_id: str
@@ -43,82 +44,110 @@ class TransitStop(BaseModel):
     label: Optional[str] = None
     routes: List[str] = Field(default_factory=list)
 
+    @field_validator("time_offset")
+    @classmethod
+    def validate_offset(cls, v: str) -> str:
+        if not re.match(r"^-?\d+(min|m|s)?$", v.lower()):
+            raise ValueError("Offset must be a string like '5min', '-10m', or '30s'")
+        return v
+
+class RouteStyle(BaseModel):
+    route_id: str
+    name: Optional[str] = None
+    color: Optional[str] = None
+
+class Abbreviation(BaseModel):
+    original: str
+    short: str
+
 class TransitTrackerSettings(BaseModel):
-    base_url: str = "wss://tt.horner.tj/"
-    time_display: str = "arrival"
-    num_panels: int = 1
-    scroll_headsigns: bool = True
-    display_offset: bool = False
+    base_url: str = Field(default="wss://tt.horner.tj/")
+    time_display: str = Field(default="arrival")
+    show_units: str = Field(default="long") # "long", "short", "none"
+    list_mode: str = Field(default="sequential") # "sequential", "next_arrival"
+    scroll_headsigns: bool = Field(default=False)
     stops: List[TransitStop] = Field(default_factory=list)
+    styles: List[RouteStyle] = Field(default_factory=list)
+    abbreviations: List[Abbreviation] = Field(default_factory=list)
+    
+    # Hardware defaults for the physical board
+    num_panels: int = Field(default=2, ge=1, le=4)
+    panel_width: int = Field(default=64, ge=32)
+    panel_height: int = Field(default=32, ge=16)
 
 class TransitConfig(BaseModel):
-    # Compatibility with flat format
-    api_url: str = Field(default="wss://tt.horner.tj")
+    """
+    Unified Configuration for both the TUI wrapper and the core simulator.
+    Automatically handles the nested 'transit_tracker' key from the public configurator.
+    """
+    # Application settings
     use_local_api: bool = Field(default=True)
     ntfy_topic: str = Field(default="transit-alerts")
     arrival_threshold_minutes: int = Field(default=5, ge=1)
     check_interval_seconds: int = Field(default=30, ge=10)
-    num_panels: int = Field(default=1, ge=1, le=4)
-    time_display: str = Field(default="arrival")
-    display_offset: bool = Field(default=False)
-    scroll_headsigns: bool = Field(default=True)
+    
+    # Configurator data
+    transit_tracker: TransitTrackerSettings = Field(default_factory=TransitTrackerSettings)
+    
+    # Internal flattened state (synced from transit_tracker)
+    api_url: str = ""
+    num_panels: int = 2
+    panel_width: int = 64
+    panel_height: int = 32
+    time_display: str = "arrival"
+    scroll_headsigns: bool = False
     subscriptions: List[TransitSubscription] = Field(default_factory=list)
     
-    # Mocking and Testing
+    # Testing state
     mock_state: Optional[List[Dict[str, Any]]] = None
     captures: List[Dict[str, Any]] = Field(default_factory=list)
-    
-    # Compatibility with nested format
-    transit_tracker: Optional[TransitTrackerSettings] = None
 
     @model_validator(mode="after")
-    def migrate_nested_config(self) -> "TransitConfig":
-        if self.transit_tracker:
-            if hasattr(self.transit_tracker, 'base_url'):
-                self.api_url = self.transit_tracker.base_url
-            if hasattr(self.transit_tracker, 'time_display'):
-                self.time_display = self.transit_tracker.time_display
-            if hasattr(self.transit_tracker, 'num_panels'):
-                self.num_panels = self.transit_tracker.num_panels
-            if hasattr(self.transit_tracker, 'scroll_headsigns'):
-                self.scroll_headsigns = self.transit_tracker.scroll_headsigns
-            if hasattr(self.transit_tracker, 'display_offset'):
-                self.display_offset = self.transit_tracker.display_offset
-            
-            if self.transit_tracker.stops:
-                for stop in self.transit_tracker.stops:
-                    for route in stop.routes:
-                        # Find existing or create new
-                        sub = next((s for s in self.subscriptions if s.stop == stop.stop_id and s.route == route), None)
-                        
-                        agency_id = route.split("_")[0] if "_" in route else ""
-                        feed = "st" if agency_id == "40" else "kcm" if agency_id == "1" else "st"
-                        
-                        label = stop.label if stop.label else f"Route {route}"
-                        
-                        if sub:
-                            sub.feed = feed
-                            sub.time_offset = stop.time_offset
-                            sub.label = label
-                        else:
-                            self.subscriptions.append(TransitSubscription(
-                                feed=feed,
-                                route=route,
-                                stop=stop.stop_id,
-                                label=label,
-                                time_offset=stop.time_offset
-                            ))
+    def sync_internal_state(self) -> "TransitConfig":
+        tt = self.transit_tracker
+        self.api_url = tt.base_url
+        self.num_panels = tt.num_panels
+        self.panel_width = tt.panel_width
+        self.panel_height = tt.panel_height
+        self.time_display = tt.time_display
+        self.scroll_headsigns = tt.scroll_headsigns
+        
+        # Build flattened subscriptions
+        self.subscriptions = []
+        for stop in tt.stops:
+            for route in stop.routes:
+                feed = route.split(":")[0] if ":" in route else "st"
+                self.subscriptions.append(TransitSubscription(
+                    feed=feed,
+                    route=route,
+                    stop=stop.stop_id,
+                    label=stop.label or f"Route {route}",
+                    time_offset=stop.time_offset
+                ))
         return self
 
     @classmethod
     def load(cls, path: str = "config.yaml") -> "TransitConfig":
-        if not os.path.exists(path):
-            return cls()
+        if os.path.exists(path):
+            pass
+        else:
+            local_path = os.path.join(".local", path)
+            if os.path.exists(local_path):
+                path = local_path
+            else:
+                return cls()
+                
         with open(path, "r") as f:
             data = yaml.safe_load(f) or {}
-        return cls(**data)
+            
+        # Ensure we always create a fresh instance with the data
+        # If it only contains transit_tracker, Pydantic will handle it
+        return cls.model_validate(data)
 
     def save(self, path: str = "config.yaml") -> None:
+        if not os.path.dirname(path) and os.path.exists(".local"):
+            path = os.path.join(".local", path)
+            
         data = self.model_dump(exclude_unset=True)
         with open(path, "w") as f:
             yaml.safe_dump(data, f, sort_keys=False)

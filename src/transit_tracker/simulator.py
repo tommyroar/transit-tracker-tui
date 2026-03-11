@@ -155,8 +155,14 @@ class LEDSimulator:
         if not self.force_live and "mock" in self.state:
             return
 
-        # Strip trailing slash from API URL if present
-        api_url = self.config.api_url.rstrip("/")
+        # Correctly prioritize the local API if configured
+        api_url = self.config.api_url
+        if self.config.use_local_api and ("localhost" not in api_url and "127.0.0.1" not in api_url):
+            # Fallback/Safety: if use_local_api is True but url isn't local, force it
+            api_url = "ws://localhost:8000"
+        
+        api_url = api_url.rstrip("/")
+        
         while self.running:
             try:
                 async with websockets.connect(api_url) as ws:
@@ -172,6 +178,7 @@ class LEDSimulator:
                     
                     sub_payload = {
                         "event": "schedule:subscribe",
+                        "client_name": "Simulator",
                         "data": {
                             "routeStopPairs": pairs_str,
                             "limit": 5

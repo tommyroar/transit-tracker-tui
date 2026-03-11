@@ -1,9 +1,24 @@
 import asyncio
 import json
+import os
+import time
 import websockets
 from typing import Dict, Set, List, Any, Tuple
 from ..transit_api import TransitAPI
 from ..config import TransitConfig
+
+SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "service_state.json")
+
+def update_service_state(data: Dict[str, Any]):
+    try:
+        os.makedirs(os.path.dirname(SERVICE_STATE_FILE), exist_ok=True)
+        # Use a temporary file and rename for atomicity
+        temp_file = SERVICE_STATE_FILE + ".tmp"
+        with open(temp_file, "w") as f:
+            json.dump(data, f)
+        os.rename(temp_file, SERVICE_STATE_FILE)
+    except Exception as e:
+        print(f"[SERVER] Error updating state file: {e}")
 
 class TransitServer:
     def __init__(self, config: TransitConfig):
@@ -11,8 +26,44 @@ class TransitServer:
         self.api = TransitAPI()
         self.clients: Set[websockets.WebSocketServerProtocol] = set()
         self.subscriptions: Dict[websockets.WebSocketServerProtocol, List[Dict[str, str]]] = {}
+        self.client_names: Dict[websockets.WebSocketServerProtocol, str] = {}
         self.cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
         self.cache_ttl = 30 # seconds
+        self.last_broadcast_time = 0
+
+    def sync_state(self, last_message: Dict[str, Any] = None):
+        client_list = []
+        for c in self.clients:
+            addr = getattr(c, "remote_address", None)
+            if addr:
+                name = self.client_names.get(c, "Unknown Device")
+                client_list.append({
+                    "address": f"{addr[0]}:{addr[1]}",
+                    "name": name,
+                    "subscriptions": len(self.subscriptions.get(c, []))
+                })
+        
+        state = {
+            "last_update": self.last_broadcast_time,
+            "pid": os.getpid(),
+            "status": "active",
+            "clients": client_list,
+            "client_count": len(self.clients)
+        }
+        if last_message:
+            state["last_message"] = last_message
+        else:
+            # Try to preserve existing last_message if not provided
+            try:
+                if os.path.exists(SERVICE_STATE_FILE):
+                    with open(SERVICE_STATE_FILE, "r") as f:
+                        old_state = json.load(f)
+                        if "last_message" in old_state:
+                            state["last_message"] = old_state["last_message"]
+            except Exception:
+                pass
+                
+        update_service_state(state)
 
     async def get_arrivals_cached(self, stop_id: str) -> List[Dict[str, Any]]:
         now = asyncio.get_event_loop().time()
@@ -35,6 +86,7 @@ class TransitServer:
 
     async def register(self, ws: websockets.WebSocketServerProtocol):
         self.clients.add(ws)
+        self.sync_state()
         print(f"[SERVER] Client connected: {ws.remote_address}")
         try:
             async for message in ws:
@@ -44,6 +96,12 @@ class TransitServer:
                 if event == "schedule:subscribe":
                     # Support both 'data' and 'payload'
                     payload = data.get("data") or data.get("payload") or {}
+                    
+                    # Store client name if provided
+                    if "client_name" in payload:
+                        self.client_names[ws] = payload["client_name"]
+                    elif "client_name" in data:
+                        self.client_names[ws] = data["client_name"]
                     
                     pairs = []
                     # Case 1: routeStopPairs string (TJ Horner style)
@@ -62,6 +120,7 @@ class TransitServer:
                     
                     if pairs:
                         self.subscriptions[ws] = pairs
+                        self.sync_state()
                         print(f"[SERVER] Client {ws.remote_address} subscribed to {len(pairs)} pairs")
                         # Send immediate update
                         await self.send_update(ws)
@@ -71,6 +130,9 @@ class TransitServer:
             self.clients.remove(ws)
             if ws in self.subscriptions:
                 del self.subscriptions[ws]
+            if ws in self.client_names:
+                del self.client_names[ws]
+            self.sync_state()
             print(f"[SERVER] Client disconnected: {ws.remote_address}")
 
     async def send_update(self, ws: websockets.WebSocketServerProtocol):
@@ -124,6 +186,8 @@ class TransitServer:
                 "payload": {"trips": all_trips, "stopId": subs[0]["stopId"]} # stopId for compat
             }
             await ws.send(json.dumps(response))
+            self.last_broadcast_time = time.time()
+            self.sync_state(last_message=response)
 
     async def broadcast_loop(self):
         while True:

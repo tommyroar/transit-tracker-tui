@@ -105,7 +105,12 @@ class TransitConfig(BaseModel):
     @model_validator(mode="after")
     def sync_internal_state(self) -> "TransitConfig":
         tt = self.transit_tracker
-        self.api_url = tt.base_url
+        if self.use_local_api:
+            # Force local proxy URL if mode is enabled
+            self.api_url = "ws://localhost:8000/"
+        else:
+            self.api_url = tt.base_url
+            
         self.num_panels = tt.num_panels
         self.panel_width = tt.panel_width
         self.panel_height = tt.panel_height

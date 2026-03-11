@@ -1,15 +1,25 @@
 import sys
 import argparse
 import asyncio
+import os
 from .tui import run_cli
 from .network.websocket_service import run_service as run_client
 from .network.websocket_server import run_server
 
-from .config import TransitConfig
+from .config import TransitConfig, get_last_config_path
 
 async def run_full_service():
     """Runs both the WebSocket server (for HW) and the notification client."""
-    config = TransitConfig.load()
+    # Priority: 
+    # 1. Last used config from global settings
+    # 2. Default load logic (config.yaml, .local/config.yaml)
+    path = get_last_config_path()
+    if path and os.path.exists(path):
+        print(f"[SERVICE] Loading config from {path}")
+        config = TransitConfig.load(path)
+    else:
+        config = TransitConfig.load()
+        
     tasks = []
     
     if config.use_local_api:

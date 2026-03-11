@@ -1,9 +1,11 @@
 import os
 import sys
+import json
 import asyncio
 import time
 import threading
 import questionary
+from typing import Dict, Any
 from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
@@ -13,6 +15,27 @@ from .config import TransitConfig, TransitSubscription, get_last_config_path, se
 from .transit_api import TransitAPI
 from .hardware import list_serial_ports, flash_hardware, load_hardware_config
 from .simulator import run_simulator
+
+SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "service_state.json")
+
+def get_service_state() -> Dict[str, Any]:
+    if os.path.exists(SERVICE_STATE_FILE):
+        try:
+            with open(SERVICE_STATE_FILE, "r") as f:
+                state = json.load(f)
+                # print(f"DEBUG: Read state: {state}") # Temporary debug
+                return state
+        except Exception as e:
+            # print(f"DEBUG: Error reading state: {e}")
+            pass
+    return {}
+
+def get_last_service_update() -> str:
+    state = get_service_state()
+    ts = state.get("last_update")
+    if ts:
+        return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))
+    return "Never"
 
 def pick_file(mode="load", default_path=None):
     """Opens a native file chooser dialog."""
@@ -127,8 +150,12 @@ def manage_service_menu():
             os.system(f"launchctl load {PLIST_PATH}")
             print("Service started.")
         elif action == "Stop Service":
-            os.system(f"launchctl unload {PLIST_PATH}")
-            print("Service stopped.")
+            if status == "RUNNING (MANUAL)":
+                os.system("pkill -f 'transit-tracker service'")
+                print("Manual service stopped.")
+            else:
+                os.system(f"launchctl unload {PLIST_PATH}")
+                print("Managed service stopped.")
 
 async def add_stop_wizard(config: TransitConfig, config_path: str):
     api = TransitAPI()
@@ -320,6 +347,9 @@ def main_menu():
     console = Console()
 
     while True:
+        # Clear screen for a fresh dashboard view
+        console.clear()
+        
         status = check_service_status()
         
         # Build Dashboard using rich
@@ -337,10 +367,44 @@ def main_menu():
         status_color = "green" if "RUNNING" in status else "red"
         status_text = Text(f"Service Status: {status}", style=f"bold {status_color}")
         
-        threshold_text = Text(f"Alert Threshold: {config.arrival_threshold_minutes} minutes", style="yellow")
+        # Determine Data Source and Port
+        if config.use_local_api:
+            data_source = "Local (OBA Proxy)"
+            # Find the port from config or default
+            port = 8000 # Default port used in run_server
+            service_info = f"Serving at: ws://localhost:{port}"
+        else:
+            data_source = f"Cloud ({config.api_url})"
+            service_info = "Service: Notification Client only"
+
+        source_text = Text(f"Data Source: {data_source}", style="cyan")
+        info_text = Text(service_info, style="blue")
         panels_text = Text(f"Hardware Setup: {config.num_panels} Panel(s)", style="magenta")
         config_file_text = Text(f"Current Config: {config_path or 'No file loaded (in-memory)'}", style="dim")
         
+        # Last Service Update Logic
+        state = get_service_state()
+        last_svc_update = "Never"
+        ts = state.get("last_update")
+        if ts:
+            last_svc_update = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))
+        update_text = Text(f"Last Proxy Update: {last_svc_update}", style="yellow")
+
+        # Connected Devices Logic
+        clients = state.get("clients", [])
+        client_count = state.get("client_count", 0)
+        if client_count > 0:
+            names = []
+            for c in clients:
+                # Prefer the descriptive name if available
+                name = c.get("name", "Unknown")
+                if name == "Unknown Device":
+                    name = c["address"].split(":")[0]
+                names.append(name)
+            client_text = Text(f"Connected Devices ({client_count}): {', '.join(names)}", style="green")
+        else:
+            client_text = Text("Connected Devices: 0", style="dim")
+
         ports = list_serial_ports()
         if ports:
             device_text = Text(f"Hardware Detected: {', '.join(ports)}", style="cyan")
@@ -350,9 +414,12 @@ def main_menu():
         panel_group = Group(
             status_text,
             device_text,
+            client_text,
             panels_text,
             config_file_text,
-            threshold_text,
+            source_text,
+            info_text,
+            update_text,
             "",
             table if config.subscriptions else Text("No stops configured yet.", style="italic dim")
         )
@@ -367,6 +434,7 @@ def main_menu():
         action = questionary.select(
             "What would you like to do?",
             choices=[
+                "Refresh Dashboard",
                 "Configurator",
                 questionary.Choice("Simulator", disabled="Please load or save a config file first" if not has_config else None),
                 "Service Manager",
@@ -376,6 +444,9 @@ def main_menu():
 
         if not action or action == "Exit":
             break
+            
+        elif action == "Refresh Dashboard":
+            continue
             
         elif action == "Configurator":
             while True:
@@ -410,10 +481,31 @@ def main_menu():
                 elif c_action == "Config Files":
                     f_action = questionary.select(
                         "Config Files",
-                        choices=["Load Config File (Picker)", "Load Config File (Manual Path)", "Save Config File As...", "Back"]
+                        choices=[
+                            "Load Config File (Picker)", 
+                            "Load Config File (Manual Path)", 
+                            questionary.Choice("Save Config File", disabled="No config file loaded" if not config_path else None),
+                            "Save Config File As...", 
+                            "Back"
+                        ]
                     ).ask()
                     
-                    if f_action == "Load Config File (Picker)":
+                    if f_action == "Save Config File":
+                        try:
+                            # 1. Validate before save
+                            TransitConfig.model_validate(config.model_dump())
+                            
+                            # 2. Save
+                            config.save(config_path)
+                            
+                            # 3. Validate after save (reload and check)
+                            TransitConfig.load(config_path)
+                            
+                            print(f"Successfully saved and validated {config_path}")
+                        except Exception as e:
+                            print(f"Error saving or validating config: {e}")
+
+                    elif f_action == "Load Config File (Picker)":
                         new_path = pick_file(mode="load", default_path=config_path)
                         if new_path:
                             try:
@@ -448,13 +540,21 @@ def main_menu():
                             
                         if new_path:
                             try:
+                                # 1. Validate before save
+                                TransitConfig.model_validate(config.model_dump())
+                                
+                                # 2. Save
                                 config.save(new_path)
+                                
+                                # 3. Validate after save (reload and check)
+                                TransitConfig.load(new_path)
+                                
                                 config_path = new_path
                                 set_last_config_path(new_path)
-                                print(f"Saved config to {new_path}")
+                                print(f"Saved and validated config to {new_path}")
                                 has_config = True
                             except Exception as e:
-                                print(f"Error saving config: {e}")
+                                print(f"Error saving or validating config: {e}")
                                 
                 elif c_action == "Device Config":
                     d_action = questionary.select(

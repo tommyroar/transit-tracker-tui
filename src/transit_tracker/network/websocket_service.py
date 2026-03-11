@@ -24,6 +24,7 @@ async def run_service(config: TransitConfig = None):
                     # Support both formats for subscription
                     await ws.send(json.dumps({
                         "type": "schedule:subscribe",
+                        "client_name": "Notifications",
                         "payload": {
                             "feedId": sub.feed,
                             "routeId": sub.route,
@@ -35,6 +36,7 @@ async def run_service(config: TransitConfig = None):
                     s_id = f"{sub.feed}:{sub.stop}" if ":" not in sub.stop else sub.stop
                     await ws.send(json.dumps({
                         "event": "schedule:subscribe",
+                        "client_name": "Notifications",
                         "data": {
                             "routeStopPairs": f"{r_id},{s_id}"
                         }

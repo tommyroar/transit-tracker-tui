@@ -140,7 +140,13 @@ def load_hardware_config(port: str, config) -> bool:
                 base_url = flasher.get_entity("base_url_config", EntityType.TEXT)
                 if base_url and "value" in base_url:
                     # Strip wss:// etc if needed, but we keep full url in our config
-                    config.api_url = base_url["value"]
+                    val = base_url["value"]
+                    config.api_url = val
+                    if "localhost" in val or ".local" in val or "127.0.0.1" in val:
+                        config.use_local_api = True
+                    else:
+                        config.use_local_api = False
+                        config.transit_tracker.base_url = val
 
                 status.update("[cyan]Reading Schedule...")
                 schedule = flasher.get_entity("schedule_config", EntityType.TEXT)

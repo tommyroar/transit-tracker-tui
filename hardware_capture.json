@@ -1,0 +1,564 @@
+{
+  "device_info": {
+    "name": "transit-tracker-ec7db4",
+    "ip_address": "0.0.0.0",
+    "ssid": "",
+    "esphome_version": "2026.2.1",
+    "project_version": "v2.8.2"
+  },
+  "parsed_config": {
+    "base_url_config": {
+      "id": "base_url_config",
+      "type": 1,
+      "value": "wss://tt.horner.tj/",
+      "mode": 0,
+      "min_length": 0,
+      "max_length": 255,
+      "pattern": ""
+    },
+    "schedule_config": {
+      "id": "schedule_config",
+      "type": 1,
+      "value": "st:40_100240,st:1_8494,-420;st:1_100039,st:1_11920,-540",
+      "mode": 0,
+      "min_length": 0,
+      "max_length": 255,
+      "pattern": ""
+    },
+    "abbreviations_config": {
+      "id": "abbreviations_config",
+      "type": 1,
+      "value": "",
+      "mode": 0,
+      "min_length": 0,
+      "max_length": 255,
+      "pattern": ""
+    },
+    "route_styles_config": {
+      "id": "route_styles_config",
+      "type": 1,
+      "value": "",
+      "mode": 0,
+      "min_length": 0,
+      "max_length": 255,
+      "pattern": ""
+    },
+    "now_str_config": {
+      "id": "now_str_config",
+      "type": 1,
+      "value": "Now",
+      "mode": 0,
+      "min_length": 0,
+      "max_length": 255,
+      "pattern": ""
+    },
+    "min_long_str_config": {
+      "id": "min_long_str_config",
+      "type": 1,
+      "value": "min",
+      "mode": 0,
+      "min_length": 0,
+      "max_length": 255,
+      "pattern": ""
+    },
+    "min_short_str_config": {
+      "id": "min_short_str_config",
+      "type": 1,
+      "value": "m",
+      "mode": 0,
+      "min_length": 0,
+      "max_length": 255,
+      "pattern": ""
+    },
+    "hours_short_str_config": {
+      "id": "hours_short_str_config",
+      "type": 1,
+      "value": "h",
+      "mode": 0,
+      "min_length": 0,
+      "max_length": 255,
+      "pattern": ""
+    },
+    "feed_code_config": {
+      "id": "feed_code_config",
+      "type": 1,
+      "value": "",
+      "mode": 0,
+      "min_length": 0,
+      "max_length": 255,
+      "pattern": ""
+    },
+    "time_display_config": {
+      "id": "time_display_config",
+      "type": 2,
+      "value": "arrival",
+      "options": [
+        "departure",
+        "arrival"
+      ]
+    },
+    "time_units_config": {
+      "id": "time_units_config",
+      "type": 2,
+      "value": "short",
+      "options": [
+        "long",
+        "short",
+        "none"
+      ]
+    },
+    "list_mode_config": {
+      "id": "list_mode_config",
+      "type": 2,
+      "value": "sequential",
+      "options": [
+        "sequential",
+        "nextPerRoute"
+      ]
+    },
+    "scroll_headsigns": {
+      "id": "scroll_headsigns",
+      "type": 3,
+      "value": "ON"
+    },
+    "flip_display": null
+  },
+  "raw_traffic": [
+    {
+      "type": "tx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "method": "device.info",
+        "id": 1
+      },
+      "timestamp": 1773296487.533317
+    },
+    {
+      "type": "rx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "name": "transit-tracker-ec7db4",
+          "ip_address": "0.0.0.0",
+          "ssid": "",
+          "esphome_version": "2026.2.1",
+          "project_version": "v2.8.2"
+        }
+      },
+      "timestamp": 1773296487.550064
+    },
+    {
+      "type": "tx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "method": "entity.get",
+        "id": 2,
+        "params": {
+          "id": "base_url_config",
+          "type": 1
+        }
+      },
+      "timestamp": 1773296487.5506198
+    },
+    {
+      "type": "rx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "id": "base_url_config",
+          "type": 1,
+          "value": "wss://tt.horner.tj/",
+          "mode": 0,
+          "min_length": 0,
+          "max_length": 255,
+          "pattern": ""
+        }
+      },
+      "timestamp": 1773296487.5609138
+    },
+    {
+      "type": "tx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "method": "entity.get",
+        "id": 3,
+        "params": {
+          "id": "schedule_config",
+          "type": 1
+        }
+      },
+      "timestamp": 1773296487.560991
+    },
+    {
+      "type": "rx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+          "id": "schedule_config",
+          "type": 1,
+          "value": "st:40_100240,st:1_8494,-420;st:1_100039,st:1_11920,-540",
+          "mode": 0,
+          "min_length": 0,
+          "max_length": 255,
+          "pattern": ""
+        }
+      },
+      "timestamp": 1773296487.5717099
+    },
+    {
+      "type": "tx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "method": "entity.get",
+        "id": 4,
+        "params": {
+          "id": "abbreviations_config",
+          "type": 1
+        }
+      },
+      "timestamp": 1773296487.571779
+    },
+    {
+      "type": "rx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {
+          "id": "abbreviations_config",
+          "type": 1,
+          "value": "",
+          "mode": 0,
+          "min_length": 0,
+          "max_length": 255,
+          "pattern": ""
+        }
+      },
+      "timestamp": 1773296487.59428
+    },
+    {
+      "type": "tx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "method": "entity.get",
+        "id": 5,
+        "params": {
+          "id": "route_styles_config",
+          "type": 1
+        }
+      },
+      "timestamp": 1773296487.5943449
+    },
+    {
+      "type": "rx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {
+          "id": "route_styles_config",
+          "type": 1,
+          "value": "",
+          "mode": 0,
+          "min_length": 0,
+          "max_length": 255,
+          "pattern": ""
+        }
+      },
+      "timestamp": 1773296487.608991
+    },
+    {
+      "type": "tx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "method": "entity.get",
+        "id": 6,
+        "params": {
+          "id": "now_str_config",
+          "type": 1
+        }
+      },
+      "timestamp": 1773296487.609052
+    },
+    {
+      "type": "rx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "result": {
+          "id": "now_str_config",
+          "type": 1,
+          "value": "Now",
+          "mode": 0,
+          "min_length": 0,
+          "max_length": 255,
+          "pattern": ""
+        }
+      },
+      "timestamp": 1773296487.619654
+    },
+    {
+      "type": "tx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "method": "entity.get",
+        "id": 7,
+        "params": {
+          "id": "min_long_str_config",
+          "type": 1
+        }
+      },
+      "timestamp": 1773296487.61971
+    },
+    {
+      "type": "rx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "result": {
+          "id": "min_long_str_config",
+          "type": 1,
+          "value": "min",
+          "mode": 0,
+          "min_length": 0,
+          "max_length": 255,
+          "pattern": ""
+        }
+      },
+      "timestamp": 1773296487.6342678
+    },
+    {
+      "type": "tx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "method": "entity.get",
+        "id": 8,
+        "params": {
+          "id": "min_short_str_config",
+          "type": 1
+        }
+      },
+      "timestamp": 1773296487.6343439
+    },
+    {
+      "type": "rx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "result": {
+          "id": "min_short_str_config",
+          "type": 1,
+          "value": "m",
+          "mode": 0,
+          "min_length": 0,
+          "max_length": 255,
+          "pattern": ""
+        }
+      },
+      "timestamp": 1773296487.6449761
+    },
+    {
+      "type": "tx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "method": "entity.get",
+        "id": 9,
+        "params": {
+          "id": "hours_short_str_config",
+          "type": 1
+        }
+      },
+      "timestamp": 1773296487.645063
+    },
+    {
+      "type": "rx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "result": {
+          "id": "hours_short_str_config",
+          "type": 1,
+          "value": "h",
+          "mode": 0,
+          "min_length": 0,
+          "max_length": 255,
+          "pattern": ""
+        }
+      },
+      "timestamp": 1773296487.657523
+    },
+    {
+      "type": "tx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "method": "entity.get",
+        "id": 10,
+        "params": {
+          "id": "feed_code_config",
+          "type": 1
+        }
+      },
+      "timestamp": 1773296487.657593
+    },
+    {
+      "type": "rx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "result": {
+          "id": "feed_code_config",
+          "type": 1,
+          "value": "",
+          "mode": 0,
+          "min_length": 0,
+          "max_length": 255,
+          "pattern": ""
+        }
+      },
+      "timestamp": 1773296487.6697862
+    },
+    {
+      "type": "tx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "method": "entity.get",
+        "id": 11,
+        "params": {
+          "id": "time_display_config",
+          "type": 2
+        }
+      },
+      "timestamp": 1773296487.669852
+    },
+    {
+      "type": "rx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "result": {
+          "id": "time_display_config",
+          "type": 2,
+          "value": "arrival",
+          "options": [
+            "departure",
+            "arrival"
+          ]
+        }
+      },
+      "timestamp": 1773296487.6808052
+    },
+    {
+      "type": "tx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "method": "entity.get",
+        "id": 12,
+        "params": {
+          "id": "time_units_config",
+          "type": 2
+        }
+      },
+      "timestamp": 1773296487.680864
+    },
+    {
+      "type": "rx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": 12,
+        "result": {
+          "id": "time_units_config",
+          "type": 2,
+          "value": "short",
+          "options": [
+            "long",
+            "short",
+            "none"
+          ]
+        }
+      },
+      "timestamp": 1773296487.69328
+    },
+    {
+      "type": "tx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "method": "entity.get",
+        "id": 13,
+        "params": {
+          "id": "list_mode_config",
+          "type": 2
+        }
+      },
+      "timestamp": 1773296487.693307
+    },
+    {
+      "type": "rx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": 13,
+        "result": {
+          "id": "list_mode_config",
+          "type": 2,
+          "value": "sequential",
+          "options": [
+            "sequential",
+            "nextPerRoute"
+          ]
+        }
+      },
+      "timestamp": 1773296487.705933
+    },
+    {
+      "type": "tx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "method": "entity.get",
+        "id": 14,
+        "params": {
+          "id": "scroll_headsigns",
+          "type": 3
+        }
+      },
+      "timestamp": 1773296487.7060359
+    },
+    {
+      "type": "rx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": 14,
+        "result": {
+          "id": "scroll_headsigns",
+          "type": 3,
+          "value": "ON"
+        }
+      },
+      "timestamp": 1773296487.716597
+    },
+    {
+      "type": "tx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "method": "entity.get",
+        "id": 15,
+        "params": {
+          "id": "flip_display",
+          "type": 3
+        }
+      },
+      "timestamp": 1773296487.716661
+    },
+    {
+      "type": "rx",
+      "payload": {
+        "jsonrpc": "2.0",
+        "id": 15,
+        "error": {
+          "code": -32602,
+          "message": "Entity not found"
+        }
+      },
+      "timestamp": 1773296487.7300858
+    }
+  ]
+}

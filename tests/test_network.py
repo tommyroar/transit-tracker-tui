@@ -10,61 +10,61 @@ from transit_tracker.config import TransitConfig, TransitSubscription
 def mock_config():
     config = MagicMock(spec=TransitConfig)
     config.subscriptions = [
-        TransitSubscription(feed=\"st\", route=\"st:40_100240\", stop=\"st:1_8494\", label=\"Route st:40_100240\")
+        TransitSubscription(feed="st", route="st:40_100240", stop="st:1_8494", label="Route st:40_100240")
     ]
     config.use_local_api = True
     config.auto_launch_gui = True
-    config.ntfy_topic = \"transit-alerts\"
+    config.ntfy_topic = "transit-alerts"
     config.arrival_threshold_minutes = 5
     config.check_interval_seconds = 30
     return config
 
 @pytest.mark.asyncio
 async def test_server_broadcast_updates(mock_config):
-    \"\"\"Test that the server broadcasts updates to subscribed clients.\"\"\"
+    """Test that the server broadcasts updates to subscribed clients."""
     server = TransitServer(mock_config)
     server.api = AsyncMock()
 
     mock_arrivals = [
         {
-            \"tripId\": \"trip_123\",
-            \"routeId\": \"st:40_100240\",
-            \"stopId\": \"st:1_8494\",
-            \"arrivalTime\": 1773230400000 # 2026-03-11T12:00:00Z in ms
+            "tripId": "trip_123",
+            "routeId": "st:40_100240",
+            "stopId": "st:1_8494",
+            "arrivalTime": 1773230400000 # 2026-03-11T12:00:00Z in ms
         }
     ]
     server.api.get_arrivals.return_value = mock_arrivals
 
     ws = AsyncMock()
     ws.send = AsyncMock()
-    server.subscriptions[ws] = [{\"routeId\": \"st:40_100240\", \"stopId\": \"st:1_8494\"}]
+    server.subscriptions[ws] = [{"routeId": "st:40_100240", "stopId": "st:1_8494"}]
 
     await server.send_update(ws)
 
     ws.send.assert_called_once()
     sent_data = json.loads(ws.send.call_args[0][0])
-    assert sent_data[\"event\"] == \"schedule\"
-    assert sent_data[\"data\"][\"trips\"][0][\"tripId\"] == \"trip_123\"
+    assert sent_data["event"] == "schedule"
+    assert sent_data["data"]["trips"][0]["tripId"] == "trip_123"
 
 @pytest.mark.asyncio
 async def test_fair_diversity_capping(mock_config):
-    \"\"\"Test that the server applies fair diversity capping correctly.\"\"\"
+    """Test that the server applies fair diversity capping correctly."""
     server = TransitServer(mock_config)
     server.api = AsyncMock()
 
     # Two stops, multiple trips per stop
     mock_arrivals_1 = [
-        {\"tripId\": \"stop1_trip1\", \"routeId\": \"route1\", \"stopId\": \"stop1\", \"arrivalTime\": 1000},
-        {\"tripId\": \"stop1_trip2\", \"routeId\": \"route1\", \"stopId\": \"stop1\", \"arrivalTime\": 2000},
+        {"tripId": "stop1_trip1", "routeId": "route1", "stopId": "stop1", "arrivalTime": 1000},
+        {"tripId": "stop1_trip2", "routeId": "route1", "stopId": "stop1", "arrivalTime": 2000},
     ]
     mock_arrivals_2 = [
-        {\"tripId\": \"stop2_trip1\", \"routeId\": \"route2\", \"stopId\": \"stop2\", \"arrivalTime\": 1500},
-        {\"tripId\": \"stop2_trip2\", \"routeId\": \"route2\", \"stopId\": \"stop2\", \"arrivalTime\": 2500},
+        {"tripId": "stop2_trip1", "routeId": "route2", "stopId": "stop2", "arrivalTime": 1500},
+        {"tripId": "stop2_trip2", "routeId": "route2", "stopId": "stop2", "arrivalTime": 2500},
     ]
     
     async def side_effect(stop_id):
-        if \"stop1\" in stop_id: return mock_arrivals_1
-        if \"stop2\" in stop_id: return mock_arrivals_2
+        if "stop1" in stop_id: return mock_arrivals_1
+        if "stop2" in stop_id: return mock_arrivals_2
         return []
     
     server.api.get_arrivals.side_effect = side_effect
@@ -74,15 +74,15 @@ async def test_fair_diversity_capping(mock_config):
     # Client limit is 3
     server.client_limits[ws] = 3
     server.subscriptions[ws] = [
-        {\"routeId\": \"route1\", \"stopId\": \"stop1\"},
-        {\"routeId\": \"route2\", \"stopId\": \"stop2\"}
+        {"routeId": "route1", "stopId": "stop1"},
+        {"routeId": "route2", "stopId": "stop2"}
     ]
 
     await server.send_update(ws)
 
     ws.send.assert_called_once()
     sent_data = json.loads(ws.send.call_args[0][0])
-    trips = sent_data[\"data\"][\"trips\"]
+    trips = sent_data["data"]["trips"]
     
     # Diversity capping should pick:
     # 1. stop1_trip1 (soonest for stop1)
@@ -90,15 +90,15 @@ async def test_fair_diversity_capping(mock_config):
     # 3. stop1_trip2 (next soonest overall)
     
     assert len(trips) == 3
-    trip_ids = [t[\"tripId\"] for t in trips]
-    assert \"stop1_trip1\" in trip_ids
-    assert \"stop2_trip1\" in trip_ids
-    assert \"stop1_trip2\" in trip_ids
-    assert \"stop2_trip2\" not in trip_ids
+    trip_ids = [t["tripId"] for t in trips]
+    assert "stop1_trip1" in trip_ids
+    assert "stop2_trip1" in trip_ids
+    assert "stop1_trip2" in trip_ids
+    assert "stop2_trip2" not in trip_ids
 
 @pytest.mark.asyncio
 async def test_normalize_id():
-    \"\"\"Test the internal ID normalization logic.\"\"\"
+    """Test the internal ID normalization logic."""
     from transit_tracker.network.websocket_server import TransitServer
     server = TransitServer(MagicMock())
     

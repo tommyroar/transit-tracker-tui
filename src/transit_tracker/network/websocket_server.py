@@ -243,10 +243,16 @@ class TransitServer:
                         # Convert ms to seconds AND subtract offset for hardware compatibility
                         for key in ["arrivalTime", "predictedArrivalTime", "scheduledArrivalTime"]:
                             val = arr_copy.get(key)
-                            if val:
+                            if isinstance(val, (int, float)):
                                 if val > 10**12: # Milliseconds
-                                    val = val // 1000
+                                    val = int(val // 1000)
                                 arr_copy[key] = val + offset_sec
+                            elif val and isinstance(val, str) and val.isdigit():
+                                # Handle stringified numbers if they occur
+                                ival = int(val)
+                                if ival > 10**12:
+                                    ival = ival // 1000
+                                arr_copy[key] = ival + offset_sec
                                 
                         all_trips.append(arr_copy)
             except Exception as e:

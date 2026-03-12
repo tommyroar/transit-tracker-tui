@@ -5,12 +5,15 @@ import asyncio
 import time
 import threading
 import questionary
-from typing import Dict, Any
+import difflib
+import yaml
+from typing import Dict, Any, List
 from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.live import Live
+from rich.syntax import Syntax
 from rich import print as rprint
 from .config import TransitConfig, TransitSubscription, get_last_config_path, set_last_config_path
 from .transit_api import TransitAPI
@@ -18,6 +21,57 @@ from .hardware import list_serial_ports, flash_hardware, load_hardware_config, g
 from .simulator import run_simulator, async_run_simulator
 
 SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "service_state.json")
+
+def view_config_diff(config: TransitConfig, config_path: str, console: Console):
+    """Shows a diff between in-memory config and on-disk config."""
+    if not config_path or not os.path.exists(config_path):
+        rprint("[red]No config file on disk to compare with.[/red]")
+        time.sleep(2)
+        return
+
+    try:
+        with open(config_path, "r") as f:
+            disk_content = f.read()
+        
+        # Dump current in-memory config to YAML
+        mem_content = yaml.safe_dump(config.model_dump(exclude_unset=True), sort_keys=False)
+        
+        diff = list(difflib.unified_diff(
+            disk_content.splitlines(keepends=True),
+            mem_content.splitlines(keepends=True),
+            fromfile=f"disk: {os.path.basename(config_path)}",
+            tofile="in-memory"
+        ))
+        
+        if not diff:
+            rprint("[green]No differences detected between in-memory and disk.[/green]")
+        else:
+            diff_text = "".join(diff)
+            console.print(Panel(Syntax(diff_text, "diff", theme="monokai"), title="Config Diff"))
+        
+        input("\nPress Enter to continue...")
+    except Exception as e:
+        rprint(f"[red]Error generating diff: {e}[/red]")
+        time.sleep(2)
+
+def view_service_logs(console: Console):
+    """Shows the last 50 lines of the service log."""
+    log_path = os.path.abspath("service.log")
+    if not os.path.exists(log_path):
+        rprint(f"[red]Log file not found at {log_path}[/red]")
+        time.sleep(2)
+        return
+
+    try:
+        with open(log_path, "r") as f:
+            lines = f.readlines()
+            last_lines = "".join(lines[-50:])
+        
+        console.print(Panel(Text(last_lines), title=f"Service Logs (last 50 lines) - {log_path}"))
+        input("\nPress Enter to continue...")
+    except Exception as e:
+        rprint(f"[red]Error reading logs: {e}[/red]")
+        time.sleep(2)
 
 def get_service_state() -> Dict[str, Any]:
     if os.path.exists(SERVICE_STATE_FILE):
@@ -108,6 +162,7 @@ async def manage_service_menu(config: TransitConfig, config_path: str, console: 
             "Service Manager",
             choices=[
                 "Start Service" if "RUNNING" not in status else "Stop Service",
+                "View Logs",
                 "Back"
             ],
             config=config,
@@ -118,7 +173,9 @@ async def manage_service_menu(config: TransitConfig, config_path: str, console: 
         if not action or action == "Back":
             break
             
-        if action == "Start Service":
+        if action == "View Logs":
+            view_service_logs(console)
+        elif action == "Start Service":
             python_bin_dir = os.path.dirname(sys.executable)
             transit_tracker_bin = os.path.join(python_bin_dir, "transit-tracker")
             
@@ -332,6 +389,7 @@ async def change_api_mode_wizard(config: TransitConfig, config_path: str, consol
 
 def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
     status = check_service_status()
+    state = get_service_state()
     
     # Build Dashboard using rich
     table = Table(show_header=True, header_style="bold magenta", expand=True, box=None)
@@ -346,13 +404,26 @@ def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
         table.add_row(sub.label, sub.feed, sub.route, sub.stop, direction_str)
         
     status_color = "green" if "RUNNING" in status else "red"
-    status_icon = "[green]RUNNING[/green]" if "RUNNING" in status else "[red]STOPPED[/red]"
-    status_text = Text(f"Service Status: {status}", style=f"bold {status_color}")
+    status_icon = f"[{status_color}]● {status}[/{status_color}]"
+    
+    # Extract service metadata
+    pid = state.get("pid", "Unknown")
+    uptime = "N/A"
+    start_time = state.get("start_time")
+    if start_time:
+        uptime_seconds = int(time.time() - start_time)
+        uptime = str(time.strftime("%H:%M:%S", time.gmtime(uptime_seconds)))
+    messages = state.get("messages_processed", 0)
+
+    status_text = Text(f"Service Status: ", style="bold")
+    status_text.append(f"{status}", style=f"bold {status_color}")
+    if "RUNNING" in status:
+        status_text.append(f" (PID: {pid}, Uptime: {uptime}, Msg: {messages})", style="dim")
     
     if config.use_local_api:
         data_source = "Local (OBA Proxy)"
         port = 8000 
-        service_info = f"Serving at: ws://localhost:{port}"
+        service_info = f"Serving at: ws://Tommys-Mac-mini.local:{port}"
     else:
         data_source = f"Cloud ({config.api_url})"
         service_info = "Service: Notification Client only"
@@ -362,7 +433,6 @@ def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
     panels_text = Text(f"Hardware Setup: {config.num_panels} Panel(s)", style="magenta")
     config_file_text = Text(f"Current Config: {config_path or 'No file loaded (in-memory)'}", style="dim")
     
-    state = get_service_state()
     last_svc_update = "Never"
     ts = state.get("last_update")
     if ts:
@@ -559,6 +629,7 @@ async def async_main_menu():
                             "Load Config File (Manual Path)", 
                             questionary.Choice("Save Config File", disabled="No config file loaded" if not config_path else None),
                             "Save Config File As...", 
+                            "View Config Diff",
                             "Back"
                         ],
                         config=config,
@@ -566,7 +637,9 @@ async def async_main_menu():
                         console=console
                     )
                     
-                    if f_action == "Save Config File":
+                    if f_action == "View Config Diff":
+                        view_config_diff(config, config_path, console)
+                    elif f_action == "Save Config File":
                         try:
                             TransitConfig.model_validate(config.model_dump())
                             config.save(config_path)

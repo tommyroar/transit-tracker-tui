@@ -200,7 +200,9 @@ class TransitServer:
                             return r_id[c_idx+1:]
                     return r_id
 
-                relevant_routes = set(normalize_route(s.get("routeId")) for s in stop_subs)
+                # Map routeId to its specific subscription for offset processing
+                route_to_sub = {normalize_route(s.get("routeId")): s for s in stop_subs}
+                relevant_routes = set(route_to_sub.keys())
                 
                 for arr in arrivals:
                     arr_route_id = normalize_route(arr["routeId"])
@@ -210,11 +212,32 @@ class TransitServer:
                         arr_copy = arr.copy()
                         arr_copy["stopId"] = stop_id
                         
-                        # Convert ms to seconds for hardware compatibility
+                        # Apply Travel Time Offset on the Server
+                        # This fixes physical hardware that ignores local offsets
+                        sub = route_to_sub.get(arr_route_id)
+                        offset_sec = 0
+                        if sub and sub.get("time_offset"):
+                            try:
+                                # Extract number from strings like "-9min" or "5min"
+                                import re
+                                match = re.search(r"(-?\d+)", str(sub["time_offset"]))
+                                if match:
+                                    # Convert minutes to seconds
+                                    offset_sec = int(match.group(1)) * 60
+                            except (ValueError, TypeError):
+                                pass
+
+                        # Convert ms to seconds AND subtract offset for hardware compatibility
                         for key in ["arrivalTime", "predictedArrivalTime", "scheduledArrivalTime"]:
                             val = arr_copy.get(key)
-                            if val and val > 10**12: # Milliseconds detection
-                                arr_copy[key] = val // 1000
+                            if val:
+                                if val > 10**12: # Milliseconds detection
+                                    val = val // 1000
+                                
+                                # Subtract the offset (e.g. if offset is 9min, subtract 540s)
+                                # Note: our config usually stores travel time as positive or negative.
+                                # Hardware capture showed -540 for 9 mins, so we add the negative value.
+                                arr_copy[key] = val + offset_sec
                                 
                         all_stop_trips.append(arr_copy)
             except Exception as e:

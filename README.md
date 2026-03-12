@@ -111,6 +111,18 @@ This project is designed to run on specific LED matrix hardware. Below are the c
 - **Adafruit ESP32-S3 LED Matrix Portal:** A specialized driver board for HUB75 panels. (Adafruit Order #3641312, shipped March 3, 2026). [Track Delivery](https://tools.usps.com/go/TrackConfirmAction?qtc_tLabels1=9405540106246002702780).
 - **Related Hardware:** The system is built around the ESP32-S3 architecture and standard HUB75 64x32 RGB panels.
 
+### Initial Firmware (Unboxing) & Upgrades
+
+If you are unboxing a brand new ESP32 board, it must be flashed with the base transit-tracker ESPHome firmware. 
+- **From this TUI:** When you click "Flash Device", the application will automatically detect if your board lacks the base firmware. If so, it will prompt you and securely download the latest official `firmware.factory.bin` directly from the [EastsideUrbanism/transit-tracker releases page](https://github.com/EastsideUrbanism/transit-tracker/releases) and flash it over USB.
+- **From the Web:** You can also perform this initial flash from the official web configurator at [config.transit-tracker.eastsideurbanism.org](https://config.transit-tracker.eastsideurbanism.org).
+
+### Upstream Sources
+
+To stay up to date with the core project:
+- **Firmware Binary Updates:** Releases are published to [EastsideUrbanism/transit-tracker/releases](https://github.com/EastsideUrbanism/transit-tracker/releases). You can apply OTA updates via the web configurator or ESPHome dashboard.
+- **Data APIs:** The transit data proxy is hosted at `wss://tt.horner.tj`. The underlying API project container is maintained at [tjhorner/transit-tracker-api](https://github.com/tjhorner/transit-tracker-api). You can self-host the API using the official Docker image (`ghcr.io/tjhorner/transit-tracker-api:latest`).
+
 ## 🛠️ Development
 
 If you are developing or modifying the codebase, you can run tests using:

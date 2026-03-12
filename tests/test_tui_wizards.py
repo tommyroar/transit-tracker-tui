@@ -32,7 +32,8 @@ async def test_api_mode_wizard_choices(mock_config):
         
         # Test with use_local_api = True
         mock_config.use_local_api = True
-        await change_api_mode_wizard(mock_config, "config.yaml")
+        mock_console = MagicMock()
+        await change_api_mode_wizard(mock_config, "config.yaml", mock_console)
         
         args, kwargs = mock_select.call_args
         assert kwargs["default"] is True
@@ -43,7 +44,7 @@ async def test_api_mode_wizard_choices(mock_config):
         # When False, it asks for a text URL
         mock_text.return_value.ask_async = AsyncMock(return_value="wss://test.api")
         
-        await change_api_mode_wizard(mock_config, "config.yaml")
+        await change_api_mode_wizard(mock_config, "config.yaml", mock_console)
         args, kwargs = mock_select.call_args
         assert kwargs["default"] is False
 
@@ -57,7 +58,8 @@ async def test_panels_wizard_choices(mock_config):
         mock_select.return_value = mock_instance
         
         mock_config.num_panels = 2
-        await change_panels_wizard(mock_config, "config.yaml")
+        mock_console = MagicMock()
+        await change_panels_wizard(mock_config, "config.yaml", mock_console)
         
         args, kwargs = mock_select.call_args
         choices = kwargs["choices"]

@@ -82,6 +82,7 @@ class TransitConfig(BaseModel):
     """
     # Application settings
     use_local_api: bool = Field(default=True)
+    auto_launch_gui: bool = Field(default=True)
     ntfy_topic: str = Field(default="transit-alerts")
     arrival_threshold_minutes: int = Field(default=5, ge=1)
     check_interval_seconds: int = Field(default=30, ge=10)
@@ -107,7 +108,8 @@ class TransitConfig(BaseModel):
         tt = self.transit_tracker
         if self.use_local_api:
             # Force local proxy URL if mode is enabled
-            self.api_url = "ws://localhost:8000/"
+            # We use .local hostname instead of localhost so flashed hardware can connect
+            self.api_url = "ws://Tommys-Mac-mini.local:8000/"
         else:
             self.api_url = tt.base_url
             

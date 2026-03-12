@@ -30,13 +30,14 @@ class ESPHomeFlasher:
         if self.serial and self.serial.is_open:
             self.serial.close()
 
-    def send_request(self, method: str, params: Dict[str, Any]) -> Any:
+    def send_request(self, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
         req = {
             "jsonrpc": "2.0",
             "method": method,
-            "params": params,
             "id": self.request_id
         }
+        if params is not None:
+            req["params"] = params
         self.request_id += 1
         
         payload = "JRPC:" + json.dumps(req) + "\r\n"
@@ -56,6 +57,9 @@ class ESPHomeFlasher:
                 except json.JSONDecodeError:
                     pass
         return None
+
+    def get_device_info(self) -> Optional[Dict[str, Any]]:
+        return self.send_request("device.info")
 
     def set_entity(self, entity_id: str, entity_type: int, value: Any) -> bool:
         res = self.send_request("entity.set", {
@@ -231,3 +235,71 @@ def flash_hardware(port: str, config) -> bool:
         except Exception as e:
             console.print(f"[bold red]Failed to flash device:[/bold red] {e}")
             return False
+
+def is_bootstrapped(port: str) -> bool:
+    """Checks if the device responds to ESPHome JSON-RPC."""
+    try:
+        with ESPHomeFlasher(port) as flasher:
+            info = flasher.get_device_info()
+            if info and "project_version" in info:
+                return True
+    except Exception:
+        pass
+    return False
+
+def flash_base_firmware(port: str) -> bool:
+    """Downloads the latest factory bin from GitHub and flashes it via esptool."""
+    import httpx
+    import tempfile
+    import os
+    import sys
+    import esptool
+    
+    with console.status("[bold cyan]Fetching latest firmware release...") as status:
+        try:
+            client = httpx.Client(timeout=10.0)
+            resp = client.get("https://api.github.com/repos/EastsideUrbanism/transit-tracker/releases/latest")
+            resp.raise_for_status()
+            release_data = resp.json()
+            
+            download_url = None
+            for asset in release_data.get("assets", []):
+                if asset.get("name") == "firmware.factory.bin":
+                    download_url = asset.get("browser_download_url")
+                    break
+                    
+            if not download_url:
+                console.print("[bold red]Could not find firmware.factory.bin in latest release.[/bold red]")
+                return False
+                
+            status.update(f"[cyan]Downloading {download_url}...")
+            bin_resp = client.get(download_url)
+            bin_resp.raise_for_status()
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as temp_bin:
+                temp_bin.write(bin_resp.content)
+                bin_path = temp_bin.name
+            
+            status.update(f"[cyan]Flashing firmware to {port} (this may take a minute)...")
+            
+            # Programmatic esptool call
+            command = ["--port", port, "--baud", "460800", "write_flash", "0x0", bin_path]
+            try:
+                # We can't easily capture esptool output if it uses print directly without redirecting stdout
+                # but we will just let it print for the user to see the progress.
+                # Actually, status spinner might conflict with esptool printing, so we stop the spinner
+                status.stop()
+                console.print(f"[bold yellow]Running esptool on {port}...[/bold yellow]")
+                esptool.main(command)
+            except Exception as e:
+                console.print(f"[bold red]esptool failed:[/bold red] {e}")
+                return False
+            finally:
+                os.remove(bin_path)
+                
+            console.print("[bold green]Successfully installed base firmware![/bold green]")
+            return True
+        except Exception as e:
+            console.print(f"[bold red]Failed to download/flash firmware:[/bold red] {e}")
+            return False
+

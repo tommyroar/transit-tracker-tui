@@ -2,7 +2,8 @@ import sys
 import argparse
 import asyncio
 import os
-from .tui import run_cli
+import json
+from .tui import run_cli, PLIST_NAME
 from .network.websocket_service import run_service as run_client
 from .network.websocket_server import run_server
 
@@ -25,7 +26,7 @@ async def run_full_service():
     if config.use_local_api:
         print("[SERVICE] Mode: Local API (Starting internal server)")
         # Force client to use local server
-        config.api_url = "ws://localhost:8000"
+        config.api_url = "ws://Tommys-Mac-mini.local:8000"
         tasks.append(run_server(config=config))
     else:
         # If using public API, ensure it's not pointing to localhost
@@ -38,26 +39,67 @@ async def run_full_service():
     print(f"[SERVICE] Starting all background tasks...")
     await asyncio.gather(*tasks)
 
+def start_gui_if_needed(config: TransitConfig):
+    """Starts the macOS tray icon if enabled and not already running."""
+    if sys.platform != "darwin" or not config.auto_launch_gui:
+        return
+    try:
+        import subprocess
+        # Check if already running using pgrep (idempotent)
+        res = subprocess.run(["pgrep", "-f", "transit-tracker gui"], capture_output=True)
+        if res.returncode != 0:
+            # Find the absolute path to ourselves
+            # sys.executable is .../.venv/bin/python
+            # transit-tracker is .../.venv/bin/transit-tracker
+            python_bin_dir = os.path.dirname(sys.executable)
+            transit_tracker_bin = os.path.join(python_bin_dir, "transit-tracker")
+            
+            # Fallback to just the command if not found in same bin
+            cmd = [transit_tracker_bin, "gui"] if os.path.exists(transit_tracker_bin) else ["transit-tracker", "gui"]
+            
+            # Not running, launch it in the background
+            subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+    except Exception:
+        pass
+
 def main():
+    # Load config early to check auto_launch_gui
+    path = get_last_config_path()
+    if path and os.path.exists(path):
+        config = TransitConfig.load(path)
+    else:
+        config = TransitConfig.load()
+
     parser = argparse.ArgumentParser(description="Transit Tracker Configuration")
     parser.add_argument(
         "command", 
         nargs="?", 
-        choices=["ui", "service", "simulator"], 
+        choices=["ui", "service", "simulator", "gui"], 
         default="ui",
-        help="Command to run: 'ui' (default) opens the interactive configuration wizard, 'service' runs the background monitor and server, 'simulator' runs the LED matrix simulator."
+        help="Command to run: 'ui' (default) opens the interactive configuration wizard, 'service' runs the background monitor and server, 'simulator' runs the LED matrix simulator, 'gui' runs the macOS status bar app."
     )
 
     args = parser.parse_args()
+
+    # The gui is started for any command (except gui itself) to provide visual status.
+    if args.command != "gui":
+        start_gui_if_needed(config)
 
     if args.command == "service":
         try:
             asyncio.run(run_full_service())
         except KeyboardInterrupt:
-            print("\n[SERVICE] Shutting down...")
+            print("\n[SERVICE] Down...")
+    elif args.command == "gui":
+        from .gui import main as run_gui
+        run_gui()
     elif args.command == "simulator":
         from .simulator import run_simulator
-        from .config import TransitConfig
         config = TransitConfig.load()
         run_simulator(config, force_live=True)
     else:

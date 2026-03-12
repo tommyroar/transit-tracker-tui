@@ -5,19 +5,73 @@ import asyncio
 import time
 import threading
 import questionary
-from typing import Dict, Any
+import difflib
+import yaml
+from typing import Dict, Any, List
 from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.live import Live
+from rich.syntax import Syntax
 from rich import print as rprint
 from .config import TransitConfig, TransitSubscription, get_last_config_path, set_last_config_path
 from .transit_api import TransitAPI
-from .hardware import list_serial_ports, flash_hardware, load_hardware_config, get_usb_devices
+from .hardware import list_serial_ports, flash_hardware, load_hardware_config, get_usb_devices, is_bootstrapped, flash_base_firmware
 from .simulator import run_simulator, async_run_simulator
 
 SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "service_state.json")
+
+def view_config_diff(config: TransitConfig, config_path: str, console: Console):
+    """Shows a diff between in-memory config and on-disk config."""
+    if not config_path or not os.path.exists(config_path):
+        rprint("[red]No config file on disk to compare with.[/red]")
+        time.sleep(2)
+        return
+
+    try:
+        with open(config_path, "r") as f:
+            disk_content = f.read()
+        
+        # Dump current in-memory config to YAML
+        mem_content = yaml.safe_dump(config.model_dump(exclude_unset=True), sort_keys=False)
+        
+        diff = list(difflib.unified_diff(
+            disk_content.splitlines(keepends=True),
+            mem_content.splitlines(keepends=True),
+            fromfile=f"disk: {os.path.basename(config_path)}",
+            tofile="in-memory"
+        ))
+        
+        if not diff:
+            rprint("[green]No differences detected between in-memory and disk.[/green]")
+        else:
+            diff_text = "".join(diff)
+            console.print(Panel(Syntax(diff_text, "diff", theme="monokai"), title="Config Diff"))
+        
+        input("\nPress Enter to continue...")
+    except Exception as e:
+        rprint(f"[red]Error generating diff: {e}[/red]")
+        time.sleep(2)
+
+def view_service_logs(console: Console):
+    """Shows the last 50 lines of the service log."""
+    log_path = os.path.abspath("service.log")
+    if not os.path.exists(log_path):
+        rprint(f"[red]Log file not found at {log_path}[/red]")
+        time.sleep(2)
+        return
+
+    try:
+        with open(log_path, "r") as f:
+            lines = f.readlines()
+            last_lines = "".join(lines[-50:])
+        
+        console.print(Panel(Text(last_lines), title=f"Service Logs (last 50 lines) - {log_path}"))
+        input("\nPress Enter to continue...")
+    except Exception as e:
+        rprint(f"[red]Error reading logs: {e}[/red]")
+        time.sleep(2)
 
 def get_service_state() -> Dict[str, Any]:
     if os.path.exists(SERVICE_STATE_FILE):
@@ -97,26 +151,39 @@ def check_service_status():
 
     return "STOPPED"
 
-async def manage_service_menu():
+async def manage_service_menu(config: TransitConfig, config_path: str, console: Console):
     while True:
         status = check_service_status()
         if status == "UNSUPPORTED":
-            print("Background service management is only supported on macOS.")
+            rprint("[bold red]Background service management is only supported on macOS.[/bold red]")
             break
             
-        action = await questionary.select(
-            f"Manage Service (Status: {status})",
+        action = await ask_with_live_dashboard(
+            "Service Manager",
             choices=[
                 "Start Service" if "RUNNING" not in status else "Stop Service",
+                "View Logs",
                 "Back"
-            ]
-        ).ask_async()
+            ],
+            config=config,
+            config_path=config_path,
+            console=console
+        )
         
         if not action or action == "Back":
             break
             
-        if action == "Start Service":
-            python_path = sys.executable
+        if action == "View Logs":
+            view_service_logs(console)
+        elif action == "Start Service":
+            python_bin_dir = os.path.dirname(sys.executable)
+            transit_tracker_bin = os.path.join(python_bin_dir, "transit-tracker")
+            
+            if os.path.exists(transit_tracker_bin):
+                args_block = f"<string>{transit_tracker_bin}</string>"
+            else:
+                args_block = f"<string>{sys.executable}</string>\n        <string>-m</string>\n        <string>transit_tracker.cli</string>"
+
             plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -125,9 +192,7 @@ async def manage_service_menu():
     <string>{PLIST_NAME.replace('.plist', '')}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{python_path}</string>
-        <string>-m</string>
-        <string>transit_tracker.cli</string>
+        {args_block}
         <string>service</string>
     </array>
     <key>RunAtLoad</key>
@@ -138,19 +203,27 @@ async def manage_service_menu():
     <string>{os.path.abspath('service.log')}</string>
     <key>StandardErrorPath</key>
     <string>{os.path.abspath('service.log')}</string>
+    <key>ProcessType</key>
+    <string>Interactive</string>
 </dict>
 </plist>"""
             with open(PLIST_PATH, "w") as f:
                 f.write(plist_content)
+            
+            # Unload first to be safe, then load
+            os.system(f"launchctl unload {PLIST_PATH} > /dev/null 2>&1")
             os.system(f"launchctl load {PLIST_PATH}")
-            print("Service started.")
+            rprint("[green]Service start requested.[/green]")
+            time.sleep(1) # Give launchd a moment to register
+            
         elif action == "Stop Service":
             if status == "RUNNING (MANUAL)":
                 os.system("pkill -f 'transit-tracker service'")
-                print("Manual service stopped.")
+                rprint("[yellow]Manual service stopped.[/yellow]")
             else:
                 os.system(f"launchctl unload {PLIST_PATH}")
-                print("Managed service stopped.")
+                rprint("[yellow]Managed service stopped.[/yellow]")
+            time.sleep(1)
 
 async def add_stop_wizard(config: TransitConfig, config_path: str):
     api = TransitAPI()
@@ -257,17 +330,20 @@ async def change_threshold_wizard(config: TransitConfig, config_path: str):
     else:
         print("Invalid input.")
 
-async def change_panels_wizard(config: TransitConfig, config_path: str):
-    val = await questionary.select(
+async def change_panels_wizard(config: TransitConfig, config_path: str, console: Console):
+    val = await ask_with_live_dashboard(
         "Select number of chained LED panels:",
         choices=["1", "2", "3", "4"],
+        config=config,
+        config_path=config_path,
+        console=console,
         default=str(config.num_panels)
-    ).ask_async()
+    )
     
     if val:
         config.num_panels = int(val)
         config.save(config_path)
-        print(f"Hardware setup updated to {val} panel(s).")
+        rprint(f"[green]Hardware setup updated to {val} panel(s).[/green]")
 
 async def change_ntfy_wizard(config: TransitConfig, config_path: str):
     val = await questionary.text(
@@ -283,22 +359,25 @@ async def change_ntfy_wizard(config: TransitConfig, config_path: str):
         else:
             print(f"ntfy.sh topic updated to {val} (in-memory).")
 
-async def change_api_mode_wizard(config: TransitConfig, config_path: str):
-    mode = await questionary.select(
+async def change_api_mode_wizard(config: TransitConfig, config_path: str, console: Console):
+    mode = await ask_with_live_dashboard(
         "Select API Mode:",
         choices=[
             questionary.Choice("Local (Internal Proxy)", value=True),
             questionary.Choice("Cloud (Public Endpoint)", value=False)
         ],
+        config=config,
+        config_path=config_path,
+        console=console,
         default=config.use_local_api
-    ).ask_async()
+    )
     
     if mode is not None:
         config.use_local_api = mode
         if not mode:
             url = await questionary.text(
                 "Enter Public API URL:",
-                default=config.api_url if "localhost" not in config.api_url else "wss://tt.horner.tj/"
+                default=config.api_url if "Tommys-Mac-mini.local" not in config.api_url else "wss://tt.horner.tj/"
             ).ask_async()
             if url:
                 config.api_url = url
@@ -306,10 +385,11 @@ async def change_api_mode_wizard(config: TransitConfig, config_path: str):
             config.api_url = "ws://localhost:8000/"
             
         config.save(config_path)
-        print(f"API mode updated to {'Local' if mode else 'Cloud'}.")
+        rprint(f"[green]API mode updated to {'Local' if mode else 'Cloud'}.[/green]")
 
 def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
     status = check_service_status()
+    state = get_service_state()
     
     # Build Dashboard using rich
     table = Table(show_header=True, header_style="bold magenta", expand=True, box=None)
@@ -324,28 +404,40 @@ def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
         table.add_row(sub.label, sub.feed, sub.route, sub.stop, direction_str)
         
     status_color = "green" if "RUNNING" in status else "red"
-    status_icon = "🟢" if "RUNNING" in status else "🔴"
-    status_text = Text(f"{status_icon} Service Status: {status}", style=f"bold {status_color}")
+    status_icon = f"[{status_color}]● {status}[/{status_color}]"
+    
+    # Extract service metadata
+    pid = state.get("pid", "Unknown")
+    uptime = "N/A"
+    start_time = state.get("start_time")
+    if start_time:
+        uptime_seconds = int(time.time() - start_time)
+        uptime = str(time.strftime("%H:%M:%S", time.gmtime(uptime_seconds)))
+    messages = state.get("messages_processed", 0)
+
+    status_text = Text(f"Service Status: ", style="bold")
+    status_text.append(f"{status}", style=f"bold {status_color}")
+    if "RUNNING" in status:
+        status_text.append(f" (PID: {pid}, Uptime: {uptime}, Msg: {messages})", style="dim")
     
     if config.use_local_api:
-        data_source = "🏠 Local (OBA Proxy)"
+        data_source = "Local (OBA Proxy)"
         port = 8000 
-        service_info = f"🔗 Serving at: ws://localhost:{port}"
+        service_info = f"Serving at: ws://Tommys-Mac-mini.local:{port}"
     else:
-        data_source = f"☁️ Cloud ({config.api_url})"
-        service_info = "🔔 Service: Notification Client only"
+        data_source = f"Cloud ({config.api_url})"
+        service_info = "Service: Notification Client only"
 
-    source_text = Text(f"📊 Data Source: {data_source}", style="cyan")
+    source_text = Text(f"Data Source: {data_source}", style="cyan")
     info_text = Text(service_info, style="blue")
-    panels_text = Text(f"📟 Hardware Setup: {config.num_panels} Panel(s)", style="magenta")
-    config_file_text = Text(f"📝 Current Config: {config_path or 'No file loaded (in-memory)'}", style="dim")
+    panels_text = Text(f"Hardware Setup: {config.num_panels} Panel(s)", style="magenta")
+    config_file_text = Text(f"Current Config: {config_path or 'No file loaded (in-memory)'}", style="dim")
     
-    state = get_service_state()
     last_svc_update = "Never"
     ts = state.get("last_update")
     if ts:
         last_svc_update = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))
-    update_text = Text(f"🕒 Last Proxy Update: {last_svc_update}", style="yellow")
+    update_text = Text(f"Last Proxy Update: {last_svc_update}", style="yellow")
 
     # Network Connected Devices
     clients = state.get("clients", [])
@@ -357,9 +449,9 @@ def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
             if name == "Unknown Device":
                 name = c["address"].split(":")[0]
             names.append(name)
-        client_text = Text(f"📱 Proxy Clients ({client_count}): {', '.join(names)}", style="green")
+        client_text = Text(f"Proxy Clients ({client_count}): {', '.join(names)}", style="green")
     else:
-        client_text = Text("📱 Proxy Clients: 0", style="dim")
+        client_text = Text("Proxy Clients: 0", style="dim")
 
     # USB Connected Devices
     usb_devices = get_usb_devices()
@@ -368,9 +460,9 @@ def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
         for d in usb_devices:
             port_name = os.path.basename(d["port"])
             device_details.append(f"{d['model']} ({port_name})")
-        usb_text = Text(f"🔌 USB Hardware: {', '.join(device_details)}", style="cyan")
+        usb_text = Text(f"USB Hardware: {', '.join(device_details)}", style="cyan")
     else:
-        usb_text = Text("🔌 No USB Hardware detected", style="dim italic")
+        usb_text = Text("No USB Hardware detected", style="dim italic")
     
     header_group = Group(
         status_text,
@@ -387,13 +479,13 @@ def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
     )
 
     panel_group = Group(
-        Panel(header_group, title="[bold]System Status[/bold]", border_style="dim"),
-        Panel(config_group, title="[bold]Configuration[/bold]", border_style="dim"),
+        Panel(header_group, title="System Status", border_style="dim"),
+        Panel(config_group, title="Configuration", border_style="dim"),
         "",
         table if config.subscriptions else Text("No stops configured yet.", style="italic dim")
     )
     
-    return Panel(panel_group, title="[bold cyan]🏙️ Transit Tracker Manager[/bold cyan]", expand=False, border_style="cyan")
+    return Panel(panel_group, title="[bold cyan]Transit Tracker Manager[/bold cyan]", expand=False, border_style="cyan")
 
 def get_dashboard_state(config: TransitConfig, config_path: str):
     state = get_service_state()
@@ -408,7 +500,7 @@ def get_dashboard_state(config: TransitConfig, config_path: str):
         len(config.subscriptions)
     )
 
-async def ask_with_live_dashboard(title, choices, config, config_path, console):
+async def ask_with_live_dashboard(title, choices, config, config_path, console, default=None):
     last_state = get_dashboard_state(config, config_path)
     
     def show_live_ui():
@@ -419,7 +511,7 @@ async def ask_with_live_dashboard(title, choices, config, config_path, console):
 
     while True:
         show_live_ui()
-        q = questionary.select(title, choices=choices)
+        q = questionary.select(title, choices=choices, default=default)
         prompt_task = asyncio.create_task(q.ask_async())
         
         async def monitor():
@@ -516,29 +608,38 @@ async def async_main_menu():
                     break
 
                 if c_action == "API Settings":
-                    await change_api_mode_wizard(config, config_path)
+                    await change_api_mode_wizard(config, config_path, console)
                     
                 if c_action == "Debug":
-                    d_action = await questionary.select(
+                    d_action = await ask_with_live_dashboard(
                         "Debug Menu",
-                        choices=["Run Mock Simulator", "Back"]
-                    ).ask_async()
+                        choices=["Run Mock Simulator", "Back"],
+                        config=config,
+                        config_path=config_path,
+                        console=console
+                    )
                     if d_action == "Run Mock Simulator":
                         await async_run_simulator(config, force_live=False)
 
                 elif c_action == "Config Files":
-                    f_action = await questionary.select(
+                    f_action = await ask_with_live_dashboard(
                         "Config Files",
                         choices=[
                             "Load Config File (Picker)", 
                             "Load Config File (Manual Path)", 
                             questionary.Choice("Save Config File", disabled="No config file loaded" if not config_path else None),
                             "Save Config File As...", 
+                            "View Config Diff",
                             "Back"
-                        ]
-                    ).ask_async()
+                        ],
+                        config=config,
+                        config_path=config_path,
+                        console=console
+                    )
                     
-                    if f_action == "Save Config File":
+                    if f_action == "View Config Diff":
+                        view_config_diff(config, config_path, console)
+                    elif f_action == "Save Config File":
                         try:
                             TransitConfig.model_validate(config.model_dump())
                             config.save(config_path)
@@ -593,14 +694,17 @@ async def async_main_menu():
                                 print(f"Error saving or validating config: {e}")
                                 
                 elif c_action == "Device Config":
-                    d_action = await questionary.select(
+                    d_action = await ask_with_live_dashboard(
                         "Device Config",
                         choices=[
                             questionary.Choice("Flash Device", disabled="No device connected" if not has_ports else None),
                             questionary.Choice("Download from Device", disabled="No device connected" if not has_ports else None),
                             "Back"
-                        ]
-                    ).ask_async()
+                        ],
+                        config=config,
+                        config_path=config_path,
+                        console=console
+                    )
                     
                     if d_action == "Flash Device":
                         selected_port = await questionary.select(
@@ -608,7 +712,24 @@ async def async_main_menu():
                             choices=ports
                         ).ask_async()
                         if selected_port:
-                            flash_hardware(selected_port, config)
+                            if not is_bootstrapped(selected_port):
+                                console.print("[bold yellow]Warning: This device does not appear to have the transit-tracker firmware installed yet.[/bold yellow]")
+                                do_install = await questionary.confirm("Do you want to install the base firmware from the official website? (This will erase existing data)").ask_async()
+                                if do_install:
+                                    success = flash_base_firmware(selected_port)
+                                    if success:
+                                        console.print("[green]Base firmware installed. Continuing with device configuration...[/green]")
+                                        # Give device a moment to reboot
+                                        import time
+                                        time.sleep(3)
+                                        flash_hardware(selected_port, config)
+                                    else:
+                                        console.print("[red]Base firmware installation failed.[/red]")
+                                else:
+                                    console.print("Continuing with configuration update anyway...")
+                                    flash_hardware(selected_port, config)
+                            else:
+                                flash_hardware(selected_port, config)
                     elif d_action == "Download from Device":
                         selected_port = await questionary.select(
                             "Select your Transit Tracker device:",
@@ -623,14 +744,17 @@ async def async_main_menu():
                                     print("Configuration read into memory. Please save it to a file.")
 
                 elif c_action == "Notifications":
-                    n_action = await questionary.select(
+                    n_action = await ask_with_live_dashboard(
                         "Notifications",
                         choices=[
                             questionary.Choice("Change Alert Threshold", disabled="Please load or save a config file first" if not has_config else None),
                             "Add/Change ntfy.sh Endpoint",
                             "Back"
-                        ]
-                    ).ask_async()
+                        ],
+                        config=config,
+                        config_path=config_path,
+                        console=console
+                    )
                     
                     if n_action == "Change Alert Threshold":
                         await change_threshold_wizard(config, config_path)
@@ -638,14 +762,17 @@ async def async_main_menu():
                         await change_ntfy_wizard(config, config_path)
                         
                 elif c_action == "Manage Stops":
-                    s_action = await questionary.select(
+                    s_action = await ask_with_live_dashboard(
                         "Manage Stops",
                         choices=[
                             questionary.Choice("Add a Stop", disabled="Please load or save a config file first" if not has_config else None),
                             questionary.Choice("Remove a Stop", disabled="Please load or save a config file first" if not has_config else None),
                             "Back"
-                        ]
-                    ).ask_async()
+                        ],
+                        config=config,
+                        config_path=config_path,
+                        console=console
+                    )
                     
                     if s_action == "Add a Stop":
                         await add_stop_wizard(config, config_path)
@@ -653,14 +780,14 @@ async def async_main_menu():
                         await remove_stop_wizard(config, config_path)
                         
                 elif c_action == "Change Number of Panels":
-                    await change_panels_wizard(config, config_path)
+                    await change_panels_wizard(config, config_path, console)
 
         elif action == "Simulator":
             rprint(f"[dim]Using config: {config_path}[/dim]")
             await async_run_simulator(config, force_live=True)
 
         elif action == "Service Manager":
-            await manage_service_menu()
+            await manage_service_menu(config, config_path, console)
 
 def main_menu():
     asyncio.run(async_main_menu())
@@ -683,10 +810,10 @@ def hardware_monitor():
             sys.stdout.write("\r\033[K") 
             for p in added:
                 model = current_ports[p]
-                rprint(f"[bold green]🔌 USB Device Connected:[/bold green] [cyan]{model}[/cyan] at {p}")
+                rprint(f"[bold green]USB Device Connected:[/bold green] [cyan]{model}[/cyan] at {p}")
             for p in removed:
                 model = known_ports[p]
-                rprint(f"[bold yellow]🔌 USB Device Disconnected:[/bold yellow] [dim]{model}[/dim]")
+                rprint(f"[bold yellow]USB Device Disconnected:[/bold yellow] [dim]{model}[/dim]")
             known_ports = current_ports
             sys.stdout.flush()
 
@@ -694,7 +821,7 @@ def run_cli():
     # Start the hardware monitor as a daemon thread
     monitor_thread = threading.Thread(target=hardware_monitor, daemon=True)
     monitor_thread.start()
-    
+
     try:
         main_menu()
     except KeyboardInterrupt:

@@ -30,6 +30,8 @@ class TransitServer:
         self.cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
         self.cache_ttl = 30 # seconds
         self.last_broadcast_time = 0
+        self.start_time = time.time()
+        self.messages_processed = 0
 
     def sync_state(self, last_message: Dict[str, Any] = None):
         client_list = []
@@ -45,6 +47,9 @@ class TransitServer:
         
         state = {
             "last_update": self.last_broadcast_time,
+            "heartbeat": time.time(),
+            "start_time": self.start_time,
+            "messages_processed": self.messages_processed,
             "pid": os.getpid(),
             "status": "active",
             "clients": client_list,
@@ -186,6 +191,7 @@ class TransitServer:
                 "payload": {"trips": all_trips, "stopId": subs[0]["stopId"]} # stopId for compat
             }
             await ws.send(json.dumps(response))
+            self.messages_processed += 1
             self.last_broadcast_time = time.time()
             self.sync_state(last_message=response)
 
@@ -195,6 +201,9 @@ class TransitServer:
             for ws in list(self.clients):
                 if ws in self.subscriptions:
                     await self.send_update(ws)
+            
+            # Always update heartbeat so GUI knows we are alive
+            self.sync_state()
             await asyncio.sleep(self.config.check_interval_seconds)
 
 async def run_server(host: str = "0.0.0.0", port: int = 8000, config: TransitConfig = None):

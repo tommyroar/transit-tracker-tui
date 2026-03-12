@@ -27,6 +27,7 @@ class TransitServer:
         self.clients: Set[websockets.WebSocketServerProtocol] = set()
         self.subscriptions: Dict[websockets.WebSocketServerProtocol, List[Dict[str, str]]] = {}
         self.client_names: Dict[websockets.WebSocketServerProtocol, str] = {}
+        self.client_limits: Dict[websockets.WebSocketServerProtocol, int] = {}
         self.cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
         self.in_flight: Dict[str, asyncio.Task] = {}
         self.cache_ttl = 30 # seconds
@@ -127,6 +128,13 @@ class TransitServer:
                         self.client_names[ws] = payload["client_name"]
                     elif "client_name" in data:
                         self.client_names[ws] = data["client_name"]
+                    else:
+                        # RELIABLE DETECTION: If an unknown device connects from a 
+                        # known local IP or with specific subscription patterns, 
+                        # label it as the Hardware Controller.
+                        addr = getattr(ws, "remote_address", None)
+                        if addr and (addr[0].startswith("192.168.") or addr[0].startswith("10.0.")):
+                             self.client_names[ws] = "Hardware Controller"
                     
                     pairs = []
                     # Case 1: routeStopPairs string (TJ Horner style)
@@ -151,8 +159,13 @@ class TransitServer:
                     
                     if pairs:
                         self.subscriptions[ws] = pairs
+                        # Store limit if provided
+                        limit = payload.get("limit")
+                        if limit:
+                            self.client_limits[ws] = int(limit)
+                        
                         self.sync_state()
-                        print(f"[SERVER] Client {ws.remote_address} subscribed to {len(pairs)} pairs")
+                        print(f"[SERVER] Client {ws.remote_address} subscribed to {len(pairs)} pairs (limit={limit})")
                         # Send immediate update
                         await self.send_update(ws)
         except websockets.exceptions.ConnectionClosed:
@@ -163,6 +176,8 @@ class TransitServer:
                 del self.subscriptions[ws]
             if ws in self.client_names:
                 del self.client_names[ws]
+            if ws in self.client_limits:
+                del self.client_limits[ws]
             self.sync_state()
             print(f"[SERVER] Client disconnected: {ws.remote_address}")
 
@@ -207,15 +222,19 @@ class TransitServer:
                         arr_copy["stopId"] = stop_id
                         
                         # Apply Travel Time Offset on the Server
-                        sub = route_to_sub.get(arr_route_id)
-                        if not sub and "" in relevant_routes: # Fallback for all-route subscription
-                            sub = route_to_sub[""]
-                            
+                        # We must look this up in the server's master config because the client
+                        # doesn't send offset info in the routeStopPairs protocol.
                         offset_sec = 0
-                        if sub and sub.get("time_offset"):
+                        master_sub = None
+                        for s in self.config.subscriptions:
+                            if normalize_id(s.route) == arr_route_id and normalize_id(s.stop) == clean_stop_id:
+                                master_sub = s
+                                break
+                            
+                        if master_sub and master_sub.time_offset:
                             try:
                                 import re
-                                match = re.search(r"(-?\d+)", str(sub["time_offset"]))
+                                match = re.search(r"(-?\d+)", str(master_sub.time_offset))
                                 if match:
                                     offset_sec = int(match.group(1)) * 60
                             except (ValueError, TypeError):
@@ -233,17 +252,55 @@ class TransitServer:
             except Exception as e:
                 print(f"[SERVER] Error fetching arrivals for {stop_id}: {e}")
 
-        # Send a SINGLE update containing ALL trips for ALL stops
-        # This prevents the hardware from overwriting different stops.
+        # 1. Sort all aggregated trips by arrival time
+        all_trips.sort(key=lambda x: x.get("arrivalTime", 0))
+
+        # 2. Apply "Fair" Diversity Capping to respect hardware vertical space
+        # We want to ensure at least one trip from each stop is shown if possible,
+        # but stay strictly within the hardware's requested limit.
+        limit = self.client_limits.get(ws, 3)
+        
+        final_trips = []
+        seen_stops = set()
+        
+        # Pass 1: Get the soonest arrival for every stop
+        for trip in all_trips:
+            stop_id = trip.get("stopId")
+            if stop_id not in seen_stops:
+                final_trips.append(trip)
+                seen_stops.add(stop_id)
+            if len(final_trips) >= limit:
+                break
+                
+        # Pass 2: Fill remaining slots with the next soonest arrivals overall
+        if len(final_trips) < limit:
+            for trip in all_trips:
+                if trip not in final_trips:
+                    final_trips.append(trip)
+                if len(final_trips) >= limit:
+                    break
+        
+        # Sort the final subset by time so they appear in order on the board
+        final_trips.sort(key=lambda x: x.get("arrivalTime", 0))
+
+        # 3. Build the response
         response = {
             "event": "schedule",
             "type": "schedule",
-            "data": {"trips": all_trips},
+            "data": {"trips": final_trips},
             "payload": {
-                "trips": all_trips, 
-                "stopId": subs[0]["stopId"] if subs else "" 
+                "trips": final_trips
             }
         }
+        
+        # Hardware/TJ Horner protocol: top-level stopId is usually expected.
+        # Use the first stop in our subscription list for compatibility.
+        if subs:
+            response["payload"]["stopId"] = subs[0]["stopId"]
+        elif stop_to_subs:
+            first_stop = sorted(stop_to_subs.keys())[0]
+            response["payload"]["stopId"] = first_stop
+
         await ws.send(json.dumps(response))
         self.messages_processed += 1
         self.last_broadcast_time = time.time()
@@ -254,7 +311,13 @@ class TransitServer:
             # Copy clients to avoid mutation during iteration
             for ws in list(self.clients):
                 if ws in self.subscriptions:
-                    await self.send_update(ws)
+                    try:
+                        await self.send_update(ws)
+                    except websockets.exceptions.ConnectionClosed:
+                        # Client disconnected, will be handled by register's finally block
+                        pass
+                    except Exception as e:
+                        print(f"[SERVER] Error updating client {ws.remote_address}: {e}")
             
             # Always update heartbeat so GUI knows we are alive
             self.sync_state()

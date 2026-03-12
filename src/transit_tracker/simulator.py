@@ -181,7 +181,7 @@ class LEDSimulator:
                         "client_name": "Simulator",
                         "data": {
                             "routeStopPairs": pairs_str,
-                            "limit": 5
+                            "limit": 10 # Increase limit to allow for offset-reordering
                         }
                     }
                     await ws.send(json.dumps(sub_payload))
@@ -350,10 +350,10 @@ class LEDSimulator:
                     else: arr_time_ms = arr_val * 1000
 
                     # Calculate Offset
-                    # The configurator says: "set travel time to 5 minutes" to subtract 5 mins.
-                    # If the user has "-7min" or "7min", we should treat it as an adjustment.
+                    # If we are using the local API, the server has already applied the offset
+                    # to the timestamps for hardware compatibility.
                     offset_min = 0
-                    if sub and sub.time_offset:
+                    if not self.config.use_local_api and sub and sub.time_offset:
                         try:
                             # Extract numeric value regardless of sign or unit
                             match = re.search(r"(-?\d+)", sub.time_offset)
@@ -398,11 +398,37 @@ class LEDSimulator:
                         all_departures.append({
                             "trip_id": trip_id, "diff": display_mins, 
                             "route": route_name, "headsign": headsign or "Transit",
-                            "color": color, "live": is_live
+                            "color": color, "live": is_live,
+                            "stop_id": trip_stop_id # Keep track of stop for diversity capping
                         })
 
         all_departures.sort(key=lambda x: x["diff"])
-        return all_departures
+        
+        # Apply "Fair" Diversity Capping to match hardware/proxy behavior
+        # We want to ensure at least one trip from each stop is shown if possible.
+        limit = 3 # Hardware/Simulator standard limit
+        final_departures = []
+        seen_stops = set()
+        
+        # Pass 1: Get the soonest arrival for every stop
+        for dep in all_departures:
+            stop_id = dep.get("stop_id")
+            if stop_id not in seen_stops:
+                final_departures.append(dep)
+                seen_stops.add(stop_id)
+            if len(final_departures) >= limit:
+                break
+                
+        # Pass 2: Fill remaining slots with the next soonest arrivals overall
+        if len(final_departures) < limit:
+            for dep in all_departures:
+                if dep not in final_departures:
+                    final_departures.append(dep)
+                if len(final_departures) >= limit:
+                    break
+        
+        final_departures.sort(key=lambda x: x["diff"])
+        return final_departures
 
     def get_current_display_text(self) -> str:
         """Returns a string representation of the current display (e.g., '14 Downtown 2m')."""

@@ -346,28 +346,28 @@ def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
         table.add_row(sub.label, sub.feed, sub.route, sub.stop, direction_str)
         
     status_color = "green" if "RUNNING" in status else "red"
-    status_icon = "🟢" if "RUNNING" in status else "🔴"
-    status_text = Text(f"{status_icon} Service Status: {status}", style=f"bold {status_color}")
+    status_icon = "[green]RUNNING[/green]" if "RUNNING" in status else "[red]STOPPED[/red]"
+    status_text = Text(f"Service Status: {status}", style=f"bold {status_color}")
     
     if config.use_local_api:
-        data_source = "🏠 Local (OBA Proxy)"
+        data_source = "Local (OBA Proxy)"
         port = 8000 
-        service_info = f"🔗 Serving at: ws://localhost:{port}"
+        service_info = f"Serving at: ws://localhost:{port}"
     else:
-        data_source = f"☁️ Cloud ({config.api_url})"
-        service_info = "🔔 Service: Notification Client only"
+        data_source = f"Cloud ({config.api_url})"
+        service_info = "Service: Notification Client only"
 
-    source_text = Text(f"📊 Data Source: {data_source}", style="cyan")
+    source_text = Text(f"Data Source: {data_source}", style="cyan")
     info_text = Text(service_info, style="blue")
-    panels_text = Text(f"📟 Hardware Setup: {config.num_panels} Panel(s)", style="magenta")
-    config_file_text = Text(f"📝 Current Config: {config_path or 'No file loaded (in-memory)'}", style="dim")
+    panels_text = Text(f"Hardware Setup: {config.num_panels} Panel(s)", style="magenta")
+    config_file_text = Text(f"Current Config: {config_path or 'No file loaded (in-memory)'}", style="dim")
     
     state = get_service_state()
     last_svc_update = "Never"
     ts = state.get("last_update")
     if ts:
         last_svc_update = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))
-    update_text = Text(f"🕒 Last Proxy Update: {last_svc_update}", style="yellow")
+    update_text = Text(f"Last Proxy Update: {last_svc_update}", style="yellow")
 
     # Network Connected Devices
     clients = state.get("clients", [])
@@ -379,9 +379,9 @@ def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
             if name == "Unknown Device":
                 name = c["address"].split(":")[0]
             names.append(name)
-        client_text = Text(f"📱 Proxy Clients ({client_count}): {', '.join(names)}", style="green")
+        client_text = Text(f"Proxy Clients ({client_count}): {', '.join(names)}", style="green")
     else:
-        client_text = Text("📱 Proxy Clients: 0", style="dim")
+        client_text = Text("Proxy Clients: 0", style="dim")
 
     # USB Connected Devices
     usb_devices = get_usb_devices()
@@ -390,9 +390,9 @@ def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
         for d in usb_devices:
             port_name = os.path.basename(d["port"])
             device_details.append(f"{d['model']} ({port_name})")
-        usb_text = Text(f"🔌 USB Hardware: {', '.join(device_details)}", style="cyan")
+        usb_text = Text(f"USB Hardware: {', '.join(device_details)}", style="cyan")
     else:
-        usb_text = Text("🔌 No USB Hardware detected", style="dim italic")
+        usb_text = Text("No USB Hardware detected", style="dim italic")
     
     header_group = Group(
         status_text,
@@ -409,13 +409,13 @@ def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
     )
 
     panel_group = Group(
-        Panel(header_group, title="[bold]System Status[/bold]", border_style="dim"),
-        Panel(config_group, title="[bold]Configuration[/bold]", border_style="dim"),
+        Panel(header_group, title="System Status", border_style="dim"),
+        Panel(config_group, title="Configuration", border_style="dim"),
         "",
         table if config.subscriptions else Text("No stops configured yet.", style="italic dim")
     )
     
-    return Panel(panel_group, title="[bold cyan]🏙️ Transit Tracker Manager[/bold cyan]", expand=False, border_style="cyan")
+    return Panel(panel_group, title="[bold cyan]Transit Tracker Manager[/bold cyan]", expand=False, border_style="cyan")
 
 def get_dashboard_state(config: TransitConfig, config_path: str):
     state = get_service_state()
@@ -720,10 +720,10 @@ def hardware_monitor():
             sys.stdout.write("\r\033[K") 
             for p in added:
                 model = current_ports[p]
-                rprint(f"[bold green]🔌 USB Device Connected:[/bold green] [cyan]{model}[/cyan] at {p}")
+                rprint(f"[bold green]USB Device Connected:[/bold green] [cyan]{model}[/cyan] at {p}")
             for p in removed:
                 model = known_ports[p]
-                rprint(f"[bold yellow]🔌 USB Device Disconnected:[/bold yellow] [dim]{model}[/dim]")
+                rprint(f"[bold yellow]USB Device Disconnected:[/bold yellow] [dim]{model}[/dim]")
             known_ports = current_ports
             sys.stdout.flush()
 

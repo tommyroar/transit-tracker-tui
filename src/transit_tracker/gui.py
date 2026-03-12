@@ -8,32 +8,27 @@ from datetime import datetime
 from .network.websocket_server import SERVICE_STATE_FILE
 from .cli import PLIST_NAME
 
-# Setup logging for the GUI
-LOG_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "gui.log")
-
-def log_error(msg):
-    try:
-        with open(LOG_FILE, "a") as f:
-            f.write(f"{datetime.now()} - {msg}\n")
-    except Exception:
-        pass
-
 class TransitTrackerApp(rumps.App):
     def __init__(self):
         super(TransitTrackerApp, self).__init__("Transit Tracker", title="🚉", quit_button=None)
         
+        # 1. Initialize fixed menu items
         self.status_item = rumps.MenuItem("Status: Checking...")
-        self.last_update_item = rumps.MenuItem("🔄 Last Proxy: Never")
-        self.stats_item = rumps.MenuItem("📊 Messages: 0")
+        self.last_update_item = rumps.MenuItem("Last Proxy: Never")
+        self.stats_item = rumps.MenuItem("Messages Processed: 0")
+        
+        # Create the sub-menu parent
+        self.clients_menu = rumps.MenuItem("🛜 Clients (0)")
+        
         self.shutdown_item = rumps.MenuItem("Shutdown Transit Tracker Proxy", callback=self.quit_app)
         
-        # Initial menu structure
+        # 2. Set the initial menu structure
         self.menu = [
             self.status_item,
             self.last_update_item,
             self.stats_item,
             rumps.separator,
-            "🛜 No clients connected",
+            self.clients_menu,
             rumps.separator,
             self.shutdown_item
         ]
@@ -41,6 +36,7 @@ class TransitTrackerApp(rumps.App):
         self.timer = rumps.Timer(self.update_state, 2)
         self.timer.start()
         self.startup_time = time.time()
+        self.last_client_ids = None
 
     def update_state(self, _):
         try:
@@ -51,7 +47,7 @@ class TransitTrackerApp(rumps.App):
             uptime_str = ""
             msg_count = 0
             
-            # 1. Check Service Status
+            # 1. Service Status Check
             label = PLIST_NAME.replace(".plist", "")
             res = subprocess.run(["launchctl", "list", label], capture_output=True, text=True)
             if res.returncode == 0:
@@ -71,7 +67,6 @@ class TransitTrackerApp(rumps.App):
                             except OSError:
                                 pass
 
-                    # Freshness check: 60 seconds
                     if time.time() - state.get("heartbeat", 0) < 60:
                         client_count = state.get("client_count", 0)
                         client_details = state.get("clients", [])
@@ -83,54 +78,42 @@ class TransitTrackerApp(rumps.App):
                         
                         start_ts = state.get("start_time", 0)
                         if start_ts > 0:
-                            uptime_sec = int(time.time() - start_ts)
-                            uptime_min = uptime_sec // 60
-                            if uptime_min < 1:
-                                uptime_str = f" (up <1m)"
-                            else:
-                                uptime_str = f" (up {uptime_min}m)"
-                except Exception as e:
-                    log_error(f"Error reading state file: {e}")
+                            uptime_min = int(time.time() - start_ts) // 60
+                            uptime_str = f" (up {uptime_min}m)" if uptime_min >= 1 else " (up <1m)"
+                except Exception:
+                    pass
 
-            # 2. Handle Auto-Quit if service is dead
+            # 2. Auto-Quit if service is dead
             if not is_running:
                 if time.time() - self.startup_time > 10:
                     rumps.quit_application()
                 return
 
-            # 3. Rebuild Menu with Live Data
-            self.status_item.title = f"🟢 Status: Running{uptime_str}"
-            self.last_update_item.title = f"🔄 Last Proxy: {last_update_str}"
-            self.stats_item.title = f"📊 Messages: {msg_count}"
+            # 3. Update titles of existing items
+            self.status_item.title = f"Status: Running{uptime_str}"
+            self.last_update_item.title = f"Last Proxy: {last_update_str}"
+            self.stats_item.title = f"Messages Processed: {msg_count}"
             
-            new_menu = [
-                self.status_item,
-                self.last_update_item,
-                self.stats_item,
-                rumps.separator
-            ]
+            # 4. Update the Clients Sub-menu and its Title
+            self.clients_menu.title = f"🛜 Clients ({client_count})"
             
-            if client_count > 0:
-                new_menu.append(f"🛜 Clients Connected ({client_count}):")
-                for c in client_details:
-                    name = c.get("name", "Unknown")
-                    addr_full = c.get("address", "0.0.0.0")
-                    addr = addr_full.split(":")[0] if ":" in addr_full else addr_full
-                    new_menu.append(rumps.MenuItem(f"  • {name} ({addr})"))
-            else:
-                new_menu.append("🛜 Waiting for connections...")
+            current_client_ids = ",".join(sorted([c.get("address", "") for c in client_details]))
+            if current_client_ids != self.last_client_ids:
+                self.clients_menu.clear()
+                if client_count > 0:
+                    for c in client_details:
+                        name = c.get("name", "Unknown")
+                        addr = c.get("address", "0.0.0.0").split(":")[0]
+                        self.clients_menu.add(rumps.MenuItem(f"{name} ({addr})"))
+                else:
+                    self.clients_menu.add(rumps.MenuItem("Waiting for connections..."))
                 
-            new_menu.append(rumps.separator)
-            new_menu.append(self.shutdown_item)
-            
-            self.menu.clear()
-            self.menu.update(new_menu)
+                self.last_client_ids = current_client_ids
 
-        except Exception as e:
-            log_error(f"Global error in update_state: {e}")
+        except Exception:
+            pass
 
     def quit_app(self, _):
-        """Kills the proxy service and quits the tray app."""
         label = PLIST_NAME.replace(".plist", "")
         plist_path = os.path.expanduser(f"~/Library/LaunchAgents/{PLIST_NAME}")
         if os.path.exists(plist_path):
@@ -145,7 +128,6 @@ class TransitTrackerApp(rumps.App):
                     os.kill(pid, 15)
             except Exception:
                 pass
-        
         rumps.quit_application()
 
 def main():

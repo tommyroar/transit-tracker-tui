@@ -114,6 +114,7 @@ class TransitServer:
         print(f"[SERVER] Client connected: {ws.remote_address}")
         try:
             async for message in ws:
+                print(f"[SERVER] Received from {ws.remote_address}: {message}")
                 data = json.loads(message)
                 # Support both 'event' and 'type' keys
                 event = data.get("event") or data.get("type")
@@ -135,6 +136,12 @@ class TransitServer:
                             if "," in pair:
                                 r_id, s_id = pair.split(",")
                                 pairs.append({"routeId": r_id, "stopId": s_id})
+                    elif pairs_str == "":
+                        # FALLBACK: If device sends empty string, it might have lost its config.
+                        # Use the server's own configured subscriptions as a default.
+                        print(f"[SERVER] Client sent empty routeStopPairs, using server defaults.")
+                        for sub in self.config.subscriptions:
+                            pairs.append({"routeId": sub.route, "stopId": sub.stop})
                     # Case 2: Individual stop/route (Older/Custom style)
                     elif "stopId" in payload:
                         pairs.append({
@@ -164,11 +171,14 @@ class TransitServer:
         if not subs:
             return
 
-        all_trips = []
-        # Group by stop to avoid redundant API calls
-        stops = set(s["stopId"] for s in subs)
-        
-        for stop_id in stops:
+        # Group subscriptions by stopId to send per-stop updates (standard for this protocol)
+        from collections import defaultdict
+        stop_to_subs = defaultdict(list)
+        for s in subs:
+            stop_to_subs[s["stopId"]].append(s)
+
+        for stop_id, stop_subs in stop_to_subs.items():
+            all_stop_trips = []
             try:
                 # OBA expects clean stop ID
                 clean_stop_id = stop_id
@@ -182,6 +192,7 @@ class TransitServer:
                 
                 # Normalize relevant route IDs for comparison
                 def normalize_route(r_id):
+                    if r_id is None: return ""
                     if ":" in r_id and "_" in r_id:
                         c_idx = r_id.find(":")
                         u_idx = r_id.find("_")
@@ -189,30 +200,37 @@ class TransitServer:
                             return r_id[c_idx+1:]
                     return r_id
 
-                relevant_routes = set(normalize_route(s["routeId"]) for s in subs if s["stopId"] == stop_id)
+                relevant_routes = set(normalize_route(s.get("routeId")) for s in stop_subs)
                 
                 for arr in arrivals:
                     arr_route_id = normalize_route(arr["routeId"])
-                    if not relevant_routes or arr_route_id in relevant_routes:
+                    # If relevant_routes has None or empty routeId, we include all for that stop
+                    if not relevant_routes or "" in relevant_routes or None in relevant_routes or arr_route_id in relevant_routes:
                         # Ensure the response has the original stopId from sub
                         arr_copy = arr.copy()
                         arr_copy["stopId"] = stop_id
-                        all_trips.append(arr_copy)
+                        
+                        # Convert ms to seconds for hardware compatibility
+                        for key in ["arrivalTime", "predictedArrivalTime", "scheduledArrivalTime"]:
+                            val = arr_copy.get(key)
+                            if val and val > 10**12: # Milliseconds detection
+                                arr_copy[key] = val // 1000
+                                
+                        all_stop_trips.append(arr_copy)
             except Exception as e:
                 print(f"[SERVER] Error fetching arrivals for {stop_id}: {e}")
 
-        # Always send an update, even if empty, so the client knows we checked
-        # Send in both formats for compatibility
-        response = {
-            "event": "schedule",
-            "type": "schedule",
-            "data": {"trips": all_trips},
-            "payload": {"trips": all_trips, "stopId": subs[0]["stopId"]} # stopId for compat
-        }
-        await ws.send(json.dumps(response))
-        self.messages_processed += 1
-        self.last_broadcast_time = time.time()
-        self.sync_state(last_message=response)
+            # Send update for this specific stop
+            response = {
+                "event": "schedule",
+                "type": "schedule",
+                "data": {"trips": all_stop_trips},
+                "payload": {"trips": all_stop_trips, "stopId": stop_id}
+            }
+            await ws.send(json.dumps(response))
+            self.messages_processed += 1
+            self.last_broadcast_time = time.time()
+            self.sync_state(last_message=response)
 
     async def broadcast_loop(self):
         while True:

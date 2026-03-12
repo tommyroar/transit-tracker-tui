@@ -17,7 +17,7 @@ from rich.syntax import Syntax
 from rich import print as rprint
 from .config import TransitConfig, TransitSubscription, get_last_config_path, set_last_config_path
 from .transit_api import TransitAPI
-from .hardware import list_serial_ports, flash_hardware, load_hardware_config, get_usb_devices
+from .hardware import list_serial_ports, flash_hardware, load_hardware_config, get_usb_devices, is_bootstrapped, flash_base_firmware
 from .simulator import run_simulator, async_run_simulator
 
 SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "service_state.json")
@@ -712,7 +712,24 @@ async def async_main_menu():
                             choices=ports
                         ).ask_async()
                         if selected_port:
-                            flash_hardware(selected_port, config)
+                            if not is_bootstrapped(selected_port):
+                                console.print("[bold yellow]Warning: This device does not appear to have the transit-tracker firmware installed yet.[/bold yellow]")
+                                do_install = await questionary.confirm("Do you want to install the base firmware from the official website? (This will erase existing data)").ask_async()
+                                if do_install:
+                                    success = flash_base_firmware(selected_port)
+                                    if success:
+                                        console.print("[green]Base firmware installed. Continuing with device configuration...[/green]")
+                                        # Give device a moment to reboot
+                                        import time
+                                        time.sleep(3)
+                                        flash_hardware(selected_port, config)
+                                    else:
+                                        console.print("[red]Base firmware installation failed.[/red]")
+                                else:
+                                    console.print("Continuing with configuration update anyway...")
+                                    flash_hardware(selected_port, config)
+                            else:
+                                flash_hardware(selected_port, config)
                     elif d_action == "Download from Device":
                         selected_port = await questionary.select(
                             "Select your Transit Tracker device:",

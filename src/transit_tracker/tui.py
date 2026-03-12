@@ -162,6 +162,7 @@ async def manage_service_menu(config: TransitConfig, config_path: str, console: 
             "Service Manager",
             choices=[
                 "Start Service" if "RUNNING" not in status else "Stop Service",
+                questionary.Choice("Restart Service", disabled="Service not running" if "RUNNING" not in status else None),
                 "View Logs",
                 "Back"
             ],
@@ -175,6 +176,19 @@ async def manage_service_menu(config: TransitConfig, config_path: str, console: 
             
         if action == "View Logs":
             view_service_logs(console)
+        elif action == "Restart Service":
+            if status == "RUNNING (MANUAL)":
+                os.system("pkill -f 'transit-tracker service'")
+                rprint("[yellow]Manual service stopped. Restarting...[/yellow]")
+                time.sleep(1)
+                os.system(f"{sys.executable} -m transit_tracker.cli service &")
+                rprint("[green]Manual service restarted.[/green]")
+            else:
+                os.system(f"launchctl unload {PLIST_PATH} > /dev/null 2>&1")
+                time.sleep(1)
+                os.system(f"launchctl load {PLIST_PATH}")
+                rprint("[green]Managed service restarted.[/green]")
+            time.sleep(1)
         elif action == "Start Service":
             python_bin_dir = os.path.dirname(sys.executable)
             transit_tracker_bin = os.path.join(python_bin_dir, "transit-tracker")
@@ -575,14 +589,34 @@ async def async_main_menu():
                 "Configurator",
                 questionary.Choice("Simulator", disabled="Please load/save config first" if not has_config else None),
                 "Service Manager",
+                "Restart Service" if "RUNNING" in check_service_status() else None,
                 "Exit"
             ],
             config=config,
             config_path=config_path,
             console=console
         )
+        
+        # Clean up None choices
+        if action is None: break
 
-        if not action or action == "Exit":
+        if action == "Restart Service":
+            status = check_service_status()
+            if status == "RUNNING (MANUAL)":
+                os.system("pkill -f 'transit-tracker service'")
+                rprint("[yellow]Manual service stopped. Restarting...[/yellow]")
+                time.sleep(1)
+                os.system(f"{sys.executable} -m transit_tracker.cli service &")
+                rprint("[green]Manual service restarted.[/green]")
+            else:
+                os.system(f"launchctl unload {PLIST_PATH} > /dev/null 2>&1")
+                time.sleep(1)
+                os.system(f"launchctl load {PLIST_PATH}")
+                rprint("[green]Managed service restarted.[/green]")
+            time.sleep(1)
+            continue
+
+        if action == "Exit":
             break
             
         elif action == "Configurator":

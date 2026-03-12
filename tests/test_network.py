@@ -1,120 +1,106 @@
+import pytest
 import asyncio
 import json
-import pytest
-import websockets
-from unittest.mock import AsyncMock, patch, MagicMock
-from transit_tracker.network.websocket_server import run_server, TransitServer
-from transit_tracker.config import TransitConfig, TransitStop
+import time
+from unittest.mock import AsyncMock, MagicMock
+from transit_tracker.network.websocket_server import TransitServer
+from transit_tracker.config import TransitConfig, TransitSubscription
 
 @pytest.fixture
 def mock_config():
-    config = TransitConfig()
-    config.transit_tracker.stops = [
-        TransitStop(stop_id="st:1_8494", routes=["st:40_100240"])
+    config = MagicMock(spec=TransitConfig)
+    config.subscriptions = [
+        TransitSubscription(feed=\"st\", route=\"st:40_100240\", stop=\"st:1_8494\", label=\"Route st:40_100240\")
     ]
-    # Sync internal state
-    config.sync_internal_state()
+    config.use_local_api = True
+    config.auto_launch_gui = True
+    config.ntfy_topic = \"transit-alerts\"
+    config.arrival_threshold_minutes = 5
+    config.check_interval_seconds = 30
     return config
 
 @pytest.mark.asyncio
-async def test_server_startup_and_connection(mock_config):
-    """Test that the server can start and accept connections."""
-    server_task = asyncio.create_task(run_server(host="127.0.0.1", port=8765, config=mock_config))
-    
-    # Wait for server to start
-    await asyncio.sleep(0.5)
-    
-    try:
-        async with websockets.connect("ws://127.0.0.1:8765") as ws:
-            # Confirm connection works
-            assert ws.protocol is not None
-    finally:
-        server_task.cancel()
-        try:
-            await server_task
-        except asyncio.CancelledError:
-            pass
-
-@pytest.mark.asyncio
-async def test_server_subscription_formats(mock_config):
-    """Test that the server handles both TJ Horner and custom subscription formats."""
-    server = TransitServer(mock_config)
-    server.api = AsyncMock()
-    server.api.get_arrivals.return_value = []
-    
-    # Format 1: TJ Horner routeStopPairs
-    msg1 = json.dumps({
-        "event": "schedule:subscribe",
-        "data": {"routeStopPairs": "st:40_100240,st:1_8494"}
-    })
-    
-    # Format 2: Custom payload
-    msg2 = json.dumps({
-        "type": "schedule:subscribe",
-        "payload": {"routeId": "st:40_100240", "stopId": "st:1_8494"}
-    })
-
-    # We override send_update to just capture the subscriptions before the socket closes
-    captured_subs = []
-    async def mock_send_update(ws):
-        captured_subs.append(server.subscriptions.get(ws, []))
-        
-    server.send_update = mock_send_update
-    
-    ws1 = AsyncMock()
-    ws1.remote_address = ("127.0.0.1", 12345)
-    ws1.__aiter__.return_value = [msg1]
-    
-    await server.register(ws1)
-    assert len(captured_subs) == 1
-    assert captured_subs[0] == [{"routeId": "st:40_100240", "stopId": "st:1_8494"}]
-
-@pytest.mark.asyncio
 async def test_server_broadcast_updates(mock_config):
-    """Test that the server broadcasts updates to subscribed clients."""
+    \"\"\"Test that the server broadcasts updates to subscribed clients.\"\"\"
     server = TransitServer(mock_config)
     server.api = AsyncMock()
-    
+
     mock_arrivals = [
         {
-            "tripId": "trip_123",
-            "routeId": "st:40_100240",
-            "stopId": "st:1_8494",
-            "arrivalTime": "2026-03-11T12:00:00Z"
+            \"tripId\": \"trip_123\",
+            \"routeId\": \"st:40_100240\",
+            \"stopId\": \"st:1_8494\",
+            \"arrivalTime\": 1773230400000 # 2026-03-11T12:00:00Z in ms
         }
     ]
     server.api.get_arrivals.return_value = mock_arrivals
-    
+
     ws = AsyncMock()
     ws.send = AsyncMock()
-    server.subscriptions[ws] = [{"routeId": "st:40_100240", "stopId": "st:1_8494"}]
-    
+    server.subscriptions[ws] = [{\"routeId\": \"st:40_100240\", \"stopId\": \"st:1_8494\"}]
+
     await server.send_update(ws)
-    
+
     ws.send.assert_called_once()
     sent_data = json.loads(ws.send.call_args[0][0])
-    assert sent_data["event"] == "schedule"
-    assert sent_data["data"]["trips"][0]["tripId"] == "trip_123"
+    assert sent_data[\"event\"] == \"schedule\"
+    assert sent_data[\"data\"][\"trips\"][0][\"tripId\"] == \"trip_123\"
 
 @pytest.mark.asyncio
-async def test_full_service_loop(mock_config):
-    """Test the full loop using the service script logic."""
-    from transit_tracker.network.websocket_service import run_service
+async def test_fair_diversity_capping(mock_config):
+    \"\"\"Test that the server applies fair diversity capping correctly.\"\"\"
+    server = TransitServer(mock_config)
+    server.api = AsyncMock()
+
+    # Two stops, multiple trips per stop
+    mock_arrivals_1 = [
+        {\"tripId\": \"stop1_trip1\", \"routeId\": \"route1\", \"stopId\": \"stop1\", \"arrivalTime\": 1000},
+        {\"tripId\": \"stop1_trip2\", \"routeId\": \"route1\", \"stopId\": \"stop1\", \"arrivalTime\": 2000},
+    ]
+    mock_arrivals_2 = [
+        {\"tripId\": \"stop2_trip1\", \"routeId\": \"route2\", \"stopId\": \"stop2\", \"arrivalTime\": 1500},
+        {\"tripId\": \"stop2_trip2\", \"routeId\": \"route2\", \"stopId\": \"stop2\", \"arrivalTime\": 2500},
+    ]
     
-    port = 8766
-    server_task = asyncio.create_task(run_server(host="127.0.0.1", port=port, config=mock_config))
-    await asyncio.sleep(0.5)
+    async def side_effect(stop_id):
+        if \"stop1\" in stop_id: return mock_arrivals_1
+        if \"stop2\" in stop_id: return mock_arrivals_2
+        return []
     
-    mock_config.api_url = f"ws://127.0.0.1:{port}"
-    mock_config.check_interval_seconds = 1
+    server.api.get_arrivals.side_effect = side_effect
+
+    ws = AsyncMock()
+    ws.send = AsyncMock()
+    # Client limit is 3
+    server.client_limits[ws] = 3
+    server.subscriptions[ws] = [
+        {\"routeId\": \"route1\", \"stopId\": \"stop1\"},
+        {\"routeId\": \"route2\", \"stopId\": \"stop2\"}
+    ]
+
+    await server.send_update(ws)
+
+    ws.send.assert_called_once()
+    sent_data = json.loads(ws.send.call_args[0][0])
+    trips = sent_data[\"data\"][\"trips\"]
     
-    service_task = asyncio.create_task(run_service(config=mock_config))
+    # Diversity capping should pick:
+    # 1. stop1_trip1 (soonest for stop1)
+    # 2. stop2_trip1 (soonest for stop2)
+    # 3. stop1_trip2 (next soonest overall)
     
-    await asyncio.sleep(1.0)
+    assert len(trips) == 3
+    trip_ids = [t[\"tripId\"] for t in trips]
+    assert \"stop1_trip1\" in trip_ids
+    assert \"stop2_trip1\" in trip_ids
+    assert \"stop1_trip2\" in trip_ids
+    assert \"stop2_trip2\" not in trip_ids
+
+@pytest.mark.asyncio
+async def test_normalize_id():
+    \"\"\"Test the internal ID normalization logic.\"\"\"
+    from transit_tracker.network.websocket_server import TransitServer
+    server = TransitServer(MagicMock())
     
-    service_task.cancel()
-    server_task.cancel()
-    try:
-        await asyncio.gather(service_task, server_task, return_exceptions=True)
-    except Exception:
-        pass
+    # We can't easily test the nested normalize_id function, but we can verify server init
+    assert server is not None

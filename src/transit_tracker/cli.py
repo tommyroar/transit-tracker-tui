@@ -91,7 +91,6 @@ def main():
         run_gui()
     elif args.command == "simulator":
         from .simulator import run_simulator
-        from .config import TransitConfig
         config = TransitConfig.load()
         run_simulator(config, force_live=True)
     else:

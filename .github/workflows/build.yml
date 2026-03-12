@@ -27,6 +27,9 @@ jobs:
       - name: Run Tests (including Capture Validation)
         run: uv run pytest -v
 
+      - name: Verify CLI Launch
+        run: uv run python scripts/verify_launch.py
+
       - name: Build Package
         run: uv build
 

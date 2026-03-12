@@ -78,16 +78,49 @@ class ESPHomeFlasher:
         })
         return res.get("success", False) if res else False
 
-def list_serial_ports() -> List[str]:
+def get_usb_devices() -> List[Dict[str, str]]:
+    """Returns a list of USB devices with port, name, and model information."""
     ports = serial.tools.list_ports.comports()
-    valid_ports = []
+    usb_devices = []
+    
+    # Mapping of common Vendor/Product IDs to human-readable names
+    model_map = {
+        (0x303a, 0x1001): "ESP32-S3 (Built-in USB)",
+        (0x303a, 0x80c2): "ESP32-S3 (Generic)",
+        (0x1a86, 0x7523): "ESP32/WCH CH340",
+        (0x10c4, 0xea60): "ESP32/CP210x",
+        (0x0403, 0x6001): "ESP32/FTDI",
+    }
+    
     for port in ports:
-        # Check if it's a USB device by hwid, or if 'usb' is explicitly in the device path (fallback)
+        is_usb = False
         if port.hwid != "n/a" and "USB" in port.hwid:
-            valid_ports.append(port.device)
+            is_usb = True
         elif "usb" in port.device.lower():
-            valid_ports.append(port.device)
-    return valid_ports
+            is_usb = True
+            
+        if is_usb:
+            model = "Unknown Device"
+            if port.vid and port.pid:
+                model = model_map.get((port.vid, port.pid), f"USB Device ({hex(port.vid)}:{hex(port.pid)})")
+            
+            if model == "Unknown Device" and port.manufacturer and "Espressif" in port.manufacturer:
+                model = "Espressif Controller"
+                
+            name = port.description if port.description != "n/a" else port.device
+            
+            usb_devices.append({
+                "port": port.device,
+                "name": name,
+                "model": model,
+                "manufacturer": port.manufacturer or "Unknown"
+            })
+            
+    return usb_devices
+
+def list_serial_ports() -> List[str]:
+    """Simple list of valid serial port paths."""
+    return [d["port"] for d in get_usb_devices()]
 
 def load_hardware_config(port: str, config) -> bool:
     """

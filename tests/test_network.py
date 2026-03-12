@@ -3,8 +3,8 @@ import json
 import pytest
 import websockets
 from unittest.mock import AsyncMock, patch, MagicMock
-from src.transit_tracker.network.websocket_server import run_server, TransitServer
-from src.transit_tracker.config import TransitConfig, TransitStop
+from transit_tracker.network.websocket_server import run_server, TransitServer
+from transit_tracker.config import TransitConfig, TransitStop
 
 @pytest.fixture
 def mock_config():
@@ -100,7 +100,7 @@ async def test_server_broadcast_updates(mock_config):
 @pytest.mark.asyncio
 async def test_full_service_loop(mock_config):
     """Test the full loop using the service script logic."""
-    from src.transit_tracker.network.websocket_service import run_service
+    from transit_tracker.network.websocket_service import run_service
     
     port = 8766
     server_task = asyncio.create_task(run_server(host="127.0.0.1", port=port, config=mock_config))

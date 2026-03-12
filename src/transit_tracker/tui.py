@@ -10,11 +10,12 @@ from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.live import Live
 from rich import print as rprint
 from .config import TransitConfig, TransitSubscription, get_last_config_path, set_last_config_path
 from .transit_api import TransitAPI
-from .hardware import list_serial_ports, flash_hardware, load_hardware_config
-from .simulator import run_simulator
+from .hardware import list_serial_ports, flash_hardware, load_hardware_config, get_usb_devices
+from .simulator import run_simulator, async_run_simulator
 
 SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "service_state.json")
 
@@ -23,10 +24,8 @@ def get_service_state() -> Dict[str, Any]:
         try:
             with open(SERVICE_STATE_FILE, "r") as f:
                 state = json.load(f)
-                # print(f"DEBUG: Read state: {state}") # Temporary debug
                 return state
         except Exception as e:
-            # print(f"DEBUG: Error reading state: {e}")
             pass
     return {}
 
@@ -82,17 +81,14 @@ def check_service_status():
         return "RUNNING (MANAGED)"
     
     # Check 2: Manual background process (pgrep -f "transit-tracker service")
-    # We use -f to match the full command line, and exclude our own grep/ps
     try:
         import subprocess
-        # Search for the specific service command, excluding the current TUI process
         proc = subprocess.run(
             ["pgrep", "-f", "transit-tracker service"], 
             capture_output=True, 
             text=True
         )
         if proc.returncode == 0 and proc.stdout.strip():
-            # Double check it's not just the current TUI or a random grep
             pids = proc.stdout.strip().split("\n")
             if len(pids) > 0:
                 return "RUNNING (MANUAL)"
@@ -101,27 +97,26 @@ def check_service_status():
 
     return "STOPPED"
 
-def manage_service_menu():
+async def manage_service_menu():
     while True:
         status = check_service_status()
         if status == "UNSUPPORTED":
             print("Background service management is only supported on macOS.")
             break
             
-        action = questionary.select(
+        action = await questionary.select(
             f"Manage Service (Status: {status})",
             choices=[
                 "Start Service" if "RUNNING" not in status else "Stop Service",
                 "Back"
             ]
-        ).ask()
+        ).ask_async()
         
         if not action or action == "Back":
             break
             
         if action == "Start Service":
             python_path = sys.executable
-            script_path = os.path.abspath(sys.argv[0])
             plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -160,8 +155,7 @@ def manage_service_menu():
 async def add_stop_wizard(config: TransitConfig, config_path: str):
     api = TransitAPI()
     try:
-        # Step 1: Location Search
-        location_query = questionary.text("Enter your location (cross streets or address):").ask()
+        location_query = await questionary.text("Enter your location (cross streets or address):").ask_async()
         if not location_query:
             return
 
@@ -174,7 +168,6 @@ async def add_stop_wizard(config: TransitConfig, config_path: str):
         lat, lon, display_name = res
         print(f"Found: {display_name}")
 
-        # Step 2: Route Selection
         print("Finding nearby routes...")
         routes = await api.get_routes_for_location(lat, lon)
         if not routes:
@@ -186,15 +179,14 @@ async def add_stop_wizard(config: TransitConfig, config_path: str):
             for r in routes
         ]
         
-        selected_route = questionary.select(
+        selected_route = await questionary.select(
             "Select a route:",
             choices=route_choices
-        ).ask()
+        ).ask_async()
 
         if not selected_route:
             return
 
-        # Step 3: Stop Selection
         print("Loading stops...")
         stops = await api.get_stops_for_route(selected_route["id"])
         if not stops:
@@ -206,15 +198,14 @@ async def add_stop_wizard(config: TransitConfig, config_path: str):
             for s in stops
         ]
 
-        selected_stop = questionary.select(
+        selected_stop = await questionary.select(
             "Select a stop:",
             choices=stop_choices
-        ).ask()
+        ).ask_async()
 
         if not selected_stop:
             return
 
-        # Step 4: Add to config
         route_id = selected_route["id"]
         agency_id = route_id.split("_")[0]
         feed = "st" if agency_id == "40" else "kcm" if agency_id == "1" else "kcm"
@@ -233,7 +224,7 @@ async def add_stop_wizard(config: TransitConfig, config_path: str):
     finally:
         await api.close()
 
-def remove_stop_wizard(config: TransitConfig, config_path: str):
+async def remove_stop_wizard(config: TransitConfig, config_path: str):
     if not config.subscriptions:
         print("No stops configured.")
         return
@@ -243,21 +234,21 @@ def remove_stop_wizard(config: TransitConfig, config_path: str):
         for idx, sub in enumerate(config.subscriptions)
     ]
     
-    selected_idx = questionary.select(
+    selected_idx = await questionary.select(
         "Select a stop to remove:",
         choices=choices
-    ).ask()
+    ).ask_async()
 
     if selected_idx is not None:
         removed = config.subscriptions.pop(selected_idx)
         config.save(config_path)
         print(f"Removed: {removed.label}")
 
-def change_threshold_wizard(config: TransitConfig, config_path: str):
-    val = questionary.text(
+async def change_threshold_wizard(config: TransitConfig, config_path: str):
+    val = await questionary.text(
         "Enter new alert threshold in minutes:",
         default=str(config.arrival_threshold_minutes)
-    ).ask()
+    ).ask_async()
     
     if val and val.isdigit() and int(val) > 0:
         config.arrival_threshold_minutes = int(val)
@@ -266,23 +257,23 @@ def change_threshold_wizard(config: TransitConfig, config_path: str):
     else:
         print("Invalid input.")
 
-def change_panels_wizard(config: TransitConfig, config_path: str):
-    val = questionary.select(
+async def change_panels_wizard(config: TransitConfig, config_path: str):
+    val = await questionary.select(
         "Select number of chained LED panels:",
         choices=["1", "2", "3", "4"],
         default=str(config.num_panels)
-    ).ask()
+    ).ask_async()
     
     if val:
         config.num_panels = int(val)
         config.save(config_path)
         print(f"Hardware setup updated to {val} panel(s).")
 
-def change_ntfy_wizard(config: TransitConfig, config_path: str):
-    val = questionary.text(
+async def change_ntfy_wizard(config: TransitConfig, config_path: str):
+    val = await questionary.text(
         "Enter ntfy.sh topic:",
         default=config.ntfy_topic or "transit-alerts"
-    ).ask()
+    ).ask_async()
     
     if val:
         config.ntfy_topic = val
@@ -292,24 +283,23 @@ def change_ntfy_wizard(config: TransitConfig, config_path: str):
         else:
             print(f"ntfy.sh topic updated to {val} (in-memory).")
 
-def change_api_mode_wizard(config: TransitConfig, config_path: str):
-    mode = questionary.select(
+async def change_api_mode_wizard(config: TransitConfig, config_path: str):
+    mode = await questionary.select(
         "Select API Mode:",
         choices=[
             questionary.Choice("Local (Internal Proxy)", value=True),
             questionary.Choice("Cloud (Public Endpoint)", value=False)
         ],
         default=config.use_local_api
-    ).ask()
+    ).ask_async()
     
     if mode is not None:
         config.use_local_api = mode
         if not mode:
-            # If switching to cloud, ask for the URL or use default
-            url = questionary.text(
+            url = await questionary.text(
                 "Enter Public API URL:",
                 default=config.api_url if "localhost" not in config.api_url else "wss://tt.horner.tj/"
-            ).ask()
+            ).ask_async()
             if url:
                 config.api_url = url
         else:
@@ -318,14 +308,149 @@ def change_api_mode_wizard(config: TransitConfig, config_path: str):
         config.save(config_path)
         print(f"API mode updated to {'Local' if mode else 'Cloud'}.")
 
-def main_menu():
-    # Find project root (two levels up from src/transit_tracker)
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
+    status = check_service_status()
     
-    # Configuration search order:
-    # 1. Last used path from global settings (Persists user choice)
-    # 2. accurate_config.yaml (root or .local)
-    # 3. config.yaml (root or .local)
+    # Build Dashboard using rich
+    table = Table(show_header=True, header_style="bold magenta", expand=True, box=None)
+    table.add_column("Label")
+    table.add_column("Feed", style="dim")
+    table.add_column("Route", style="cyan")
+    table.add_column("Stop ID", style="blue")
+    table.add_column("Direction", style="yellow")
+    
+    for sub in config.subscriptions:
+        direction_str = str(sub.direction) if sub.direction is not None else "N/A"
+        table.add_row(sub.label, sub.feed, sub.route, sub.stop, direction_str)
+        
+    status_color = "green" if "RUNNING" in status else "red"
+    status_icon = "🟢" if "RUNNING" in status else "🔴"
+    status_text = Text(f"{status_icon} Service Status: {status}", style=f"bold {status_color}")
+    
+    if config.use_local_api:
+        data_source = "🏠 Local (OBA Proxy)"
+        port = 8000 
+        service_info = f"🔗 Serving at: ws://localhost:{port}"
+    else:
+        data_source = f"☁️ Cloud ({config.api_url})"
+        service_info = "🔔 Service: Notification Client only"
+
+    source_text = Text(f"📊 Data Source: {data_source}", style="cyan")
+    info_text = Text(service_info, style="blue")
+    panels_text = Text(f"📟 Hardware Setup: {config.num_panels} Panel(s)", style="magenta")
+    config_file_text = Text(f"📝 Current Config: {config_path or 'No file loaded (in-memory)'}", style="dim")
+    
+    state = get_service_state()
+    last_svc_update = "Never"
+    ts = state.get("last_update")
+    if ts:
+        last_svc_update = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))
+    update_text = Text(f"🕒 Last Proxy Update: {last_svc_update}", style="yellow")
+
+    # Network Connected Devices
+    clients = state.get("clients", [])
+    client_count = state.get("client_count", 0)
+    if client_count > 0:
+        names = []
+        for c in clients:
+            name = c.get("name", "Unknown")
+            if name == "Unknown Device":
+                name = c["address"].split(":")[0]
+            names.append(name)
+        client_text = Text(f"📱 Proxy Clients ({client_count}): {', '.join(names)}", style="green")
+    else:
+        client_text = Text("📱 Proxy Clients: 0", style="dim")
+
+    # USB Connected Devices
+    usb_devices = get_usb_devices()
+    if usb_devices:
+        device_details = []
+        for d in usb_devices:
+            port_name = os.path.basename(d["port"])
+            device_details.append(f"{d['model']} ({port_name})")
+        usb_text = Text(f"🔌 USB Hardware: {', '.join(device_details)}", style="cyan")
+    else:
+        usb_text = Text("🔌 No USB Hardware detected", style="dim italic")
+    
+    header_group = Group(
+        status_text,
+        usb_text,
+        client_text,
+        panels_text,
+    )
+    
+    config_group = Group(
+        config_file_text,
+        source_text,
+        info_text,
+        update_text,
+    )
+
+    panel_group = Group(
+        Panel(header_group, title="[bold]System Status[/bold]", border_style="dim"),
+        Panel(config_group, title="[bold]Configuration[/bold]", border_style="dim"),
+        "",
+        table if config.subscriptions else Text("No stops configured yet.", style="italic dim")
+    )
+    
+    return Panel(panel_group, title="[bold cyan]🏙️ Transit Tracker Manager[/bold cyan]", expand=False, border_style="cyan")
+
+def get_dashboard_state(config: TransitConfig, config_path: str):
+    state = get_service_state()
+    usb_devices = get_usb_devices()
+    return (
+        check_service_status(),
+        state.get("last_update"),
+        state.get("client_count", 0),
+        tuple(c.get("address") for c in state.get("clients", [])),
+        tuple(d["port"] for d in usb_devices),
+        config_path,
+        len(config.subscriptions)
+    )
+
+async def ask_with_live_dashboard(title, choices, config, config_path, console):
+    last_state = get_dashboard_state(config, config_path)
+    
+    def show_live_ui():
+        dashboard = make_dashboard(config, config_path)
+        console.clear()
+        rprint(dashboard)
+        rprint("\n")
+
+    while True:
+        show_live_ui()
+        q = questionary.select(title, choices=choices)
+        prompt_task = asyncio.create_task(q.ask_async())
+        
+        async def monitor():
+            while True:
+                await asyncio.sleep(0.5)
+                current_state = get_dashboard_state(config, config_path)
+                if current_state != last_state:
+                    return current_state
+        
+        monitor_task = asyncio.create_task(monitor())
+        
+        done, pending = await asyncio.wait(
+            [prompt_task, monitor_task], 
+            return_when=asyncio.FIRST_COMPLETED
+        )
+        
+        if prompt_task in done:
+            monitor_task.cancel()
+            return prompt_task.result()
+            
+        if monitor_task in done:
+            new_state = monitor_task.result()
+            prompt_task.cancel()
+            try:
+                await prompt_task
+            except asyncio.CancelledError:
+                pass
+            last_state = new_state
+
+async def async_main_menu():
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     
     config_path = get_last_config_path()
     if not config_path or not os.path.exists(config_path):
@@ -345,112 +470,32 @@ def main_menu():
         config_path = os.path.join(project_root, ".local", "config.yaml") if os.path.exists(".local") else "config.yaml"
 
     console = Console()
-
+    
     while True:
-        # Clear screen for a fresh dashboard view
-        console.clear()
-        
-        status = check_service_status()
-        
-        # Build Dashboard using rich
-        table = Table(show_header=True, header_style="bold magenta", expand=True)
-        table.add_column("Label")
-        table.add_column("Feed", style="dim")
-        table.add_column("Route", style="cyan")
-        table.add_column("Stop ID", style="blue")
-        table.add_column("Direction", style="yellow")
-        
-        for sub in config.subscriptions:
-            direction_str = str(sub.direction) if sub.direction is not None else "N/A"
-            table.add_row(sub.label, sub.feed, sub.route, sub.stop, direction_str)
-            
-        status_color = "green" if "RUNNING" in status else "red"
-        status_text = Text(f"Service Status: {status}", style=f"bold {status_color}")
-        
-        # Determine Data Source and Port
-        if config.use_local_api:
-            data_source = "Local (OBA Proxy)"
-            # Find the port from config or default
-            port = 8000 # Default port used in run_server
-            service_info = f"Serving at: ws://localhost:{port}"
-        else:
-            data_source = f"Cloud ({config.api_url})"
-            service_info = "Service: Notification Client only"
-
-        source_text = Text(f"Data Source: {data_source}", style="cyan")
-        info_text = Text(service_info, style="blue")
-        panels_text = Text(f"Hardware Setup: {config.num_panels} Panel(s)", style="magenta")
-        config_file_text = Text(f"Current Config: {config_path or 'No file loaded (in-memory)'}", style="dim")
-        
-        # Last Service Update Logic
-        state = get_service_state()
-        last_svc_update = "Never"
-        ts = state.get("last_update")
-        if ts:
-            last_svc_update = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))
-        update_text = Text(f"Last Proxy Update: {last_svc_update}", style="yellow")
-
-        # Connected Devices Logic
-        clients = state.get("clients", [])
-        client_count = state.get("client_count", 0)
-        if client_count > 0:
-            names = []
-            for c in clients:
-                # Prefer the descriptive name if available
-                name = c.get("name", "Unknown")
-                if name == "Unknown Device":
-                    name = c["address"].split(":")[0]
-                names.append(name)
-            client_text = Text(f"Connected Devices ({client_count}): {', '.join(names)}", style="green")
-        else:
-            client_text = Text("Connected Devices: 0", style="dim")
-
-        ports = list_serial_ports()
-        if ports:
-            device_text = Text(f"Hardware Detected: {', '.join(ports)}", style="cyan")
-        else:
-            device_text = Text("No device connected", style="dim italic")
-        
-        panel_group = Group(
-            status_text,
-            device_text,
-            client_text,
-            panels_text,
-            config_file_text,
-            source_text,
-            info_text,
-            update_text,
-            "",
-            table if config.subscriptions else Text("No stops configured yet.", style="italic dim")
-        )
-        
-        rprint("\n")
-        rprint(Panel(panel_group, title="[bold cyan]Transit Tracker Manager[/bold cyan]", expand=False, border_style="cyan"))
-        rprint("\n")
-
+        usb_devices = get_usb_devices()
+        ports = [d["port"] for d in usb_devices]
         has_ports = len(ports) > 0
         has_config = config_path is not None
 
-        action = questionary.select(
+        action = await ask_with_live_dashboard(
             "What would you like to do?",
             choices=[
-                "Refresh Dashboard",
                 "Configurator",
-                questionary.Choice("Simulator", disabled="Please load or save a config file first" if not has_config else None),
+                questionary.Choice("Simulator", disabled="Please load/save config first" if not has_config else None),
                 "Service Manager",
                 "Exit"
-            ]
-        ).ask()
+            ],
+            config=config,
+            config_path=config_path,
+            console=console
+        )
 
         if not action or action == "Exit":
             break
             
-        elif action == "Refresh Dashboard":
-            continue
-            
         elif action == "Configurator":
             while True:
-                c_action = questionary.select(
+                c_action = await ask_with_live_dashboard(
                     "Configurator",
                     choices=[
                         "Config Files",
@@ -461,25 +506,28 @@ def main_menu():
                         "Change Number of Panels",
                         "Debug",
                         "Back"
-                    ]
-                ).ask()
+                    ],
+                    config=config,
+                    config_path=config_path,
+                    console=console
+                )
                 
                 if not c_action or c_action == "Back":
                     break
 
                 if c_action == "API Settings":
-                    change_api_mode_wizard(config, config_path)
+                    await change_api_mode_wizard(config, config_path)
                     
                 if c_action == "Debug":
-                    d_action = questionary.select(
+                    d_action = await questionary.select(
                         "Debug Menu",
                         choices=["Run Mock Simulator", "Back"]
-                    ).ask()
+                    ).ask_async()
                     if d_action == "Run Mock Simulator":
-                        run_simulator(config, force_live=False)
+                        await async_run_simulator(config, force_live=False)
 
                 elif c_action == "Config Files":
-                    f_action = questionary.select(
+                    f_action = await questionary.select(
                         "Config Files",
                         choices=[
                             "Load Config File (Picker)", 
@@ -488,19 +536,13 @@ def main_menu():
                             "Save Config File As...", 
                             "Back"
                         ]
-                    ).ask()
+                    ).ask_async()
                     
                     if f_action == "Save Config File":
                         try:
-                            # 1. Validate before save
                             TransitConfig.model_validate(config.model_dump())
-                            
-                            # 2. Save
                             config.save(config_path)
-                            
-                            # 3. Validate after save (reload and check)
                             TransitConfig.load(config_path)
-                            
                             print(f"Successfully saved and validated {config_path}")
                         except Exception as e:
                             print(f"Error saving or validating config: {e}")
@@ -517,10 +559,10 @@ def main_menu():
                             except Exception as e:
                                 print(f"Error loading config: {e}")
                     elif f_action == "Load Config File (Manual Path)":
-                        new_path = questionary.path(
+                        new_path = await questionary.path(
                             "Enter path to load config from:",
                             default=config_path or "config.yaml"
-                        ).ask()
+                        ).ask_async()
                         if new_path:
                             try:
                                 config = TransitConfig.load(new_path)
@@ -533,22 +575,16 @@ def main_menu():
                     elif f_action == "Save Config File As...":
                         new_path = pick_file(mode="save", default_path=config_path)
                         if not new_path:
-                            new_path = questionary.path(
+                            new_path = await questionary.path(
                                 "Enter path to save config to (fallback):",
                                 default=config_path or "config.yaml"
-                            ).ask()
+                            ).ask_async()
                             
                         if new_path:
                             try:
-                                # 1. Validate before save
                                 TransitConfig.model_validate(config.model_dump())
-                                
-                                # 2. Save
                                 config.save(new_path)
-                                
-                                # 3. Validate after save (reload and check)
                                 TransitConfig.load(new_path)
-                                
                                 config_path = new_path
                                 set_last_config_path(new_path)
                                 print(f"Saved and validated config to {new_path}")
@@ -557,27 +593,27 @@ def main_menu():
                                 print(f"Error saving or validating config: {e}")
                                 
                 elif c_action == "Device Config":
-                    d_action = questionary.select(
+                    d_action = await questionary.select(
                         "Device Config",
                         choices=[
                             questionary.Choice("Flash Device", disabled="No device connected" if not has_ports else None),
                             questionary.Choice("Download from Device", disabled="No device connected" if not has_ports else None),
                             "Back"
                         ]
-                    ).ask()
+                    ).ask_async()
                     
                     if d_action == "Flash Device":
-                        selected_port = questionary.select(
+                        selected_port = await questionary.select(
                             "Select your Transit Tracker device:",
                             choices=ports
-                        ).ask()
+                        ).ask_async()
                         if selected_port:
                             flash_hardware(selected_port, config)
                     elif d_action == "Download from Device":
-                        selected_port = questionary.select(
+                        selected_port = await questionary.select(
                             "Select your Transit Tracker device:",
                             choices=ports
-                        ).ask()
+                        ).ask_async()
                         if selected_port:
                             if load_hardware_config(selected_port, config):
                                 if config_path:
@@ -587,69 +623,75 @@ def main_menu():
                                     print("Configuration read into memory. Please save it to a file.")
 
                 elif c_action == "Notifications":
-                    n_action = questionary.select(
+                    n_action = await questionary.select(
                         "Notifications",
                         choices=[
                             questionary.Choice("Change Alert Threshold", disabled="Please load or save a config file first" if not has_config else None),
                             "Add/Change ntfy.sh Endpoint",
                             "Back"
                         ]
-                    ).ask()
+                    ).ask_async()
                     
                     if n_action == "Change Alert Threshold":
-                        change_threshold_wizard(config, config_path)
+                        await change_threshold_wizard(config, config_path)
                     elif n_action == "Add/Change ntfy.sh Endpoint":
-                        change_ntfy_wizard(config, config_path)
+                        await change_ntfy_wizard(config, config_path)
                         
                 elif c_action == "Manage Stops":
-                    s_action = questionary.select(
+                    s_action = await questionary.select(
                         "Manage Stops",
                         choices=[
                             questionary.Choice("Add a Stop", disabled="Please load or save a config file first" if not has_config else None),
                             questionary.Choice("Remove a Stop", disabled="Please load or save a config file first" if not has_config else None),
                             "Back"
                         ]
-                    ).ask()
+                    ).ask_async()
                     
                     if s_action == "Add a Stop":
-                        asyncio.run(add_stop_wizard(config, config_path))
+                        await add_stop_wizard(config, config_path)
                     elif s_action == "Remove a Stop":
-                        remove_stop_wizard(config, config_path)
+                        await remove_stop_wizard(config, config_path)
                         
                 elif c_action == "Change Number of Panels":
-                    change_panels_wizard(config, config_path)
+                    await change_panels_wizard(config, config_path)
 
         elif action == "Simulator":
             rprint(f"[dim]Using config: {config_path}[/dim]")
-            run_simulator(config, force_live=True)
+            await async_run_simulator(config, force_live=True)
 
         elif action == "Service Manager":
+            await manage_service_menu()
 
-            if status == "UNSUPPORTED":
-                print("Background service management is only supported on macOS.")
-            else:
-                manage_service_menu()
+def main_menu():
+    asyncio.run(async_main_menu())
 
 def hardware_monitor():
-    known_ports = set(list_serial_ports())
+    known_ports = {} # port -> model
+    devices = get_usb_devices()
+    for d in devices:
+        known_ports[d["port"]] = d["model"]
+        
     while True:
         time.sleep(1)
-        current_ports = set(list_serial_ports())
-        added = current_ports - known_ports
-        removed = known_ports - current_ports
+        current_devices = get_usb_devices()
+        current_ports = {d["port"]: d["model"] for d in current_devices}
+        
+        added = set(current_ports.keys()) - set(known_ports.keys())
+        removed = set(known_ports.keys()) - set(current_ports.keys())
         
         if added or removed:
-            # We print a carriage return and clear line to avoid messing up the questionary prompt too much
             sys.stdout.write("\r\033[K") 
             for p in added:
-                rprint(f"[bold green]🔌 Hardware Device Connected:[/bold green] [cyan]{p}[/cyan] (Press Enter to refresh menu)")
+                model = current_ports[p]
+                rprint(f"[bold green]🔌 USB Device Connected:[/bold green] [cyan]{model}[/cyan] at {p}")
             for p in removed:
-                rprint(f"[bold yellow]🔌 Hardware Device Disconnected:[/bold yellow] [dim]{p}[/dim] (Press Enter to refresh menu)")
+                model = known_ports[p]
+                rprint(f"[bold yellow]🔌 USB Device Disconnected:[/bold yellow] [dim]{model}[/dim]")
             known_ports = current_ports
             sys.stdout.flush()
 
 def run_cli():
-    # Start the hardware monitor as a daemon thread so it exits when the main thread exits
+    # Start the hardware monitor as a daemon thread
     monitor_thread = threading.Thread(target=hardware_monitor, daemon=True)
     monitor_thread.start()
     

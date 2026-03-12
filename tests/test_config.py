@@ -10,8 +10,11 @@ from transit_tracker.config import TransitConfig, TransitSubscription
 
 def test_default_config():
     config = TransitConfig()
-    # The configurator default has a trailing slash
-    assert config.api_url == "wss://tt.horner.tj/"
+    # By default, use_local_api is True, so api_url points to localhost.
+    # The configurator default base_url has a trailing slash.
+    assert config.use_local_api is True
+    assert config.api_url == "ws://localhost:8000/"
+    assert config.transit_tracker.base_url == "wss://tt.horner.tj/"
     assert config.arrival_threshold_minutes == 5
     assert len(config.subscriptions) == 0
 

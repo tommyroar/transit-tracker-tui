@@ -469,12 +469,18 @@ class LEDSimulator:
             except asyncio.CancelledError:
                 pass
 
-def run_simulator(config: TransitConfig, force_live: bool = False):
+async def async_run_simulator(config: TransitConfig, force_live: bool = False):
     if not config.subscriptions and not config.mock_state and not config.captures:
         Console().print("[bold red]Error:[/bold red] No stops or mock state/captures configured.")
         return
     sim = LEDSimulator(config, force_live=force_live)
     try:
-        asyncio.run(sim.run())
+        await sim.run()
+    except KeyboardInterrupt:
+        pass
+
+def run_simulator(config: TransitConfig, force_live: bool = False):
+    try:
+        asyncio.run(async_run_simulator(config, force_live))
     except KeyboardInterrupt:
         pass

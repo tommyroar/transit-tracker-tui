@@ -171,58 +171,52 @@ class TransitServer:
         if not subs:
             return
 
-        # Group subscriptions by stopId to send per-stop updates (standard for this protocol)
+        all_trips = []
+        
+        # Group by stop to avoid redundant API calls
         from collections import defaultdict
         stop_to_subs = defaultdict(list)
         for s in subs:
             stop_to_subs[s["stopId"]].append(s)
 
+        def normalize_id(item_id):
+            if item_id is None: return ""
+            if ":" in item_id and "_" in item_id:
+                c_idx = item_id.find(":")
+                u_idx = item_id.find("_")
+                if c_idx < u_idx:
+                    return item_id[c_idx+1:]
+            return item_id
+
         for stop_id, stop_subs in stop_to_subs.items():
-            all_stop_trips = []
             try:
                 # OBA expects clean stop ID
-                clean_stop_id = stop_id
-                if ":" in stop_id and "_" in stop_id:
-                    colon_idx = stop_id.find(":")
-                    underscore_idx = stop_id.find("_")
-                    if colon_idx < underscore_idx:
-                        clean_stop_id = stop_id[colon_idx+1:]
-                
+                clean_stop_id = normalize_id(stop_id)
                 arrivals = await self.get_arrivals_cached(clean_stop_id)
                 
-                # Normalize relevant route IDs for comparison
-                def normalize_route(r_id):
-                    if r_id is None: return ""
-                    if ":" in r_id and "_" in r_id:
-                        c_idx = r_id.find(":")
-                        u_idx = r_id.find("_")
-                        if c_idx < u_idx:
-                            return r_id[c_idx+1:]
-                    return r_id
-
-                # Map routeId to its specific subscription for offset processing
-                route_to_sub = {normalize_route(s.get("routeId")): s for s in stop_subs}
+                # Map normalized routeId to its specific subscription for offset processing
+                route_to_sub = {normalize_id(s.get("routeId")): s for s in stop_subs}
                 relevant_routes = set(route_to_sub.keys())
                 
                 for arr in arrivals:
-                    arr_route_id = normalize_route(arr["routeId"])
-                    # If relevant_routes has None or empty routeId, we include all for that stop
+                    arr_route_id = normalize_id(arr["routeId"])
+                    # If relevant_routes is effectively empty (e.g. subscribing to all routes at a stop)
+                    # or if the specific route is matched, include it.
                     if not relevant_routes or "" in relevant_routes or None in relevant_routes or arr_route_id in relevant_routes:
-                        # Ensure the response has the original stopId from sub
                         arr_copy = arr.copy()
                         arr_copy["stopId"] = stop_id
                         
                         # Apply Travel Time Offset on the Server
-                        # This fixes physical hardware that ignores local offsets
                         sub = route_to_sub.get(arr_route_id)
+                        if not sub and "" in relevant_routes: # Fallback for all-route subscription
+                            sub = route_to_sub[""]
+                            
                         offset_sec = 0
                         if sub and sub.get("time_offset"):
                             try:
-                                # Extract number from strings like "-9min" or "5min"
                                 import re
                                 match = re.search(r"(-?\d+)", str(sub["time_offset"]))
                                 if match:
-                                    # Convert minutes to seconds
                                     offset_sec = int(match.group(1)) * 60
                             except (ValueError, TypeError):
                                 pass
@@ -231,29 +225,29 @@ class TransitServer:
                         for key in ["arrivalTime", "predictedArrivalTime", "scheduledArrivalTime"]:
                             val = arr_copy.get(key)
                             if val:
-                                if val > 10**12: # Milliseconds detection
+                                if val > 10**12: # Milliseconds
                                     val = val // 1000
-                                
-                                # Subtract the offset (e.g. if offset is 9min, subtract 540s)
-                                # Note: our config usually stores travel time as positive or negative.
-                                # Hardware capture showed -540 for 9 mins, so we add the negative value.
                                 arr_copy[key] = val + offset_sec
                                 
-                        all_stop_trips.append(arr_copy)
+                        all_trips.append(arr_copy)
             except Exception as e:
                 print(f"[SERVER] Error fetching arrivals for {stop_id}: {e}")
 
-            # Send update for this specific stop
-            response = {
-                "event": "schedule",
-                "type": "schedule",
-                "data": {"trips": all_stop_trips},
-                "payload": {"trips": all_stop_trips, "stopId": stop_id}
+        # Send a SINGLE update containing ALL trips for ALL stops
+        # This prevents the hardware from overwriting different stops.
+        response = {
+            "event": "schedule",
+            "type": "schedule",
+            "data": {"trips": all_trips},
+            "payload": {
+                "trips": all_trips, 
+                "stopId": subs[0]["stopId"] if subs else "" 
             }
-            await ws.send(json.dumps(response))
-            self.messages_processed += 1
-            self.last_broadcast_time = time.time()
-            self.sync_state(last_message=response)
+        }
+        await ws.send(json.dumps(response))
+        self.messages_processed += 1
+        self.last_broadcast_time = time.time()
+        self.sync_state(last_message=response)
 
     async def broadcast_loop(self):
         while True:

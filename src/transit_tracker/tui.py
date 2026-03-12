@@ -116,7 +116,14 @@ async def manage_service_menu():
             break
             
         if action == "Start Service":
-            python_path = sys.executable
+            python_bin_dir = os.path.dirname(sys.executable)
+            transit_tracker_bin = os.path.join(python_bin_dir, "transit-tracker")
+            
+            if os.path.exists(transit_tracker_bin):
+                args_block = f"<string>{transit_tracker_bin}</string>"
+            else:
+                args_block = f"<string>{sys.executable}</string>\n        <string>-m</string>\n        <string>transit_tracker.cli</string>"
+
             plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -125,9 +132,7 @@ async def manage_service_menu():
     <string>{PLIST_NAME.replace('.plist', '')}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{python_path}</string>
-        <string>-m</string>
-        <string>transit_tracker.cli</string>
+        {args_block}
         <string>service</string>
     </array>
     <key>RunAtLoad</key>
@@ -138,6 +143,8 @@ async def manage_service_menu():
     <string>{os.path.abspath('service.log')}</string>
     <key>StandardErrorPath</key>
     <string>{os.path.abspath('service.log')}</string>
+    <key>ProcessType</key>
+    <string>Interactive</string>
 </dict>
 </plist>"""
             with open(PLIST_PATH, "w") as f:
@@ -694,7 +701,7 @@ def run_cli():
     # Start the hardware monitor as a daemon thread
     monitor_thread = threading.Thread(target=hardware_monitor, daemon=True)
     monitor_thread.start()
-    
+
     try:
         main_menu()
     except KeyboardInterrupt:

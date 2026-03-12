@@ -97,20 +97,23 @@ def check_service_status():
 
     return "STOPPED"
 
-async def manage_service_menu():
+async def manage_service_menu(config: TransitConfig, config_path: str, console: Console):
     while True:
         status = check_service_status()
         if status == "UNSUPPORTED":
-            print("Background service management is only supported on macOS.")
+            rprint("[bold red]Background service management is only supported on macOS.[/bold red]")
             break
             
-        action = await questionary.select(
-            f"Manage Service (Status: {status})",
+        action = await ask_with_live_dashboard(
+            "Service Manager",
             choices=[
                 "Start Service" if "RUNNING" not in status else "Stop Service",
                 "Back"
-            ]
-        ).ask_async()
+            ],
+            config=config,
+            config_path=config_path,
+            console=console
+        )
         
         if not action or action == "Back":
             break
@@ -149,15 +152,21 @@ async def manage_service_menu():
 </plist>"""
             with open(PLIST_PATH, "w") as f:
                 f.write(plist_content)
+            
+            # Unload first to be safe, then load
+            os.system(f"launchctl unload {PLIST_PATH} > /dev/null 2>&1")
             os.system(f"launchctl load {PLIST_PATH}")
-            print("Service started.")
+            rprint("[green]Service start requested.[/green]")
+            time.sleep(1) # Give launchd a moment to register
+            
         elif action == "Stop Service":
             if status == "RUNNING (MANUAL)":
                 os.system("pkill -f 'transit-tracker service'")
-                print("Manual service stopped.")
+                rprint("[yellow]Manual service stopped.[/yellow]")
             else:
                 os.system(f"launchctl unload {PLIST_PATH}")
-                print("Managed service stopped.")
+                rprint("[yellow]Managed service stopped.[/yellow]")
+            time.sleep(1)
 
 async def add_stop_wizard(config: TransitConfig, config_path: str):
     api = TransitAPI()
@@ -264,17 +273,20 @@ async def change_threshold_wizard(config: TransitConfig, config_path: str):
     else:
         print("Invalid input.")
 
-async def change_panels_wizard(config: TransitConfig, config_path: str):
-    val = await questionary.select(
+async def change_panels_wizard(config: TransitConfig, config_path: str, console: Console):
+    val = await ask_with_live_dashboard(
         "Select number of chained LED panels:",
         choices=["1", "2", "3", "4"],
+        config=config,
+        config_path=config_path,
+        console=console,
         default=str(config.num_panels)
-    ).ask_async()
+    )
     
     if val:
         config.num_panels = int(val)
         config.save(config_path)
-        print(f"Hardware setup updated to {val} panel(s).")
+        rprint(f"[green]Hardware setup updated to {val} panel(s).[/green]")
 
 async def change_ntfy_wizard(config: TransitConfig, config_path: str):
     val = await questionary.text(
@@ -290,22 +302,25 @@ async def change_ntfy_wizard(config: TransitConfig, config_path: str):
         else:
             print(f"ntfy.sh topic updated to {val} (in-memory).")
 
-async def change_api_mode_wizard(config: TransitConfig, config_path: str):
-    mode = await questionary.select(
+async def change_api_mode_wizard(config: TransitConfig, config_path: str, console: Console):
+    mode = await ask_with_live_dashboard(
         "Select API Mode:",
         choices=[
             questionary.Choice("Local (Internal Proxy)", value=True),
             questionary.Choice("Cloud (Public Endpoint)", value=False)
         ],
+        config=config,
+        config_path=config_path,
+        console=console,
         default=config.use_local_api
-    ).ask_async()
+    )
     
     if mode is not None:
         config.use_local_api = mode
         if not mode:
             url = await questionary.text(
                 "Enter Public API URL:",
-                default=config.api_url if "localhost" not in config.api_url else "wss://tt.horner.tj/"
+                default=config.api_url if "Tommys-Mac-mini.local" not in config.api_url else "wss://tt.horner.tj/"
             ).ask_async()
             if url:
                 config.api_url = url
@@ -313,7 +328,7 @@ async def change_api_mode_wizard(config: TransitConfig, config_path: str):
             config.api_url = "ws://localhost:8000/"
             
         config.save(config_path)
-        print(f"API mode updated to {'Local' if mode else 'Cloud'}.")
+        rprint(f"[green]API mode updated to {'Local' if mode else 'Cloud'}.[/green]")
 
 def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
     status = check_service_status()
@@ -415,7 +430,7 @@ def get_dashboard_state(config: TransitConfig, config_path: str):
         len(config.subscriptions)
     )
 
-async def ask_with_live_dashboard(title, choices, config, config_path, console):
+async def ask_with_live_dashboard(title, choices, config, config_path, console, default=None):
     last_state = get_dashboard_state(config, config_path)
     
     def show_live_ui():
@@ -426,7 +441,7 @@ async def ask_with_live_dashboard(title, choices, config, config_path, console):
 
     while True:
         show_live_ui()
-        q = questionary.select(title, choices=choices)
+        q = questionary.select(title, choices=choices, default=default)
         prompt_task = asyncio.create_task(q.ask_async())
         
         async def monitor():
@@ -523,18 +538,21 @@ async def async_main_menu():
                     break
 
                 if c_action == "API Settings":
-                    await change_api_mode_wizard(config, config_path)
+                    await change_api_mode_wizard(config, config_path, console)
                     
                 if c_action == "Debug":
-                    d_action = await questionary.select(
+                    d_action = await ask_with_live_dashboard(
                         "Debug Menu",
-                        choices=["Run Mock Simulator", "Back"]
-                    ).ask_async()
+                        choices=["Run Mock Simulator", "Back"],
+                        config=config,
+                        config_path=config_path,
+                        console=console
+                    )
                     if d_action == "Run Mock Simulator":
                         await async_run_simulator(config, force_live=False)
 
                 elif c_action == "Config Files":
-                    f_action = await questionary.select(
+                    f_action = await ask_with_live_dashboard(
                         "Config Files",
                         choices=[
                             "Load Config File (Picker)", 
@@ -542,8 +560,11 @@ async def async_main_menu():
                             questionary.Choice("Save Config File", disabled="No config file loaded" if not config_path else None),
                             "Save Config File As...", 
                             "Back"
-                        ]
-                    ).ask_async()
+                        ],
+                        config=config,
+                        config_path=config_path,
+                        console=console
+                    )
                     
                     if f_action == "Save Config File":
                         try:
@@ -600,14 +621,17 @@ async def async_main_menu():
                                 print(f"Error saving or validating config: {e}")
                                 
                 elif c_action == "Device Config":
-                    d_action = await questionary.select(
+                    d_action = await ask_with_live_dashboard(
                         "Device Config",
                         choices=[
                             questionary.Choice("Flash Device", disabled="No device connected" if not has_ports else None),
                             questionary.Choice("Download from Device", disabled="No device connected" if not has_ports else None),
                             "Back"
-                        ]
-                    ).ask_async()
+                        ],
+                        config=config,
+                        config_path=config_path,
+                        console=console
+                    )
                     
                     if d_action == "Flash Device":
                         selected_port = await questionary.select(
@@ -630,14 +654,17 @@ async def async_main_menu():
                                     print("Configuration read into memory. Please save it to a file.")
 
                 elif c_action == "Notifications":
-                    n_action = await questionary.select(
+                    n_action = await ask_with_live_dashboard(
                         "Notifications",
                         choices=[
                             questionary.Choice("Change Alert Threshold", disabled="Please load or save a config file first" if not has_config else None),
                             "Add/Change ntfy.sh Endpoint",
                             "Back"
-                        ]
-                    ).ask_async()
+                        ],
+                        config=config,
+                        config_path=config_path,
+                        console=console
+                    )
                     
                     if n_action == "Change Alert Threshold":
                         await change_threshold_wizard(config, config_path)
@@ -645,14 +672,17 @@ async def async_main_menu():
                         await change_ntfy_wizard(config, config_path)
                         
                 elif c_action == "Manage Stops":
-                    s_action = await questionary.select(
+                    s_action = await ask_with_live_dashboard(
                         "Manage Stops",
                         choices=[
                             questionary.Choice("Add a Stop", disabled="Please load or save a config file first" if not has_config else None),
                             questionary.Choice("Remove a Stop", disabled="Please load or save a config file first" if not has_config else None),
                             "Back"
-                        ]
-                    ).ask_async()
+                        ],
+                        config=config,
+                        config_path=config_path,
+                        console=console
+                    )
                     
                     if s_action == "Add a Stop":
                         await add_stop_wizard(config, config_path)
@@ -660,14 +690,14 @@ async def async_main_menu():
                         await remove_stop_wizard(config, config_path)
                         
                 elif c_action == "Change Number of Panels":
-                    await change_panels_wizard(config, config_path)
+                    await change_panels_wizard(config, config_path, console)
 
         elif action == "Simulator":
             rprint(f"[dim]Using config: {config_path}[/dim]")
             await async_run_simulator(config, force_live=True)
 
         elif action == "Service Manager":
-            await manage_service_menu()
+            await manage_service_menu(config, config_path, console)
 
 def main_menu():
     asyncio.run(async_main_menu())

@@ -3,7 +3,7 @@ import argparse
 import asyncio
 import os
 import json
-from .tui import run_cli
+from .tui import run_cli, PLIST_NAME
 from .network.websocket_service import run_service as run_client
 from .network.websocket_server import run_server
 
@@ -48,40 +48,22 @@ def start_gui_if_needed(config: TransitConfig):
         # Check if already running using pgrep (idempotent)
         res = subprocess.run(["pgrep", "-f", "transit-tracker gui"], capture_output=True)
         if res.returncode != 0:
+            # Find the absolute path to ourselves
+            # sys.executable is .../.venv/bin/python
+            # transit-tracker is .../.venv/bin/transit-tracker
+            python_bin_dir = os.path.dirname(sys.executable)
+            transit_tracker_bin = os.path.join(python_bin_dir, "transit-tracker")
+            
+            # Fallback to just the command if not found in same bin
+            cmd = [transit_tracker_bin, "gui"] if os.path.exists(transit_tracker_bin) else ["transit-tracker", "gui"]
+            
             # Not running, launch it in the background
             subprocess.Popen(
-                ["transit-tracker", "gui"],
+                cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True
             )
-    except Exception:
-        pass
-
-TUI_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "tui_state.json")
-
-def update_tui_state(pid: int, action: str = "add"):
-    """Manages a list of TUI PIDs in the state file."""
-    try:
-        os.makedirs(os.path.dirname(TUI_STATE_FILE), exist_ok=True)
-        data = {"pids": []}
-        if os.path.exists(TUI_STATE_FILE):
-            try:
-                with open(TUI_STATE_FILE, "r") as f:
-                    data = json.load(f)
-                    if "pids" not in data: data["pids"] = []
-            except Exception:
-                pass
-
-        if action == "add":
-            if pid not in data["pids"]:
-                data["pids"].append(pid)
-        elif action == "remove":
-            if pid in data["pids"]:
-                data["pids"].remove(pid)
-
-        with open(TUI_STATE_FILE, "w") as f:
-            json.dump(data, f)
     except Exception:
         pass
 
@@ -104,7 +86,7 @@ def main():
 
     args = parser.parse_args()
 
-    # Launch GUI unless specifically running the GUI already or disabled
+    # The gui is started for any command (except gui itself) to provide visual status.
     if args.command != "gui":
         start_gui_if_needed(config)
 
@@ -121,13 +103,7 @@ def main():
         config = TransitConfig.load()
         run_simulator(config, force_live=True)
     else:
-        # We are running 'ui' (TUI)
-        my_pid = os.getpid()
-        update_tui_state(my_pid, "add")
-        try:
-            run_cli()
-        finally:
-            update_tui_state(my_pid, "remove")
+        run_cli()
 
 if __name__ == "__main__":
     main()

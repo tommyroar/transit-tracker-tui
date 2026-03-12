@@ -19,26 +19,19 @@ async def run_service(config: TransitConfig = None):
         try:
             async with websockets.connect(api_url) as ws:
                 print(f"[CLIENT] Connected to {api_url}")
-                # Subscribe to all configured stops
+                # Build TJ Horner style routeStopPairs string for all subscriptions
+                pairs = []
                 for sub in config.subscriptions:
-                    # Support both formats for subscription
-                    await ws.send(json.dumps({
-                        "type": "schedule:subscribe",
-                        "client_name": "Notifications",
-                        "payload": {
-                            "feedId": sub.feed,
-                            "routeId": sub.route,
-                            "stopId": sub.stop
-                        }
-                    }))
-                    # Also send in TJ Horner format just in case
                     r_id = f"{sub.feed}:{sub.route}" if ":" not in sub.route else sub.route
                     s_id = f"{sub.feed}:{sub.stop}" if ":" not in sub.stop else sub.stop
+                    pairs.append(f"{r_id},{s_id}")
+                
+                if pairs:
                     await ws.send(json.dumps({
                         "event": "schedule:subscribe",
                         "client_name": "Notifications",
                         "data": {
-                            "routeStopPairs": f"{r_id},{s_id}"
+                            "routeStopPairs": ";".join(pairs)
                         }
                     }))
 

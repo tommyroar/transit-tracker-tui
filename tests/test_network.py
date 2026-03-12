@@ -54,21 +54,20 @@ async def test_server_subscription_formats(mock_config):
         "payload": {"routeId": "st:40_100240", "stopId": "st:1_8494"}
     })
 
-    # We use a mock dictionary to catch the subscription before it's deleted
-    mock_subs = MagicMock(spec=dict)
-    server.subscriptions = mock_subs
+    # We override send_update to just capture the subscriptions before the socket closes
+    captured_subs = []
+    async def mock_send_update(ws):
+        captured_subs.append(server.subscriptions.get(ws, []))
+        
+    server.send_update = mock_send_update
     
     ws1 = AsyncMock()
     ws1.remote_address = ("127.0.0.1", 12345)
     ws1.__aiter__.return_value = [msg1]
     
     await server.register(ws1)
-    # Verify __setitem__ was called on our mock dictionary
-    mock_subs.__setitem__.assert_called()
-    # Check that it was set with the expected pair
-    args, _ = mock_subs.__setitem__.call_args
-    assert args[0] == ws1
-    assert args[1] == [{"routeId": "st:40_100240", "stopId": "st:1_8494"}]
+    assert len(captured_subs) == 1
+    assert captured_subs[0] == [{"routeId": "st:40_100240", "stopId": "st:1_8494"}]
 
 @pytest.mark.asyncio
 async def test_server_broadcast_updates(mock_config):

@@ -28,6 +28,7 @@ class TransitServer:
         self.subscriptions: Dict[websockets.WebSocketServerProtocol, List[Dict[str, str]]] = {}
         self.client_names: Dict[websockets.WebSocketServerProtocol, str] = {}
         self.cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+        self.in_flight: Dict[str, asyncio.Task] = {}
         self.cache_ttl = 30 # seconds
         self.last_broadcast_time = 0
         self.start_time = time.time()
@@ -72,22 +73,40 @@ class TransitServer:
 
     async def get_arrivals_cached(self, stop_id: str) -> List[Dict[str, Any]]:
         now = asyncio.get_event_loop().time()
+        print(f"[SERVER] Fetching arrivals for {stop_id}...")
         if stop_id in self.cache:
             ts, data = self.cache[stop_id]
             if now - ts < self.cache_ttl:
+                print(f"[SERVER] Cache hit for {stop_id}, returning {len(data)} trips")
                 return data
-        
-        # Strip prefix just in case
-        clean_stop_id = stop_id
-        if ":" in stop_id and "_" in stop_id:
-            colon_idx = stop_id.find(":")
-            underscore_idx = stop_id.find("_")
-            if colon_idx < underscore_idx:
-                clean_stop_id = stop_id[colon_idx+1:]
+                
+        # If there's already a request in flight for this stop, wait for it
+        if stop_id in self.in_flight:
+            print(f"[SERVER] Request in flight for {stop_id}, waiting...")
+            return await self.in_flight[stop_id]
+            
+        async def fetch():
+            # Strip prefix just in case
+            clean_stop_id = stop_id
+            if ":" in stop_id and "_" in stop_id:
+                colon_idx = stop_id.find(":")
+                underscore_idx = stop_id.find("_")
+                if colon_idx < underscore_idx:
+                    clean_stop_id = stop_id[colon_idx+1:]
 
-        arrivals = await self.api.get_arrivals(clean_stop_id)
-        self.cache[stop_id] = (now, arrivals)
-        return arrivals
+            print(f"[SERVER] Making OBA API call for clean_stop_id={clean_stop_id}...")
+            arrivals = await self.api.get_arrivals(clean_stop_id)
+            print(f"[SERVER] Received {len(arrivals)} arrivals for {clean_stop_id}")
+            self.cache[stop_id] = (asyncio.get_event_loop().time(), arrivals)
+            return arrivals
+
+        task = asyncio.create_task(fetch())
+        self.in_flight[stop_id] = task
+        try:
+            return await task
+        finally:
+            if stop_id in self.in_flight:
+                del self.in_flight[stop_id]
 
     async def register(self, ws: websockets.WebSocketServerProtocol):
         self.clients.add(ws)
@@ -182,18 +201,18 @@ class TransitServer:
             except Exception as e:
                 print(f"[SERVER] Error fetching arrivals for {stop_id}: {e}")
 
-        if all_trips:
-            # Send in both formats for compatibility
-            response = {
-                "event": "schedule",
-                "type": "schedule",
-                "data": {"trips": all_trips},
-                "payload": {"trips": all_trips, "stopId": subs[0]["stopId"]} # stopId for compat
-            }
-            await ws.send(json.dumps(response))
-            self.messages_processed += 1
-            self.last_broadcast_time = time.time()
-            self.sync_state(last_message=response)
+        # Always send an update, even if empty, so the client knows we checked
+        # Send in both formats for compatibility
+        response = {
+            "event": "schedule",
+            "type": "schedule",
+            "data": {"trips": all_trips},
+            "payload": {"trips": all_trips, "stopId": subs[0]["stopId"]} # stopId for compat
+        }
+        await ws.send(json.dumps(response))
+        self.messages_processed += 1
+        self.last_broadcast_time = time.time()
+        self.sync_state(last_message=response)
 
     async def broadcast_loop(self):
         while True:

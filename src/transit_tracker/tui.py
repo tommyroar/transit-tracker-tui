@@ -583,15 +583,20 @@ async def async_main_menu():
         has_ports = len(ports) > 0
         has_config = config_path is not None
 
+        choices = [
+            "Configurator",
+            questionary.Choice("Simulator", disabled="Please load/save config first" if not has_config else None),
+            "Service Manager",
+            "Restart Service" if "RUNNING" in check_service_status() else None,
+            "Exit"
+        ]
+        
+        # Filter out None values (e.g. if Restart Service is not shown)
+        choices = [c for c in choices if c is not None]
+
         action = await ask_with_live_dashboard(
             "What would you like to do?",
-            choices=[
-                "Configurator",
-                questionary.Choice("Simulator", disabled="Please load/save config first" if not has_config else None),
-                "Service Manager",
-                "Restart Service" if "RUNNING" in check_service_status() else None,
-                "Exit"
-            ],
+            choices=choices,
             config=config,
             config_path=config_path,
             console=console

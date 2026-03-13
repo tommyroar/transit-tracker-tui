@@ -10,10 +10,9 @@ from transit_tracker.config import TransitConfig, TransitSubscription
 
 def test_default_config():
     config = TransitConfig()
-    # By default, use_local_api is True, so api_url points to Tommys-Mac-mini.local.
-    # The configurator default base_url has a trailing slash.
-    assert config.use_local_api is True
-    assert config.api_url == "ws://Tommys-Mac-mini.local:8000/"
+    # By default, use_local_api is False, so api_url points to the public endpoint.
+    assert config.use_local_api is False
+    assert config.api_url == "wss://tt.horner.tj/"
     assert config.transit_tracker.base_url == "wss://tt.horner.tj/"
     assert config.arrival_threshold_minutes == 5
     assert len(config.subscriptions) == 0

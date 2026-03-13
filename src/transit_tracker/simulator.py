@@ -72,9 +72,37 @@ class MicroFont:
         [3, 0, 2, 0, 1, 1]
     ]
 
+    _bdf_font = None
+    _bdf_loaded = False
+
+    @classmethod
+    def _get_bdf(cls):
+        if not cls._bdf_loaded:
+            cls._bdf_loaded = True
+            font_path = os.path.join(os.path.dirname(__file__), "fonts", "tom-thumb.bdf")
+            if os.path.exists(font_path):
+                try:
+                    from bdfparser import Font
+                    cls._bdf_font = Font(font_path)
+                except ImportError:
+                    pass
+        return cls._bdf_font
+
     @classmethod
     def get_bitmap(cls, text: str) -> list[list[int]]:
         """Returns a non-animated bitmap for text."""
+        bdf = cls._get_bdf()
+        if bdf and text:
+            drawn = bdf.draw(text)
+            lines = drawn.todata(2)
+            rows = []
+            for i in range(7):
+                if i < len(lines):
+                    rows.append([int(c) for c in lines[i]])
+                else:
+                    rows.append([0] * (len(lines[0]) if lines else 0))
+            return rows
+
         rows = [[] for _ in range(7)]
         for char in text:
             glyph = cls.GLYPHS.get(char.upper(), cls.GLYPHS['?'])
@@ -208,7 +236,7 @@ class LEDSimulator:
         # 1. Prepare segments
         route_text = str(dep['route'])
         headsign_text = dep['headsign']
-        time_text = f"{dep['diff']}m"
+        time_text = "Now" if dep['diff'] <= 0 else f"{dep['diff']}m"
         is_realtime = dep['live']
         
         # 2. Get bitmaps
@@ -340,7 +368,8 @@ class LEDSimulator:
                     if any(d.get("trip_id") == trip_id for d in all_departures): continue
 
                     arr_val = trip.get("arrivalTime") or trip.get("predictedArrivalTime") or trip.get("scheduledArrivalTime")
-                    if not arr_val: continue
+                    if arr_val is None: continue
+
                     if isinstance(arr_val, str):
                         try:
                             dt = datetime.fromisoformat(arr_val.replace("Z", "+00:00"))
@@ -350,12 +379,11 @@ class LEDSimulator:
                     else: arr_time_ms = arr_val * 1000
 
                     # Calculate Offset
-                    # If we are using the local API, the server has already applied the offset
-                    # to the timestamps for hardware compatibility.
+                    # If we are using the local API, the server has already generated a spoofed
+                    # timestamp that incorporates the offset and accounts for clock skew.
                     offset_min = 0
                     if not self.config.use_local_api and sub and sub.time_offset:
                         try:
-                            # Extract numeric value regardless of sign or unit
                             match = re.search(r"(-?\d+)", sub.time_offset)
                             if match:
                                 offset_min = int(match.group(1))
@@ -364,22 +392,15 @@ class LEDSimulator:
                     raw_diff_sec = (arr_time_ms - current_time_ms) / 1000.0
                     raw_mins = int(raw_diff_sec / 60)
                     
-                    # Effective time is Raw - Travel Time.
-                    # If offset is negative (like -7min), adding it subtracts the time.
-                    # If offset is positive (like 7min), we should subtract it.
-                    # Most users (and the configurator) provide a positive "travel time".
                     if offset_min > 0:
                         eff_mins = raw_mins - offset_min
                     else:
-                        eff_mins = raw_mins + offset_min # Adding negative offset subtracts it
+                        eff_mins = raw_mins + offset_min
 
-                    # ALWAYS display effective minutes to match hardware observation
                     display_mins = eff_mins
                     
                     # Filter logic:
-                    # 1. Bus must not have left the stop yet (raw_mins >= -1)
-                    # 2. User must still be able to catch it (eff_mins >= -1)
-                    if raw_mins >= -1 and eff_mins >= -1:
+                    if raw_mins >= -1 and display_mins >= -1:
                         route_name = str(trip.get("routeName") or trip.get("routeShortName") or "")
                         if not route_name:
                             route_name = sub.label.split("-")[0].strip().split()[0] if sub and sub.label else sub.route.split("_")[-1]
@@ -435,8 +456,23 @@ class LEDSimulator:
         deps = self.get_upcoming_departures()
         lines = []
         for d in deps[:3]:
+            route_str = str(d['route'])
+            time_str = "Now" if d['diff'] <= 0 else f"{d['diff']}m"
             live_flag = "{LIVE}" if d['live'] else ""
-            lines.append(f"{d['route']} {d['headsign']} {live_flag}{d['diff']}m")
+            
+            route_w = len(self.microfont.get_bitmap(route_str)[0])
+            time_w = len(self.microfont.get_bitmap(time_str)[0])
+            icon_w = 6 if d['live'] else 0
+            
+            display_width = self.config.panel_width * self.config.num_panels
+            headsign_x_start = route_w + 3
+            headsign_area_w = display_width - headsign_x_start - time_w - (icon_w + 2 if d['live'] else 0)
+            
+            headsign = d['headsign']
+            while headsign and len(self.microfont.get_bitmap(headsign)[0]) > headsign_area_w:
+                headsign = headsign[:-1]
+                
+            lines.append(f"{route_str} {headsign} {live_flag}{time_str}")
         return "\n".join(lines)
 
     def _generate_frame(self, reference_time: Optional[datetime] = None) -> Panel:

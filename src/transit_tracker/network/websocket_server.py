@@ -240,21 +240,51 @@ class TransitServer:
                             except (ValueError, TypeError):
                                 pass
 
-                        # Convert ms to seconds AND subtract offset for hardware compatibility
-                        for key in ["arrivalTime", "predictedArrivalTime", "scheduledArrivalTime"]:
-                            val = arr_copy.get(key)
-                            if isinstance(val, (int, float)):
-                                if val > 10**12: # Milliseconds
-                                    val = int(val // 1000)
-                                arr_copy[key] = val + offset_sec
-                            elif val and isinstance(val, str) and val.isdigit():
-                                # Handle stringified numbers if they occur
-                                ival = int(val)
-                                if ival > 10**12:
-                                    ival = ival // 1000
-                                arr_copy[key] = ival + offset_sec
-                                
-                        all_trips.append(arr_copy)
+                        # Fix for the "Now" Bug: The ESPHome firmware strictly expects 
+                        # `arrivalTime` AND `departureTime`. If the board is configured to 
+                        # display departures, a missing `departureTime` parses as `0` in C++, 
+                        # resulting in a massive negative duration that evaluates to "Now".
+                        # We must conform EXACTLY to the original TJ Horner TypeScript interface.
+
+                        arr_val = arr.get("predictedArrivalTime") or arr.get("scheduledArrivalTime") or arr.get("arrivalTime")
+                        dep_val = arr.get("predictedDepartureTime") or arr.get("scheduledDepartureTime") or arr.get("departureTime") or arr_val
+                        
+                        # Handle strings defensively
+                        if isinstance(arr_val, str) and arr_val.isdigit(): arr_val = int(arr_val)
+                        if isinstance(dep_val, str) and dep_val.isdigit(): dep_val = int(dep_val)
+
+                        if not arr_val: continue
+
+                        # Convert to Unix seconds
+                        if isinstance(arr_val, (int, float)) and arr_val > 10**12:
+                            arr_val = int(arr_val // 1000)
+                        if isinstance(dep_val, (int, float)) and dep_val > 10**12:
+                            dep_val = int(dep_val // 1000)
+
+                        now_ts = int(time.time())
+                        
+                        # The absolute timestamps sent down must be shifted by the offset.
+                        # This creates a "spoofed" Unix timestamp immune to board SNTP clock skew.
+                        spoofed_arrival = now_ts + (arr_val - now_ts) + offset_sec
+                        spoofed_departure = now_ts + (dep_val - now_ts) + offset_sec
+
+                        is_realtime = arr.get("isRealtime") if "isRealtime" in arr else ("predictedArrivalTime" in arr)
+                        route_name = arr.get("routeName") or arr.get("routeShortName") or ""
+                        headsign = arr.get("headsign") or arr.get("tripHeadsign") or "Transit"
+
+                        clean_trip = {
+                            "tripId": str(arr.get("tripId", "")),
+                            "routeId": str(arr_route_id),
+                            "routeName": str(route_name),
+                            "routeColor": str(arr.get("routeColor", "")) if arr.get("routeColor") else None,
+                            "stopId": str(stop_id),
+                            "headsign": str(headsign),
+                            "arrivalTime": int(spoofed_arrival),
+                            "departureTime": int(spoofed_departure),
+                            "isRealtime": bool(is_realtime)
+                        }
+
+                        all_trips.append(clean_trip)
             except Exception as e:
                 print(f"[SERVER] Error fetching arrivals for {stop_id}: {e}")
 

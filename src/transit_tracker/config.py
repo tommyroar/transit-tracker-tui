@@ -81,7 +81,7 @@ class TransitConfig(BaseModel):
     Automatically handles the nested 'transit_tracker' key from the public configurator.
     """
     # Application settings
-    use_local_api: bool = Field(default=True)
+    use_local_api: bool = Field(default=False)
     auto_launch_gui: bool = Field(default=True)
     ntfy_topic: str = Field(default="transit-alerts")
     arrival_threshold_minutes: int = Field(default=5, ge=1)
@@ -110,7 +110,8 @@ class TransitConfig(BaseModel):
             # Force local proxy URL if mode is enabled
             # We use .local hostname instead of localhost so flashed hardware can connect
             self.api_url = "ws://Tommys-Mac-mini.local:8000/"
-        else:
+        elif not self.api_url or tt.base_url != "wss://tt.horner.tj/":
+            # Sync from transit_tracker if api_url is empty or if base_url was explicitly provided
             self.api_url = tt.base_url
             
         self.num_panels = tt.num_panels

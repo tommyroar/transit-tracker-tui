@@ -210,11 +210,11 @@ class TransitServer:
                 arrivals = await self.get_arrivals_cached(clean_stop_id)
                 
                 # Map normalized routeId to its specific subscription for offset processing
-                # We normalize BOTH sides to ensure a match even if prefixes differ
                 route_to_sub = {normalize_id(s.get("routeId")): s for s in stop_subs}
                 relevant_routes = set(route_to_sub.keys())
                 
                 now_ts = int(time.time())
+                found_at_stop = 0
 
                 for arr in arrivals:
                     # Use full IDs for the response to match cloud proxy
@@ -263,34 +263,55 @@ class TransitServer:
                             "departureTime": int(final_departure),
                             "isRealtime": is_realtime
                         })
+                        found_at_stop += 1
+                
+                if found_at_stop > 0:
+                    print(f"[SERVER] Found {found_at_stop} active trips for stop {stop_id}", flush=True)
             except Exception as e:
-                print(f"[SERVER] Error fetching arrivals for {stop_id}: {e}")
+                print(f"[SERVER] Error processing stop {stop_id}: {e}", flush=True)
 
         # 5. SORTING & LAPPING (Original Project Behavior)
         all_trips.sort(key=lambda x: x.get("arrivalTime", 0))
         limit = self.client_limits.get(ws, 3)
         final_trips = all_trips[:limit]
         
-        # 6. BUILD RESPONSE
+        # 6. BUILD RESPONSE (Match TJ Horner protocol exactly)
         response = {
             "event": "schedule",
-            "type": "schedule",
-            "data": {"trips": final_trips},
-            "payload": {
-                "trips": final_trips,
-                "stopId": subs[0]["stopId"] if subs else ""
-            }
+            "data": {"trips": final_trips}
         }
 
-        await ws.send(json.dumps(response))
-        self.messages_processed += 1
-        self.last_broadcast_time = time.time()
-        self.sync_state(last_message=response)
+        try:
+            msg_json = json.dumps(response)
+            addr = getattr(ws, "remote_address", None)
+            if addr and addr[0] != "127.0.0.1":
+                print(f"[SERVER] Sending {len(final_trips)} trips to {addr}: {msg_json[:150]}...", flush=True)
+                
+            await ws.send(msg_json)
+            self.messages_processed += 1
+            self.last_broadcast_time = time.time()
+            self.sync_state(last_message=response)
+        except Exception as e:
+            print(f"[SERVER] Error sending update to {getattr(ws, 'remote_address', 'Unknown')}: {e}", flush=True)
 
     async def broadcast_loop(self):
+        last_heartbeat = 0
         while True:
+            now = time.time()
+            
+            # Send heartbeat every 10 seconds to prevent hardware timeout
+            send_heartbeat = (now - last_heartbeat >= 10)
+            
             # Copy clients to avoid mutation during iteration
             for ws in list(self.clients):
+                # 1. Handle Heartbeat
+                if send_heartbeat:
+                    try:
+                        await ws.send(json.dumps({"event": "heartbeat", "data": None}))
+                    except:
+                        pass
+                
+                # 2. Handle Schedule Updates
                 if ws in self.subscriptions:
                     try:
                         await self.send_update(ws)
@@ -300,6 +321,9 @@ class TransitServer:
                     except Exception as e:
                         print(f"[SERVER] Error updating client {ws.remote_address}: {e}")
             
+            if send_heartbeat:
+                last_heartbeat = now
+
             # Always update heartbeat so GUI knows we are alive
             self.sync_state()
             await asyncio.sleep(self.config.check_interval_seconds)

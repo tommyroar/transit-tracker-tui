@@ -104,6 +104,64 @@ class TransitAPI:
         except Exception as e:
             raise TransitAPIError(f"Failed to fetch stops: {e}")
 
+    @staticmethod
+    def _decode_polyline(encoded: str) -> List[List[float]]:
+        """Decode a Google encoded polyline string into a list of [lng, lat] pairs."""
+        coords = []
+        index = 0
+        lat = 0
+        lng = 0
+        while index < len(encoded):
+            for is_lng in (False, True):
+                shift = 0
+                result = 0
+                while True:
+                    b = ord(encoded[index]) - 63
+                    index += 1
+                    result |= (b & 0x1F) << shift
+                    shift += 5
+                    if b < 0x20:
+                        break
+                delta = ~(result >> 1) if (result & 1) else (result >> 1)
+                if is_lng:
+                    lng += delta
+                else:
+                    lat += delta
+            coords.append([lng / 1e5, lat / 1e5])
+        return coords
+
+    async def get_route_polylines(self, route_id: str) -> Dict[str, Any]:
+        """Fetch route shape polylines and route metadata (color, name)."""
+        clean_id = self._clean_stop_id(route_id)
+        url = f"{self.oba_base_url}/stops-for-route/{urllib.parse.quote(clean_id)}.json"
+        params = {"key": self.oba_key}
+
+        try:
+            response = await self.client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            if data.get("code") == 200:
+                polylines = data["data"]["entry"].get("polylines", [])
+                coords_list = []
+                for pl in polylines:
+                    points = pl.get("points", "")
+                    if points:
+                        coords_list.append(self._decode_polyline(points))
+
+                # Get route info from references
+                routes_ref = {r["id"]: r for r in data["data"]["references"].get("routes", [])}
+                route_info = routes_ref.get(clean_id, {})
+
+                return {
+                    "route_id": route_id,
+                    "name": route_info.get("shortName", ""),
+                    "color": route_info.get("color", ""),
+                    "polylines": coords_list,
+                }
+            return {"route_id": route_id, "name": "", "color": "", "polylines": []}
+        except Exception as e:
+            raise TransitAPIError(f"Failed to fetch polylines for {route_id}: {e}")
+
     async def get_stop(self, stop_id: str) -> Optional[Dict[str, Any]]:
         """Fetches details for a single stop by ID, including lat/lon."""
         clean_stop_id = self._clean_stop_id(stop_id)

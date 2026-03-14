@@ -107,18 +107,18 @@ async def capture_sim_to_image():
                                   
         # Draw Icon
         if is_realtime:
-            icon_bm = sim.microfont.get_bitmap(">")
-            icon_w_actual = len(icon_bm[0])
-            icon_x = time_x - icon_w_actual - 2
-            icon_color = colors["bright_blue"]
-            for r in range(7):
-                for c in range(icon_w_actual):
-                    if icon_bm[r][c]:
+            icon_bm = sim.microfont.get_live_icon_frame(0) # Static for snap
+            icon_x = time_x - 8
+            for r in range(6):
+                for c in range(6):
+                    val = icon_bm[r][c]
+                    if val:
+                        color = colors["white"] if val == 2 else colors["bright_blue"]
                         ix = icon_x + c
                         cv2.rectangle(img,
                                       (ix * scale + 1, (row_y_offset + r) * scale + 1),
                                       ((ix + 1) * scale - 1, (row_y_offset + r + 1) * scale - 1),
-                                      icon_color, -1)
+                                      color, -1)
                                       
         # Draw Headsign
         for r in range(7):

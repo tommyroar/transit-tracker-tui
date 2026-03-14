@@ -709,16 +709,17 @@ function renderTripRow(pixels, dep, elapsedMs, yOff) {{
     }}
   }}
 
-  // Draw Icon (left of time)
+  // Draw LIVE icon
   if (isLive) {{
-    const iconBm = getBitmap(">");
-    const iconWActual = iconBm[0].length;
-    const iconX = timeX - iconWActual - 2;
-    for (let r = 0; r < 7; r++) {{
-      for (let c = 0; c < iconWActual; c++) {{
+    const iconBm = getLiveIconFrame(elapsedMs);
+    const iconX = timeX - 8;
+    for (let r = 0; r < 6; r++) {{
+      for (let c = 0; c < 6; c++) {{
         const ix = iconX + c;
         if (ix >= 0 && ix < W) {{
-          if (iconBm[r][c]) pixels[yOff + r][ix] = COLORS.bright_blue;
+          const val = iconBm[r][c];
+          if (val === 2) pixels[yOff + r][ix] = COLORS.white;
+          else if (val === 1) pixels[yOff + r][ix] = COLORS.bright_blue;
         }}
       }}
     }}

@@ -44,6 +44,32 @@ sequenceDiagram
     Note over Py: logic in websocket_service.py
 ```
 
+## ⛴️ Washington State Ferries (WSF)
+
+The proxy includes specialized support for Washington State Ferries (Agency 95). You can use the `wsf:` prefix for stop and route IDs (e.g., `wsf:7` for Seattle Terminal) for simplified configuration.
+
+### Official Route Abbreviations
+The system automatically maps full route names to official WSDOT abbreviations to optimize space on the LED matrix:
+
+| Route | Abbreviation |
+| :--- | :--- |
+| Seattle / Bainbridge Island | **SEA-BI** |
+| Seattle / Bremerton | **SEA-BR** |
+| Edmonds / Kingston | **ED-KING** |
+| Mukilteo / Clinton | **MUK-CL** |
+| Fauntleroy / Vashon | **F-V** |
+| Fauntleroy / Southworth | **F-S** |
+| Anacortes / San Juan Islands | **ANA-SJ** |
+| Port Townsend / Coupeville | **PT-KEY** |
+
+### Departure vs. Arrival Mode
+For ferry terminals, it is often more useful to know when the boat is **leaving** the dock. You can toggle this globally or per-profile in your configuration:
+
+```yaml
+# Show when the ferry is leaving the dock
+time_display: departure 
+```
+
 ## 📦 Installation
 
 This project is built and managed using `uv`. To install it globally as a self-contained command-line tool, run the following from the project directory:

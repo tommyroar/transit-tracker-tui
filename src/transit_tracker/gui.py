@@ -1,14 +1,21 @@
 import json
 import os
 import subprocess
+import threading
 import time
 from datetime import datetime
+from typing import Dict, List, Optional
 
 import rumps
 
 from .cli import PLIST_NAME
-from .config import list_profiles, set_last_config_path, get_last_config_path
-from .network.websocket_server import SERVICE_STATE_FILE
+from .config import TransitConfig, list_profiles, set_last_config_path, get_last_config_path
+from .network.websocket_server import (
+    SERVICE_STATE_FILE,
+    get_service_state,
+    get_last_service_update,
+)
+from .transit_api import TransitAPI
 
 
 class TransitTrackerApp(rumps.App):
@@ -22,7 +29,6 @@ class TransitTrackerApp(rumps.App):
         
         # Profile Switcher
         self.profiles_menu = rumps.MenuItem("👥 Profiles")
-        # Initialize with a dummy item to ensure it's not disabled
         self.profiles_menu.add(rumps.MenuItem("Loading..."))
         
         # Rate Limit Alert
@@ -49,12 +55,53 @@ class TransitTrackerApp(rumps.App):
             self.shutdown_item
         ]
         
+        self.api = TransitAPI()
+        self.arrivals_cache = {} # stop_id -> list of arrivals
+        self.cache_lock = threading.Lock()
+        
         self.timer = rumps.Timer(self.update_state, 2)
         self.timer.start()
+        
+        # Background thread for arrivals fetching (so we don't block the UI)
+        self.bg_thread = threading.Thread(target=self.bg_fetch_loop, daemon=True)
+        self.bg_thread.start()
+        
         self.startup_time = time.time()
         self.last_client_ids = None
         self.is_rate_limited = False
         self.last_profiles = []
+        self.last_update_ts = 0
+
+    def bg_fetch_loop(self):
+        """Periodically fetches arrivals for all stops in all profiles."""
+        import asyncio
+        
+        async def fetch():
+            while True:
+                profiles = list_profiles()
+                all_stops = set()
+                for p_path in profiles:
+                    try:
+                        cfg = TransitConfig.load(p_path)
+                        for sub in cfg.subscriptions:
+                            all_stops.add(sub.stop)
+                    except:
+                        pass
+                
+                for stop_id in all_stops:
+                    try:
+                        arrivals = await self.api.get_arrivals(stop_id)
+                        with self.cache_lock:
+                            self.arrivals_cache[stop_id] = arrivals
+                    except:
+                        pass
+                
+                # Refresh cache every 60 seconds
+                await asyncio.sleep(60)
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(fetch())
 
     def update_state(self, _):
         try:
@@ -95,6 +142,7 @@ class TransitTrackerApp(rumps.App):
                         
                         last_ts = state.get("last_update", 0)
                         if last_ts > 0:
+                            self.last_update_ts = last_ts
                             last_update_str = datetime.fromtimestamp(last_ts).strftime('%H:%M:%S')
                         
                         start_ts = state.get("start_time", 0)
@@ -117,25 +165,59 @@ class TransitTrackerApp(rumps.App):
             
             # 4. Update Profiles Menu
             profiles = list_profiles()
-            if profiles != self.last_profiles:
-                print(f"[GUI] Found {len(profiles)} profiles. Updating menu.")
+            # We rebuild the profiles menu if profiles list changed OR every 10 seconds to refresh arrivals
+            # (Rumps is a bit limited for dynamic sub-items, so clearing/rebuilding is simplest)
+            now = time.time()
+            if profiles != self.last_profiles or int(now) % 10 == 0:
                 self.profiles_menu.clear()
                 if not profiles:
                     self.profiles_menu.add(rumps.MenuItem("No profiles found"))
                 else:
                     for p_path in profiles:
-                        name = os.path.basename(p_path)
-                        item = rumps.MenuItem(name, callback=self.switch_profile)
-                        item.state = 1 if p_path == current_config_path else 0
-                        item.p_path = p_path # Store path in item
-                        print(f"[GUI] Adding profile: {name}")
-                        self.profiles_menu.add(item)
+                        filename = os.path.basename(p_path)
+                        is_active = p_path == current_config_path
+                        prefix = "● " if is_active else "  "
+                        
+                        # Parent Profile Item
+                        profile_root = rumps.MenuItem(f"{prefix}{filename}")
+                        
+                        # Add a callback to switch to this profile
+                        profile_root.set_callback(self.switch_profile)
+                        profile_root.p_path = p_path
+                        profile_root.state = 1 if is_active else 0
+                        
+                        # Add Arrivals to the sub-menu of this profile
+                        try:
+                            cfg = TransitConfig.load(p_path)
+                            with self.cache_lock:
+                                for sub in cfg.subscriptions:
+                                    arrivals = self.arrivals_cache.get(sub.stop, [])
+                                    next_bus = "..."
+                                    
+                                    # Filter for route
+                                    route_arrs = [a for a in arrivals if a.get("routeId") == sub.route or a.get("routeName") == sub.route.split(":")[-1]]
+                                    if not route_arrs and arrivals: route_arrs = arrivals
+                                    
+                                    if route_arrs:
+                                        at = route_arrs[0].get("arrivalTime")
+                                        if at:
+                                            if at > 10**12: at //= 1000
+                                            wait = int((at - time.time()) / 60)
+                                            next_bus = f"{wait}m" if wait >= 0 else "Left"
+                                    
+                                    profile_root.add(rumps.MenuItem(f"{sub.label}: {next_bus}"))
+                        except:
+                            profile_root.add(rumps.MenuItem("Error loading stops"))
+                        
+                        # Add metadata info
+                        profile_root.add(rumps.separator)
+                        profile_root.add(rumps.MenuItem(f"File: {p_path}"))
+                        if is_active:
+                            refresh_str = datetime.fromtimestamp(self.last_update_ts).strftime('%H:%M:%S') if self.last_update_ts else "Never"
+                            profile_root.add(rumps.MenuItem(f"Last Refresh: {refresh_str}"))
+                        
+                        self.profiles_menu.add(profile_root)
                 self.last_profiles = profiles
-            else:
-                # Just update checkmarks if profiles haven't changed
-                for item_name, item in self.profiles_menu.items():
-                    if hasattr(item, 'p_path'):
-                        item.state = 1 if item.p_path == current_config_path else 0
 
             # 5. Update the Clients Sub-menu and its Title
             self.clients_menu.title = f"🛜 Clients ({client_count})"
@@ -167,11 +249,10 @@ class TransitTrackerApp(rumps.App):
             pass
 
     def switch_profile(self, sender):
-        p_path = sender.p_path
+        p_path = getattr(sender, "p_path", None)
+        if not p_path: return
         print(f"[GUI] Switching to profile: {p_path}")
         set_last_config_path(p_path)
-        # The proxy server (websocket_server) will detect this change 
-        # via its data_refresh_loop and hot-reload.
         rumps.notification("Transit Tracker", "Profile Switched", f"Active: {os.path.basename(p_path)}")
 
     def restart_service(self, _):

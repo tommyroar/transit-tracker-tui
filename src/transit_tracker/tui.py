@@ -32,8 +32,11 @@ from .hardware import (
 )
 from .simulator import async_run_simulator
 from .transit_api import TransitAPI
-
-SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "service_state.json")
+from .network.websocket_server import (
+    SERVICE_STATE_FILE,
+    get_service_state,
+    get_last_service_update,
+)
 
 def view_config_diff(config: TransitConfig, config_path: str, console: Console):
     """Shows a diff between in-memory config and on-disk config."""
@@ -131,23 +134,6 @@ def view_service_logs(console: Console):
     except Exception as e:
         rprint(f"[red]Error reading logs: {e}[/red]")
         time.sleep(2)
-
-def get_service_state() -> Dict[str, Any]:
-    if os.path.exists(SERVICE_STATE_FILE):
-        try:
-            with open(SERVICE_STATE_FILE, "r") as f:
-                state = json.load(f)
-                return state
-        except Exception:
-            pass
-    return {}
-
-def get_last_service_update() -> str:
-    state = get_service_state()
-    ts = state.get("last_update")
-    if ts:
-        return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))
-    return "Never"
 
 def pick_file(mode="load", default_path=None):
     """Opens a native file chooser dialog."""
@@ -602,6 +588,123 @@ async def ask_with_live_dashboard(title, choices, config, config_path, console, 
                 pass
             last_state = new_state
 
+async def profile_detail_submenu(config_path: str, console: Console):
+    """Submenu for a specific profile to show its stops and arrivals."""
+    config = TransitConfig.load(config_path)
+    api = TransitAPI()
+    try:
+        while True:
+            state = get_service_state()
+            last_refresh = get_last_service_update()
+            
+            # Build arrivals table
+            table = Table(title=f"Profile: {os.path.basename(config_path)}", header_style="bold cyan")
+            table.add_column("Stop / Label", style="white")
+            table.add_column("Route", style="cyan")
+            table.add_column("Next Arrival", style="green")
+            table.add_column("Status", style="magenta")
+
+            # Fetch unique stops to be efficient
+            unique_stops = {sub.stop for sub in config.subscriptions}
+            arrivals_cache = {}
+            
+            # Show a progress message since this can take a moment
+            with console.status("[bold green]Fetching arrivals..."):
+                for stop_id in unique_stops:
+                    try:
+                        arrivals = await api.get_arrivals(stop_id)
+                        # Sort by arrival time
+                        arrivals.sort(key=lambda x: x.get("arrivalTime") or 0)
+                        arrivals_cache[stop_id] = arrivals
+                    except Exception as e:
+                        arrivals_cache[stop_id] = []
+            
+            for sub in config.subscriptions:
+                arrivals = arrivals_cache.get(sub.stop, [])
+                next_bus = "No data"
+                status = "N/A"
+                
+                # Filter arrivals for THIS specific route if possible
+                route_arrivals = [a for a in arrivals if a.get("routeId") == sub.route or a.get("routeName") == sub.route.split(":")[-1]]
+                if not route_arrivals and arrivals:
+                    # Fallback to any arrival at this stop if route match fails
+                    route_arrivals = arrivals
+                
+                if route_arrivals:
+                    arr = route_arrivals[0]
+                    at = arr.get("arrivalTime")
+                    if at:
+                        # OBA usually returns milliseconds, convert to seconds
+                        if at > 10**12: at //= 1000
+                        wait_min = int((at - time.time()) / 60)
+                        
+                        if wait_min < 0:
+                            next_bus = "Left"
+                        else:
+                            next_bus = f"{wait_min} min"
+                        
+                        status = "Realtime" if arr.get("isRealtime") else "Scheduled"
+                
+                table.add_row(sub.label, sub.route, next_bus, status)
+
+            console.clear()
+            console.print(table)
+            
+            # Service info footer
+            footer = Table.grid(expand=True)
+            footer.add_column(style="dim")
+            footer.add_column(justify="right", style="yellow")
+            footer.add_row(
+                f"Config: {config_path}",
+                f"Last Refresh: {last_refresh}"
+            )
+            console.print(footer)
+            console.print("\n")
+
+            action = await questionary.select(
+                "Profile Actions:",
+                choices=[
+                    "Refresh",
+                    "Activate Profile (Set as Default)",
+                    "Back"
+                ]
+            ).ask_async()
+
+            if not action or action == "Back":
+                break
+            elif action == "Activate Profile (Set as Default)":
+                set_last_config_path(config_path)
+                console.print(f"[bold green]✓ Activated {os.path.basename(config_path)}[/bold green]")
+                console.print("[dim]The background service will hot-reload automatically.[/dim]")
+                time.sleep(2)
+    finally:
+        await api.close()
+
+async def profiles_menu(console: Console):
+    """Menu to list and manage profiles."""
+    while True:
+        profiles = list_profiles()
+        if not profiles:
+            console.print("[yellow]No profile (.yaml) files found in project root or .local/[/yellow]")
+            time.sleep(2)
+            break
+
+        choices = [
+            questionary.Choice(title=f"📄 {os.path.basename(p)}", value=p)
+            for p in profiles
+        ]
+        choices.append(questionary.Choice(title="Back", value="back"))
+        
+        selected_path = await questionary.select(
+            "Select a Profile to View:",
+            choices=choices
+        ).ask_async()
+        
+        if not selected_path or selected_path == "back":
+            break
+
+        await profile_detail_submenu(selected_path, console)
+
 async def async_main_menu():
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     
@@ -640,6 +743,7 @@ async def async_main_menu():
 
         choices = [
             "Configurator",
+            "Profiles",
             questionary.Choice("Simulator", disabled="Please load/save config first" if not has_config else None),
             "Service Manager",
             "Restart Service" if "RUNNING" in check_service_status() else None,
@@ -679,6 +783,9 @@ async def async_main_menu():
         if action == "Exit":
             break
             
+        elif action == "Profiles":
+            await profiles_menu(console)
+
         elif action == "Configurator":
             while True:
                 c_action = await ask_with_live_dashboard(
@@ -816,7 +923,6 @@ async def async_main_menu():
                                     if success:
                                         console.print("[green]Base firmware installed. Continuing with device configuration...[/green]")
                                         # Give device a moment to reboot
-                                        import time
                                         time.sleep(3)
                                         flash_hardware(selected_port, config)
                                     else:

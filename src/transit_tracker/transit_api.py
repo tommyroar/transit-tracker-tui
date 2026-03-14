@@ -217,20 +217,25 @@ class TransitAPI:
                     route_id = arr["routeId"]
                     route_info = routes.get(route_id, {})
 
-                    predicted = arr.get("predictedArrivalTime")
-                    scheduled = arr.get("scheduledArrivalTime")
+                    predicted_arr = arr.get("predictedArrivalTime")
+                    scheduled_arr = arr.get("scheduledArrivalTime")
+                    predicted_dep = arr.get("predictedDepartureTime")
+                    scheduled_dep = arr.get("scheduledDepartureTime")
                     
                     # If predicted is 0 or None, it means no real-time data available
-                    is_realtime = bool(predicted and predicted > 0)
+                    is_realtime = bool(predicted_arr and predicted_arr > 0) or bool(predicted_dep and predicted_dep > 0)
                     
                     results.append(
                         {
                             "tripId": arr["tripId"],
                             "routeId": route_id,
                             "stopId": stop_id,
-                            "arrivalTime": (predicted if is_realtime else scheduled),
-                            "predictedArrivalTime": predicted if predicted and predicted > 0 else None,
-                            "scheduledArrivalTime": scheduled,
+                            "arrivalTime": (predicted_arr if (predicted_arr and predicted_arr > 0) else scheduled_arr),
+                            "departureTime": (predicted_dep if (predicted_dep and predicted_dep > 0) else scheduled_dep),
+                            "predictedArrivalTime": predicted_arr if predicted_arr and predicted_arr > 0 else None,
+                            "scheduledArrivalTime": scheduled_arr,
+                            "predictedDepartureTime": predicted_dep if predicted_dep and predicted_dep > 0 else None,
+                            "scheduledDepartureTime": scheduled_dep,
                             "routeName": route_info.get("shortName")
                             or arr.get("routeShortName"),
                             "headsign": arr.get("tripHeadsign"),

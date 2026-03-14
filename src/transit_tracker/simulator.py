@@ -59,6 +59,10 @@ class MicroFont:
         'm': [0x00, 0x00, 0x1A, 0x15, 0x15, 0x15, 0x15],
         '.': [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04],
         '-': [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00],
+        '>': [0x10, 0x08, 0x04, 0x08, 0x10, 0x00, 0x00],
+        '(': [0x04, 0x08, 0x08, 0x08, 0x08, 0x08, 0x04],
+        ')': [0x08, 0x04, 0x04, 0x04, 0x04, 0x04, 0x08],
+        '/': [0x01, 0x02, 0x04, 0x08, 0x10, 0x00, 0x00],
         '?': [0x0E, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04],
     }
 
@@ -304,19 +308,16 @@ class LEDSimulator:
                 
         # Draw Icon (left of time)
         if is_realtime:
-            icon_bm = self.microfont.get_live_icon_frame(elapsed)
-            icon_x = time_x - 8 # 2px gap + 6px icon
-            icon_color = "white"
-            icon_color_dark = "bright_blue"
-            for r in range(6):
-                for c in range(6):
+            icon_bm = self.microfont.get_bitmap(">")
+            icon_w_actual = len(icon_bm[0])
+            icon_x = time_x - icon_w_actual - 2
+            icon_color = "bright_blue"
+            for r in range(7):
+                for c in range(icon_w_actual):
                     ix = icon_x + c
                     if 0 <= ix < display_width:
-                        val = icon_bm[r][c]
-                        if val == 2:
+                        if icon_bm[r][c]:
                             canvas[r][ix] = icon_color
-                        elif val == 1:
-                            canvas[r][ix] = icon_color_dark
 
         # Draw Headsign (with clipping and scroll)
         for r in range(7):
@@ -338,6 +339,20 @@ class LEDSimulator:
                     line.append("·", style="dim black")
             rich_lines.append(line)
         return rich_lines
+
+    def normalize_id(self, item_id: str) -> str:
+        """Strip internal feed prefix and handle WSF special cases."""
+        if not item_id: return ""
+        s_id = str(item_id)
+        if s_id.startswith("wsf:"):
+            return s_id.replace("wsf:", "95_")
+            
+        if ":" in s_id and "_" in s_id:
+            c_idx = s_id.find(":")
+            u_idx = s_id.find("_")
+            if c_idx < u_idx:
+                return s_id[c_idx+1:]
+        return s_id
 
     def get_upcoming_departures(self, reference_time: Optional[datetime] = None) -> list[dict]:
         """Returns a list of sorted departures currently being tracked."""
@@ -361,39 +376,48 @@ class LEDSimulator:
                 })
         else:
             live_data = self.state.get("live")
-            if live_data and (now_ts - live_data.get("timestamp", 0) <= 300):
+            if live_data and (now_ts - live_data.get("timestamp", 0) <= 600): # Increased to 10m
                 for trip in live_data.get("trips", []):
-                    # Filter
-                    trip_route_id = trip.get("routeId", "")
-                    trip_stop_id = trip.get("stopId", "")
+                    # Filter using normalized IDs
+                    trip_route_id = self.normalize_id(trip.get("routeId", ""))
+                    trip_stop_id = self.normalize_id(trip.get("stopId", ""))
+                    
                     sub = None
                     for s in self.config.subscriptions:
-                        if (s.route == trip_route_id or s.route.split(":")[-1] == trip_route_id or (trip_route_id and trip_route_id.split(":")[-1] == s.route)) and \
-                           (s.stop == trip_stop_id or s.stop.split(":")[-1] == trip_stop_id or (trip_stop_id and trip_stop_id.split(":")[-1] == s.stop)):
+                        sub_route_id = self.normalize_id(s.route)
+                        sub_stop_id = self.normalize_id(s.stop)
+                        
+                        if (sub_route_id == trip_route_id) and (sub_stop_id == trip_stop_id):
                             sub = s
                             break
+                    
                     if not sub: continue
                     trip_id = trip.get("tripId")
                     if not trip_id: continue
                     if any(d.get("trip_id") == trip_id for d in all_departures): continue
 
                     arr_val = trip.get("arrivalTime") or trip.get("predictedArrivalTime") or trip.get("scheduledArrivalTime")
+                    dep_val = trip.get("departureTime") or trip.get("predictedDepartureTime") or trip.get("scheduledDepartureTime") or arr_val
+                    
                     if arr_val is None: continue
+                    
+                    display_mode = getattr(self.config, "time_display", "arrival")
+                    base_val = dep_val if display_mode == "departure" else arr_val
 
-                    if isinstance(arr_val, str):
+                    if isinstance(base_val, str):
                         try:
-                            dt = datetime.fromisoformat(arr_val.replace("Z", "+00:00"))
-                            arr_time_ms = int(dt.timestamp() * 1000)
+                            dt = datetime.fromisoformat(base_val.replace("Z", "+00:00"))
+                            base_time_ms = int(dt.timestamp() * 1000)
                         except ValueError: continue
-                    elif arr_val > 10**12: arr_time_ms = arr_val
-                    else: arr_time_ms = arr_val * 1000
+                    elif base_val > 10**12: base_time_ms = base_val
+                    else: base_time_ms = base_val * 1000
 
                     # Calculate Offset
                     # BOTH Local and Cloud proxies now apply offsets on the server-side
                     # as part of the TJ Horner protocol alignment. The simulator (like the HW)
                     # should now treat the arrivalTime as the 'final' display time.
                     
-                    raw_diff_sec = (arr_time_ms - current_time_ms) / 1000.0
+                    raw_diff_sec = (base_time_ms - current_time_ms) / 1000.0
                     display_mins = int(raw_diff_sec / 60)
                     
                     # Filter logic:

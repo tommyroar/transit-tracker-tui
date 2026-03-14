@@ -434,6 +434,10 @@ const GLYPHS = {{
   'm':[0x00,0x00,0x1A,0x15,0x15,0x15,0x15],
   '.':[0x00,0x00,0x00,0x00,0x00,0x00,0x04],
   '-':[0x00,0x00,0x00,0x1F,0x00,0x00,0x00],
+  '>':[0x10,0x08,0x04,0x08,0x10,0x00,0x00],
+  '(':[0x04,0x08,0x08,0x08,0x08,0x08,0x04],
+  ')':[0x08,0x04,0x04,0x04,0x04,0x04,0x08],
+  '/':[0x01,0x02,0x04,0x08,0x10,0x00,0x00],
   '?':[0x0E,0x11,0x01,0x02,0x04,0x00,0x04],
 }};
 
@@ -705,17 +709,16 @@ function renderTripRow(pixels, dep, elapsedMs, yOff) {{
     }}
   }}
 
-  // Draw LIVE icon
+  // Draw Icon (left of time)
   if (isLive) {{
-    const iconBm = getLiveIconFrame(elapsedMs);
-    const iconX = timeX - 8;
-    for (let r = 0; r < 6; r++) {{
-      for (let c = 0; c < 6; c++) {{
+    const iconBm = getBitmap(">");
+    const iconWActual = iconBm[0].length;
+    const iconX = timeX - iconWActual - 2;
+    for (let r = 0; r < 7; r++) {{
+      for (let c = 0; c < iconWActual; c++) {{
         const ix = iconX + c;
         if (ix >= 0 && ix < W) {{
-          const val = iconBm[r][c];
-          if (val === 2) pixels[yOff + r][ix] = COLORS.white;
-          else if (val === 1) pixels[yOff + r][ix] = COLORS.bright_blue;
+          if (iconBm[r][c]) pixels[yOff + r][ix] = COLORS.bright_blue;
         }}
       }}
     }}

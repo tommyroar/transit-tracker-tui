@@ -70,6 +70,7 @@ class TransitSubscription(BaseModel):
     route: str
     stop: str
     label: str
+    direction: Optional[str] = None
     time_offset: str = "0min"
 
 
@@ -82,6 +83,7 @@ class TransitStop(BaseModel):
     stop_id: str
     time_offset: str = "0min"
     label: Optional[str] = None
+    direction: Optional[str] = None
     routes: List[str] = Field(default_factory=list)
 
     @field_validator("time_offset")
@@ -176,6 +178,7 @@ class TransitConfig(BaseModel):
                         route=route,
                         stop=stop.stop_id,
                         label=stop.label or f"Route {route}",
+                        direction=stop.direction,
                         time_offset=stop.time_offset,
                     )
                 )

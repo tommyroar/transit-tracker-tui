@@ -12,6 +12,23 @@ from ..transit_api import TransitAPI
 
 SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "service_state.json")
 
+def get_service_state() -> Dict[str, Any]:
+    if os.path.exists(SERVICE_STATE_FILE):
+        try:
+            with open(SERVICE_STATE_FILE, "r") as f:
+                state = json.load(f)
+                return state
+        except Exception:
+            pass
+    return {}
+
+def get_last_service_update() -> str:
+    state = get_service_state()
+    ts = state.get("last_update")
+    if ts:
+        return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))
+    return "Never"
+
 class TransitServer:
     def __init__(self, config: TransitConfig):
         self.config = config
@@ -114,9 +131,13 @@ class TransitServer:
         return s_id
 
     def apply_abbreviations(self, name: str) -> str:
-        """Applies route name abbreviation rules from config."""
+        """Applies route name abbreviation rules and fixes arrow characters."""
         if not name:
             return name
+        
+        # Replace arrow symbols with ">" for better display compatibility
+        name = name.replace("->", ">").replace("\u2192", ">")
+        
         for abbr in self.config.transit_tracker.abbreviations:
             if abbr.original.lower() == name.lower():
                 return abbr.short
@@ -235,26 +256,41 @@ class TransitServer:
                 relevant_routes = set(route_to_sub.keys())
                 
                 now_ts = int(time.time())
+                display_mode = getattr(self.config, "time_display", "arrival")
+                
                 for arr in arrivals:
                     full_route_id = arr.get("routeId", "")
                     normalized_route_id = self.normalize_id(full_route_id)
                     
                     is_match = not relevant_routes or "" in relevant_routes or normalized_route_id in relevant_routes
                     if is_match:
-                        arr_val = arr.get("predictedArrivalTime") or arr.get("scheduledArrivalTime") or arr.get("arrivalTime")
-                        dep_val = arr.get("predictedDepartureTime") or arr.get("scheduledDepartureTime") or arr.get("departureTime") or arr_val
-                        if not arr_val: continue
+                        # Use predicted if available, fallback to scheduled
+                        pred_arr = arr.get("predictedArrivalTime")
+                        sched_arr = arr.get("scheduledArrivalTime")
+                        pred_dep = arr.get("predictedDepartureTime")
+                        sched_dep = arr.get("scheduledDepartureTime")
                         
-                        if arr_val > 10**12: arr_val //= 1000
-                        if dep_val > 10**12: dep_val //= 1000
+                        raw_arr = pred_arr if (pred_arr and pred_arr > 0) else sched_arr
+                        raw_dep = pred_dep if (pred_dep and pred_dep > 0) else sched_dep
+                        
+                        if not raw_arr and not raw_dep:
+                            # Try the single 'arrivalTime' field from our own TransitAPI results
+                            raw_arr = arr.get("arrivalTime")
+                            raw_dep = arr.get("departureTime") or raw_arr
+                        
+                        if not raw_arr: continue
+                        
+                        if raw_arr > 10**12: raw_arr //= 1000
+                        if raw_dep and raw_dep > 10**12: raw_dep //= 1000
                         
                         sub = route_to_sub.get(normalized_route_id) or stop_subs[0]
                         offset_sec = sub.get("offset", 0)
                         
-                        final_arrival = arr_val + offset_sec
-                        final_departure = dep_val + offset_sec
+                        # Choose time based on display mode
+                        base_time = raw_dep if display_mode == "departure" else raw_arr
+                        final_display_time = base_time + offset_sec
 
-                        if final_arrival < now_ts - 60: continue
+                        if final_display_time < now_ts - 60: continue
 
                         all_trips.append({
                             "tripId": str(arr.get("tripId", "")),
@@ -262,9 +298,9 @@ class TransitServer:
                             "routeName": self.apply_abbreviations(str(arr.get("routeName") or arr.get("routeShortName") or "")),
                             "routeColor": str(arr.get("routeColor", "")) if arr.get("routeColor") else None,
                             "stopId": str(stop_id),
-                            "headsign": str(arr.get("headsign") or arr.get("tripHeadsign") or "Transit"),
-                            "arrivalTime": int(final_arrival),
-                            "departureTime": int(final_departure),
+                            "headsign": self.apply_abbreviations(str(arr.get("headsign") or arr.get("tripHeadsign") or "Transit")),
+                            "arrivalTime": int(final_display_time),
+                            "departureTime": int((raw_dep or raw_arr) + offset_sec),
                             "isRealtime": bool(arr.get("isRealtime"))
                         })
             except Exception:

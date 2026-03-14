@@ -31,20 +31,24 @@ async def resolve_stop_coordinates(config: TransitConfig) -> List[Dict[str, Any]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         stops = []
-        for stop_cfg, result in zip(config.transit_tracker.stops, results):
+        for stop_cfg, result in zip(config.transit_tracker.stops, results, strict=True):
             if isinstance(result, Exception):
-                print(f"[WEB] Warning: could not fetch stop {stop_cfg.stop_id}: {result}")
+                print(
+                    f"[WEB] Warning: could not fetch stop {stop_cfg.stop_id}: {result}"
+                )
                 continue
             if result is None:
                 print(f"[WEB] Warning: stop {stop_cfg.stop_id} not found")
                 continue
-            stops.append({
-                "stop_id": stop_cfg.stop_id,
-                "name": result["name"],
-                "lat": result["lat"],
-                "lon": result["lon"],
-                "label": stop_cfg.label or result["name"],
-            })
+            stops.append(
+                {
+                    "stop_id": stop_cfg.stop_id,
+                    "name": result["name"],
+                    "lat": result["lat"],
+                    "lon": result["lon"],
+                    "label": stop_cfg.label or result["name"],
+                }
+            )
         return stops
     finally:
         await api.close()
@@ -325,7 +329,11 @@ def generate_simulator_html(config: TransitConfig) -> str:
     pairs_str = ";".join(pairs)
 
     api_url = config.api_url
-    if config.use_local_api and "localhost" not in api_url and "127.0.0.1" not in api_url:
+    if (
+        config.use_local_api
+        and "localhost" not in api_url
+        and "127.0.0.1" not in api_url
+    ):
         api_url = "ws://localhost:8000"
 
     display_width = config.panel_width * config.num_panels
@@ -772,7 +780,9 @@ class TransitWebHandler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0].rstrip("/") or "/"
         content = self.routes.get(path)
         if content is not None:
-            content_type = "application/json" if path.startswith("/api/") else "text/html"
+            content_type = (
+                "application/json" if path.startswith("/api/") else "text/html"
+            )
             self.send_response(200)
             self.send_header("Content-Type", f"{content_type}; charset=utf-8")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -810,8 +820,16 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = 8080
     stops_json = json.dumps(stops, indent=2)
 
     pages = [
-        {"path": "/walkshed", "name": "Walksheds", "description": "Walking distance isochrone map with route lines"},
-        {"path": "/simulator", "name": "LED Simulator", "description": "Web-based HUB75 LED matrix simulator"},
+        {
+            "path": "/walkshed",
+            "name": "Walksheds",
+            "description": "Walking distance isochrone map with route lines",
+        },
+        {
+            "path": "/simulator",
+            "name": "LED Simulator",
+            "description": "Web-based HUB75 LED matrix simulator",
+        },
     ]
     index_html = generate_index_html(pages)
 
@@ -824,10 +842,10 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = 8080
 
     server = HTTPServer((host, port), TransitWebHandler)
     print(f"[WEB] Transit Tracker web server at http://{host}:{port}")
-    print(f"[WEB]   /walkshed   — Walking distance map with route lines")
-    print(f"[WEB]   /simulator  — LED matrix simulator")
-    print(f"[WEB]   /api/stops  — Stop coordinates JSON")
-    print(f"[WEB] Press Ctrl+C to stop")
+    print("[WEB]   /walkshed   — Walking distance map with route lines")
+    print("[WEB]   /simulator  — LED matrix simulator")
+    print("[WEB]   /api/stops  — Stop coordinates JSON")
+    print("[WEB] Press Ctrl+C to stop")
 
     try:
         server.serve_forever()

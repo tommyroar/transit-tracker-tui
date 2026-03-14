@@ -7,6 +7,7 @@ import httpx
 class TransitAPIError(Exception):
     pass
 
+
 class TransitAPI:
     def __init__(self):
         self.oba_base_url = "https://api.pugetsound.onebusaway.org/api/where"
@@ -20,7 +21,7 @@ class TransitAPI:
             colon_idx = stop_id.find(":")
             underscore_idx = stop_id.find("_")
             if colon_idx < underscore_idx:
-                return stop_id[colon_idx + 1:]
+                return stop_id[colon_idx + 1 :]
         return stop_id
 
     async def geocode(self, query: str) -> Optional[Tuple[float, float, str]]:
@@ -28,35 +29,32 @@ class TransitAPI:
         Geocodes a street intersection or address using Nominatim.
         """
         url = "https://nominatim.openstreetmap.org/search"
-        params = {
-            "q": query,
-            "format": "json",
-            "limit": "1"
-        }
+        params = {"q": query, "format": "json", "limit": "1"}
         headers = {"User-Agent": "TransitTracker/1.0"}
-        
+
         try:
             response = await self.client.get(url, params=params, headers=headers)
             response.raise_for_status()
             data = response.json()
             if data:
-                return float(data[0]["lat"]), float(data[0]["lon"]), data[0]["display_name"]
+                return (
+                    float(data[0]["lat"]),
+                    float(data[0]["lon"]),
+                    data[0]["display_name"],
+                )
             return None
         except Exception as e:
-            raise TransitAPIError(f"Geocoding failed: {e}")
+            raise TransitAPIError(f"Geocoding failed: {e}") from e
 
-    async def get_routes_for_location(self, lat: float, lon: float, radius: int = 1500) -> List[Dict[str, Any]]:
+    async def get_routes_for_location(
+        self, lat: float, lon: float, radius: int = 1500
+    ) -> List[Dict[str, Any]]:
         """
         Fetches transit routes within a radius of a location.
         """
         url = f"{self.oba_base_url}/routes-for-location.json"
-        params = {
-            "key": self.oba_key,
-            "lat": lat,
-            "lon": lon,
-            "radius": radius
-        }
-        
+        params = {"key": self.oba_key, "lat": lat, "lon": lon, "radius": radius}
+
         try:
             response = await self.client.get(url, params=params)
             response.raise_for_status()
@@ -65,7 +63,7 @@ class TransitAPI:
                 return data["data"]["list"]
             return []
         except Exception as e:
-            raise TransitAPIError(f"Failed to fetch routes: {e}")
+            raise TransitAPIError(f"Failed to fetch routes: {e}") from e
 
     async def get_stops_for_route(self, route_id: str) -> List[Dict[str, Any]]:
         """
@@ -73,17 +71,18 @@ class TransitAPI:
         """
         url = f"{self.oba_base_url}/stops-for-route/{urllib.parse.quote(route_id)}.json"
         params = {"key": self.oba_key}
-        
+
         try:
             response = await self.client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
             if data.get("code") == 200:
-                # OBA returns stops in 'references.stops' and stop groupings in 'entry.stopGroupings'
+                # OBA returns stops in 'references.stops'
+                # and stop groupings in 'entry.stopGroupings'
                 # We extract stops and directions.
                 stops_data = {s["id"]: s for s in data["data"]["references"]["stops"]}
                 groupings = data["data"]["entry"]["stopGroupings"]
-                
+
                 results = []
                 for grouping in groupings:
                     for stop_group in grouping["stopGroups"]:
@@ -91,18 +90,20 @@ class TransitAPI:
                         for stop_id in stop_group["stopIds"]:
                             stop = stops_data.get(stop_id)
                             if stop:
-                                results.append({
-                                    "id": stop["id"],
-                                    "name": stop["name"],
-                                    "direction": stop.get("direction"),
-                                    "direction_name": direction_name,
-                                    "lat": stop["lat"],
-                                    "lon": stop["lon"]
-                                })
+                                results.append(
+                                    {
+                                        "id": stop["id"],
+                                        "name": stop["name"],
+                                        "direction": stop.get("direction"),
+                                        "direction_name": direction_name,
+                                        "lat": stop["lat"],
+                                        "lon": stop["lon"],
+                                    }
+                                )
                 return results
             return []
         except Exception as e:
-            raise TransitAPIError(f"Failed to fetch stops: {e}")
+            raise TransitAPIError(f"Failed to fetch stops: {e}") from e
 
     @staticmethod
     def _decode_polyline(encoded: str) -> List[List[float]]:
@@ -149,7 +150,9 @@ class TransitAPI:
                         coords_list.append(self._decode_polyline(points))
 
                 # Get route info from references
-                routes_ref = {r["id"]: r for r in data["data"]["references"].get("routes", [])}
+                routes_ref = {
+                    r["id"]: r for r in data["data"]["references"].get("routes", [])
+                }
                 route_info = routes_ref.get(clean_id, {})
 
                 return {
@@ -160,7 +163,9 @@ class TransitAPI:
                 }
             return {"route_id": route_id, "name": "", "color": "", "polylines": []}
         except Exception as e:
-            raise TransitAPIError(f"Failed to fetch polylines for {route_id}: {e}")
+            raise TransitAPIError(
+                f"Failed to fetch polylines for {route_id}: {e}"
+            ) from e
 
     async def get_stop(self, stop_id: str) -> Optional[Dict[str, Any]]:
         """Fetches details for a single stop by ID, including lat/lon."""
@@ -182,16 +187,17 @@ class TransitAPI:
                 }
             return None
         except Exception as e:
-            raise TransitAPIError(f"Failed to fetch stop {stop_id}: {e}")
+            raise TransitAPIError(f"Failed to fetch stop {stop_id}: {e}") from e
 
     async def get_arrivals(self, stop_id: str) -> List[Dict[str, Any]]:
         """
         Fetches real-time arrivals for a specific stop.
         """
         clean_stop_id = self._clean_stop_id(stop_id)
-        url = f"{self.oba_base_url}/arrivals-and-departures-for-stop/{urllib.parse.quote(clean_stop_id)}.json"
+        encoded_id = urllib.parse.quote(clean_stop_id)
+        url = f"{self.oba_base_url}/arrivals-and-departures-for-stop/{encoded_id}.json"
         params = {"key": self.oba_key}
-        
+
         try:
             response = await self.client.get(url, params=params)
             response.raise_for_status()
@@ -199,29 +205,35 @@ class TransitAPI:
             if data.get("code") == 200:
                 arrivals = data["data"]["entry"]["arrivalsAndDepartures"]
                 # Include references for route names/colors if needed
-                routes = {r["id"]: r for r in data["data"]["references"].get("routes", [])}
-                
+                routes = {
+                    r["id"]: r for r in data["data"]["references"].get("routes", [])
+                }
+
                 results = []
                 for arr in arrivals:
                     route_id = arr["routeId"]
                     route_info = routes.get(route_id, {})
-                    
-                    results.append({
-                        "tripId": arr["tripId"],
-                        "routeId": route_id,
-                        "stopId": stop_id,
-                        "arrivalTime": arr.get("predictedArrivalTime") or arr.get("scheduledArrivalTime"),
-                        "predictedArrivalTime": arr.get("predictedArrivalTime"),
-                        "scheduledArrivalTime": arr.get("scheduledArrivalTime"),
-                        "routeName": route_info.get("shortName") or arr.get("routeShortName"),
-                        "headsign": arr.get("tripHeadsign"),
-                        "isRealtime": arr.get("predictedArrivalTime") is not None,
-                        "routeColor": route_info.get("color")
-                    })
+
+                    results.append(
+                        {
+                            "tripId": arr["tripId"],
+                            "routeId": route_id,
+                            "stopId": stop_id,
+                            "arrivalTime": arr.get("predictedArrivalTime")
+                            or arr.get("scheduledArrivalTime"),
+                            "predictedArrivalTime": arr.get("predictedArrivalTime"),
+                            "scheduledArrivalTime": arr.get("scheduledArrivalTime"),
+                            "routeName": route_info.get("shortName")
+                            or arr.get("routeShortName"),
+                            "headsign": arr.get("tripHeadsign"),
+                            "isRealtime": arr.get("predictedArrivalTime") is not None,
+                            "routeColor": route_info.get("color"),
+                        }
+                    )
                 return results
             return []
         except Exception as e:
-            raise TransitAPIError(f"Failed to fetch arrivals: {e}")
+            raise TransitAPIError(f"Failed to fetch arrivals: {e}") from e
 
     async def close(self):
         await self.client.aclose()

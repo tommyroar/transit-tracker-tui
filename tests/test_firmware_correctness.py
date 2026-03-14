@@ -52,7 +52,7 @@ def test_offset_contract_consistency():
     import asyncio
     asyncio.run(server.send_update(ws))
     
-    sent_data = ws.sent["payload"]["trips"][0]
+    sent_data = ws.sent["data"]["trips"][0]
     # The server should have subtracted 2 mins (120s) from the arrival time
     expected_spoofed = arrival_ts - 120
     assert sent_data["arrivalTime"] == expected_spoofed
@@ -61,7 +61,7 @@ def test_offset_contract_consistency():
     config.use_local_api = True
     config.api_url = "ws://localhost:8000"
     sim = LEDSimulator(config)
-    sim.state["live"] = {"trips": ws.sent["payload"]["trips"], "timestamp": time.time()}
+    sim.state["live"] = {"trips": ws.sent["data"]["trips"], "timestamp": time.time()}
     
     deps = sim.get_upcoming_departures(reference_time=datetime.fromtimestamp(now_ts, tz=timezone.utc))
     assert deps[0]["diff"] == 8 # 10m - 2m offset = 8m
@@ -150,7 +150,7 @@ def test_dumb_firmware_compatibility():
     import asyncio
     asyncio.run(server.send_update(ws))
     
-    trip_json = ws.sent["payload"]["trips"][0]
+    trip_json = ws.sent["data"]["trips"][0]
     
     # --- THE DUMB FIRMWARE MODEL ---
     # This represents exactly what the C++ code on the ESP32 does:

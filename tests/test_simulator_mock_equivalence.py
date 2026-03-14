@@ -67,7 +67,7 @@ async def test_simulator_identity():
     server.cache["1_11920"] = (now_ts, [get_mock_oba_response(now_ms)[1]])
     
     await server.send_update(ws)
-    local_json = ws.sent["payload"]["trips"]
+    local_json = ws.sent["data"]["trips"]
     
     # --- 2. CLOUD PROXY LOGIC (Simulated Based on Source Code) ---
     # The cloud proxy does: arrivalTime: new Date(trip.arrivalTime).getTime() / 1000 + offset

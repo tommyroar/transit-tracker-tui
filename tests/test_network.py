@@ -46,7 +46,7 @@ async def test_server_broadcast_updates(mock_config):
     ws.send.assert_called_once()
     sent_data = json.loads(ws.send.call_args[0][0])
     assert sent_data["event"] == "schedule"
-    assert sent_data["payload"]["trips"][0]["tripId"] == "trip_123"
+    assert sent_data["data"]["trips"][0]["tripId"] == "trip_123"
 
 @pytest.mark.asyncio
 async def test_fair_diversity_capping(mock_config):
@@ -85,7 +85,7 @@ async def test_fair_diversity_capping(mock_config):
 
     ws.send.assert_called_once()
     sent_data = json.loads(ws.send.call_args[0][0])
-    trips = sent_data["payload"]["trips"]
+    trips = sent_data["data"]["trips"]
     
     # Diversity capping should pick:
     # 1. stop1_trip1 (soonest for stop1)

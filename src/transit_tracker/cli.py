@@ -1,14 +1,14 @@
-import sys
 import argparse
 import asyncio
 import os
-import json
+import sys
 import time
-from .tui import run_cli, PLIST_NAME, PLIST_PATH
-from .network.websocket_service import run_service as run_client
-from .network.websocket_server import run_server
 
 from .config import TransitConfig, get_last_config_path
+from .network.websocket_server import run_server
+from .network.websocket_service import run_service as run_client
+from .tui import PLIST_NAME, PLIST_PATH, run_cli
+
 
 def get_service_status():
     """Returns True if the service is currently running."""
@@ -35,7 +35,7 @@ def manage_service(action: str):
             
     elif action == "start":
         if get_service_status():
-            print(f"[bold yellow]Service is already running.[/bold yellow]")
+            print("[bold yellow]Service is already running.[/bold yellow]")
             return
         if sys.platform == "darwin":
             if os.path.exists(PLIST_PATH):
@@ -52,7 +52,7 @@ def manage_service(action: str):
 
     elif action == "stop":
         if not get_service_status():
-            print(f"Service is not running.")
+            print("Service is not running.")
             return
         if sys.platform == "darwin":
             print(f"Stopping {label} via launchctl...")

@@ -2,10 +2,12 @@ import asyncio
 import json
 import os
 import time
+from typing import Any, Dict, List, Set, Tuple
+
 import websockets
-from typing import Dict, Set, List, Any, Tuple
-from ..transit_api import TransitAPI
+
 from ..config import TransitConfig
+from ..transit_api import TransitAPI
 
 SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "service_state.json")
 
@@ -146,7 +148,7 @@ class TransitServer:
                                 pairs.append({"routeId": r_id, "stopId": s_id, "offset": offset})
                     elif pairs_str == "":
                         # FALLBACK: Use server-side config if board sends empty string
-                        print(f"[SERVER] Client sent empty routeStopPairs, using server defaults.")
+                        print("[SERVER] Client sent empty routeStopPairs, using server defaults.")
                         for sub in self.config.subscriptions:
                             # Map the human-readable 'time_offset' to seconds
                             off_sec = 0

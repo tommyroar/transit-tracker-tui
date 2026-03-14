@@ -1,6 +1,8 @@
-import httpx
 import urllib.parse
-from typing import List, Tuple, Dict, Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+import httpx
+
 
 class TransitAPIError(Exception):
     pass

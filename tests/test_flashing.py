@@ -1,7 +1,10 @@
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import MagicMock, patch
-from transit_tracker.config import TransitConfig, TransitStop, TransitTrackerSettings
-from transit_tracker.hardware import flash_hardware, EntityType
+
+from transit_tracker.config import TransitConfig, TransitStop
+from transit_tracker.hardware import EntityType, flash_hardware
+
 
 def test_config_serialization_for_hardware():
     """

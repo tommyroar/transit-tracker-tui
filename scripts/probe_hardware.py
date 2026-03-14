@@ -1,6 +1,3 @@
-import socket
-import json
-import sys
 
 def probe_esphome_rpc(ip, port=80):
     """Probes for the ESPHome JSON-RPC signature."""

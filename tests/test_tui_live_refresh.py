@@ -1,8 +1,11 @@
-import pytest
 import asyncio
-from unittest.mock import MagicMock, patch, AsyncMock
-from transit_tracker.tui import ask_with_live_dashboard
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 from transit_tracker.config import TransitConfig
+from transit_tracker.tui import ask_with_live_dashboard
+
 
 @pytest.mark.asyncio
 async def test_live_dashboard_refresh():

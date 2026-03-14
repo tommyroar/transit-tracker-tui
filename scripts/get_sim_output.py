@@ -1,9 +1,11 @@
 import asyncio
-import sys
 import os
+import sys
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 from transit_tracker.config import TransitConfig
 from transit_tracker.simulator import LEDSimulator
+
 
 async def main():
     config = TransitConfig.load(".local/accurate_config.yaml")

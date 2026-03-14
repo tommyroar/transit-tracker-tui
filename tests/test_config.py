@@ -1,12 +1,14 @@
 import os
-from pydantic import ValidationError
-import pytest
 import sys
+
+import pytest
+from pydantic import ValidationError
 
 # Add src to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from transit_tracker.config import TransitConfig, TransitSubscription
+from transit_tracker.config import TransitConfig
+
 
 def test_default_config():
     config = TransitConfig()

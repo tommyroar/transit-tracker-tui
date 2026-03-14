@@ -1,5 +1,6 @@
+
 import Quartz
-import sys
+
 
 def check_window_visibility(app_name):
     # Get all windows on the screen

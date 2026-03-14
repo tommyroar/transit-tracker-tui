@@ -1,10 +1,12 @@
-import os
-import json
-import time
 import asyncio
+import json
+import os
+
 import pytest
-from transit_tracker.config import TransitConfig, TransitTrackerSettings
+
+from transit_tracker.config import TransitConfig
 from transit_tracker.network.websocket_server import TransitServer
+
 
 @pytest.mark.asyncio
 async def test_service_isolation_from_disk_changes():

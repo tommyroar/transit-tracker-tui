@@ -1,7 +1,8 @@
-import pytest
 import json
-import time
 from unittest.mock import patch
+
+import pytest
+
 from transit_tracker.config import TransitConfig
 from transit_tracker.hardware import load_hardware_config
 

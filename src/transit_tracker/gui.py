@@ -1,12 +1,14 @@
-import os
 import json
-import rumps
+import os
 import subprocess
 import time
-import sys
 from datetime import datetime
-from .network.websocket_server import SERVICE_STATE_FILE
+
+import rumps
+
 from .cli import PLIST_NAME
+from .network.websocket_server import SERVICE_STATE_FILE
+
 
 class TransitTrackerApp(rumps.App):
     def __init__(self):

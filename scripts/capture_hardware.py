@@ -1,9 +1,9 @@
-import time
 import json
-import os
-import sys
-from typing import Dict, Any, Optional
-from transit_tracker.hardware import list_serial_ports, ESPHomeFlasher, EntityType
+import time
+from typing import Any, Dict, Optional
+
+from transit_tracker.hardware import EntityType, ESPHomeFlasher, list_serial_ports
+
 
 class CapturingFlasher(ESPHomeFlasher):
     def __init__(self, port_name: str, baudrate: int = 115200):

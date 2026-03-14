@@ -34,4 +34,21 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
+    "ruff>=0.9.9",
 ]
+
+[tool.ruff]
+# Target Python 3.14 as specified in [project]
+target-version = "py313" # Ruff doesn't support py314 yet, so we use the closest
+line-length = 88
+
+[tool.ruff.lint]
+# Select rules: E (Error), F (Pyflakes), I (isort), B (flake8-bugbear)
+select = ["E", "F", "I", "B"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

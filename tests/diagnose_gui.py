@@ -1,7 +1,7 @@
-import os
 import json
-import time
+import os
 import sys
+import time
 from unittest.mock import MagicMock, patch
 
 # Add src to path
@@ -39,6 +39,7 @@ sys.modules['rumps'] = mock_rumps
 
 # 2. Import the actual app
 from transit_tracker.gui import TransitTrackerApp
+
 
 def test_menu_integrity():
     print("--- GUI Menu Verification ---")

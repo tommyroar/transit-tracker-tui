@@ -6,6 +6,17 @@ This document provides a comprehensive overview of the testing strategy for the 
 
 We employ a multi-layered testing strategy, moving from isolated logic to full-system simulations.
 
+### 0. Static Analysis & Linting (Guardrails)
+*   **Tool:** `ruff`
+*   **Purpose:** Ensures code quality, consistent formatting, and identifies logical errors (unused imports, undefined variables) before runtime.
+*   **Key Checks:**
+    *   **Linting:** `uv run ruff check .`
+    *   **Formatting:** `uv run ruff format .`
+*   **Errors Caught:**
+    *   `F401`: Unused imports that bloat the service.
+    *   `E501`: Overly long lines that reduce maintainability of TUI/Simulator logic.
+    *   `I001`: Unsorted imports causing merge conflicts.
+
 ### 1. Unit & Core Logic (Base)
 *   **Files:** `test_config.py`, `test_cli.py`, `test_tui_wizards.py`
 *   **Purpose:** Validates individual components like configuration parsing, TUI state transitions, and CLI argument handling.

@@ -1,12 +1,14 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-import questionary
-from unittest.mock import MagicMock, patch, AsyncMock
+
 from transit_tracker.config import TransitConfig
 from transit_tracker.tui import (
-    change_api_mode_wizard, 
-    change_threshold_wizard, 
-    change_panels_wizard
+    change_api_mode_wizard,
+    change_panels_wizard,
+    change_threshold_wizard,
 )
+
 
 @pytest.fixture
 def mock_config():

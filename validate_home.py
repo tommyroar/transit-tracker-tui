@@ -1,12 +1,13 @@
-import sys
 import os
-import yaml
+import sys
+
 from pydantic import ValidationError
 
 # Add src to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
 
 from transit_tracker.config import TransitConfig
+
 
 def validate_config(path):
     print(f"Validating {path}...")

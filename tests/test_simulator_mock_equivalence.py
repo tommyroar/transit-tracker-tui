@@ -1,10 +1,13 @@
+import asyncio
 import json
 import time
-import asyncio
+
 import pytest
-from transit_tracker.network.websocket_server import TransitServer
+
 from transit_tracker.config import TransitConfig, TransitSubscription
+from transit_tracker.network.websocket_server import TransitServer
 from transit_tracker.simulator import LEDSimulator
+
 
 def get_mock_oba_response(now_ms):
     return [
@@ -32,6 +35,7 @@ def get_mock_oba_response(now_ms):
 
 @pytest.mark.asyncio
 async def test_simulator_identity():
+    # Use a fixed integer timestamp for all calculations to avoid float drift during the test
     now_ts = int(time.time())
     now_ms = now_ts * 1000
     
@@ -58,9 +62,9 @@ async def test_simulator_identity():
     ]
     server.client_limits[ws] = 3
     
-    # Inject Mock Data
-    server.cache["1_8494"] = (time.time(), [get_mock_oba_response(now_ms)[0]])
-    server.cache["1_11920"] = (time.time(), [get_mock_oba_response(now_ms)[1]])
+    # Inject Mock Data - Use the SAME now_ts
+    server.cache["1_8494"] = (now_ts, [get_mock_oba_response(now_ms)[0]])
+    server.cache["1_11920"] = (now_ts, [get_mock_oba_response(now_ms)[1]])
     
     await server.send_update(ws)
     local_json = ws.sent["payload"]["trips"]
@@ -77,6 +81,7 @@ async def test_simulator_identity():
     # Trip 1 (554)
     t1 = oba_data[0]
     final_arr = (t1["predictedArrivalTime"] / 1000) - 420
+    # Our server filters trips that would arrive > 60s in the past
     if final_arr >= now_ts - 60:
         cloud_json.append({
             "tripId": t1["tripId"], "routeId": t1["routeId"], "routeName": t1["routeName"],
@@ -88,6 +93,7 @@ async def test_simulator_identity():
     # Trip 2 (14)
     t2 = oba_data[1]
     final_arr_2 = (t2["predictedArrivalTime"] / 1000) - 540
+    # This trip results in -60s from now (Now-1m), so it should be filtered by the >= now_ts - 60 rule
     if final_arr_2 >= now_ts - 60:
         cloud_json.append({
             "tripId": t2["tripId"], "routeId": t2["routeId"], "routeName": t2["routeName"],
@@ -99,15 +105,12 @@ async def test_simulator_identity():
     # --- 3. SIMULATOR RENDERING ---
     sim = LEDSimulator(config)
     
-    print(f"Local JSON Trip Count: {len(local_json)}")
-    print(f"Cloud JSON Trip Count: {len(cloud_json)}")
-    
     # Render Local
-    sim.state["live"] = {"trips": local_json, "timestamp": time.time()}
+    sim.state["live"] = {"trips": local_json, "timestamp": now_ts}
     local_text = sim.get_current_display_text()
     
     # Render Cloud
-    sim.state["live"] = {"trips": cloud_json, "timestamp": time.time()}
+    sim.state["live"] = {"trips": cloud_json, "timestamp": now_ts}
     cloud_text = sim.get_current_display_text()
     
     print(f"\nLocal Result:\n{local_text}")

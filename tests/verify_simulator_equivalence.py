@@ -1,13 +1,15 @@
 import asyncio
-import sys
 import os
+import sys
 import time
+
 from rich.console import Console
 from rich.table import Table
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 from transit_tracker.config import TransitConfig
 from transit_tracker.simulator import LEDSimulator
+
 
 async def get_sim_output(url):
     config = TransitConfig.load(".local/accurate_config.yaml")
@@ -52,7 +54,7 @@ async def main():
             if local_text:
                 console.print(f"[green]Connected to {url}![/green]")
                 break
-        except Exception as e:
+        except Exception:
             continue
     
     # 2. Test Cloud Proxy

@@ -1,10 +1,11 @@
 import json
 import time
-import pytest
 from datetime import datetime, timezone
-from transit_tracker.network.websocket_server import TransitServer
+
 from transit_tracker.config import TransitConfig, TransitSubscription
+from transit_tracker.network.websocket_server import TransitServer
 from transit_tracker.simulator import LEDSimulator
+
 
 def test_offset_contract_consistency():
     """

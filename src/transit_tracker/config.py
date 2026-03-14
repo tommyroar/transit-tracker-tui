@@ -1,8 +1,9 @@
-import yaml
 import os
 import re
-from typing import List, Optional, Union, Dict, Any
-from pydantic import BaseModel, Field, model_validator, field_validator
+from typing import Any, Dict, List, Optional
+
+import yaml
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 GLOBAL_SETTINGS_DIR = os.path.expanduser("~/.config/transit-tracker")
 GLOBAL_SETTINGS_FILE = os.path.join(GLOBAL_SETTINGS_DIR, "settings.yaml")

@@ -1,7 +1,7 @@
+import os
 import subprocess
 import sys
-import os
-import time
+
 
 def verify_launch():
     print("🚀 Verifying CLI launch...")

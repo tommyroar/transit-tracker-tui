@@ -1,24 +1,36 @@
+import asyncio
+import difflib
+import json
 import os
 import sys
-import json
-import asyncio
-import time
 import threading
+import time
+from typing import Any, Dict
+
 import questionary
-import difflib
 import yaml
-from typing import Dict, Any, List
+from rich import print as rprint
 from rich.console import Console, Group
 from rich.panel import Panel
+from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
-from rich.live import Live
-from rich.syntax import Syntax
-from rich import print as rprint
-from .config import TransitConfig, TransitSubscription, get_last_config_path, set_last_config_path
+
+from .config import (
+    TransitConfig,
+    TransitSubscription,
+    get_last_config_path,
+    set_last_config_path,
+)
+from .hardware import (
+    flash_base_firmware,
+    flash_hardware,
+    get_usb_devices,
+    is_bootstrapped,
+    load_hardware_config,
+)
+from .simulator import async_run_simulator
 from .transit_api import TransitAPI
-from .hardware import list_serial_ports, flash_hardware, load_hardware_config, get_usb_devices, is_bootstrapped, flash_base_firmware
-from .simulator import run_simulator, async_run_simulator
 
 SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "service_state.json")
 
@@ -79,7 +91,7 @@ def get_service_state() -> Dict[str, Any]:
             with open(SERVICE_STATE_FILE, "r") as f:
                 state = json.load(f)
                 return state
-        except Exception as e:
+        except Exception:
             pass
     return {}
 
@@ -417,7 +429,7 @@ def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
         uptime = str(time.strftime("%H:%M:%S", time.gmtime(uptime_seconds)))
     messages = state.get("messages_processed", 0)
 
-    status_text = Text(f"Service Status: ", style="bold")
+    status_text = Text("Service Status: ", style="bold")
     status_text.append(f"{status}", style=f"bold {status_color}")
     if "RUNNING" in status:
         status_text.append(f" (PID: {pid}, Uptime: {uptime}, Msg: {messages})", style="dim")

@@ -1,5 +1,6 @@
-import rumps
 import sys
+
+import rumps
 
 try:
     print("Testing rumps GUI context...")

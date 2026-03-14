@@ -1,7 +1,10 @@
-import pytest
 import json
 from unittest.mock import MagicMock, patch
-from transit_tracker.hardware import ESPHomeFlasher, EntityType
+
+import pytest
+
+from transit_tracker.hardware import EntityType, ESPHomeFlasher
+
 
 def test_esphome_flasher_protocol():
     """Test that ESPHomeFlasher correctly formats JRPC messages over serial."""

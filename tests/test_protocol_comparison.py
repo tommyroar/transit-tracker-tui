@@ -1,10 +1,10 @@
+import asyncio
 import json
 import time
-import pytest
-import asyncio
-import websockets
-from transit_tracker.network.websocket_server import TransitServer
+
 from transit_tracker.config import TransitConfig, TransitSubscription
+from transit_tracker.network.websocket_server import TransitServer
+
 
 class ProtocolValidator:
     def __init__(self, name, data):

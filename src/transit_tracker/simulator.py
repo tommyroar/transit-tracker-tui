@@ -2,18 +2,18 @@ import asyncio
 import json
 import os
 import re
-import sys
 import time
-import websockets
 from datetime import datetime, timezone
-from bdfparser import Font
-from rich.live import Live
-from rich.text import Text
-from rich.panel import Panel
+from typing import Optional
+
+import websockets
 from rich.console import Console, Group
-from typing import Optional, Union
+from rich.live import Live
+from rich.panel import Panel
+from rich.text import Text
 
 from .config import TransitConfig
+
 
 class MicroFont:
     """A minimal 5x7 proportional-style font implementation for exact LED simulation."""

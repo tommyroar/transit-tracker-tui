@@ -1,6 +1,7 @@
 import json
 import time
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
+
 import serial
 import serial.tools.list_ports
 from rich.console import Console
@@ -255,11 +256,11 @@ def is_bootstrapped(port: str) -> bool:
 
 def flash_base_firmware(port: str) -> bool:
     """Downloads the latest factory bin from GitHub and flashes it via esptool."""
-    import httpx
-    import tempfile
     import os
-    import sys
+    import tempfile
+
     import esptool
+    import httpx
     
     with console.status("[bold cyan]Fetching latest firmware release...") as status:
         try:

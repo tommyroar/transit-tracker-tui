@@ -1,8 +1,10 @@
 import asyncio
 import json
+
 import websockets
-from datetime import datetime, timezone
+
 from ..config import TransitConfig
+
 
 async def run_service(config: TransitConfig = None):
     """

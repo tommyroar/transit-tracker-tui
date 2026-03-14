@@ -1,10 +1,12 @@
-import pytest
-import asyncio
 import json
 import time
 from unittest.mock import AsyncMock, MagicMock
-from transit_tracker.network.websocket_server import TransitServer
+
+import pytest
+
 from transit_tracker.config import TransitConfig, TransitSubscription
+from transit_tracker.network.websocket_server import TransitServer
+
 
 @pytest.fixture
 def mock_config():

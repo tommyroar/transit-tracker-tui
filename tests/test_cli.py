@@ -1,7 +1,7 @@
-import sys
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 from transit_tracker.cli import main
+
 
 def test_cli_main_ui_launch():
     """Verifies that running with no args (default 'ui') attempts to launch the GUI and TUI."""

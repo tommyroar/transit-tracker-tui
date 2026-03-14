@@ -8,6 +8,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "s
 from transit_tracker.config import TransitConfig
 from transit_tracker.simulator import LEDSimulator
 
+
 def verify_offset():
     config_path = ".local/needle_stops.yaml"
     if not os.path.exists(config_path):

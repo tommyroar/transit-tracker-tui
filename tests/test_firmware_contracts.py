@@ -1,8 +1,8 @@
 import os
+import tempfile
+
 import httpx
 import pytest
-import struct
-import tempfile
 
 # The expected latest version we are testing against (from our research)
 LATEST_VERSION = "v2.8.3"

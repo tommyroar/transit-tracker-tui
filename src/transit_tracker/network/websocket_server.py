@@ -265,7 +265,7 @@ class TransitServer:
                             "headsign": str(arr.get("headsign") or arr.get("tripHeadsign") or "Transit"),
                             "arrivalTime": int(final_arrival),
                             "departureTime": int(final_departure),
-                            "isRealtime": bool(arr.get("isRealtime") or "predictedArrivalTime" in arr)
+                            "isRealtime": bool(arr.get("isRealtime"))
                         })
             except Exception:
                 # 429s during send_update are ignored (we use last cache)

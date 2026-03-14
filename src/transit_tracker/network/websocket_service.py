@@ -12,16 +12,33 @@ async def run_service(config: TransitConfig = None):
     Used for monitoring and potentially other background tasks.
     In 1-to-1 mode, this acts as a verification client for the local proxy.
     """
+    from ..config import get_last_config_path
+    
     if config is None:
         config = TransitConfig.load()
+    
+    current_path = get_last_config_path()
     api_url = config.api_url
 
     print(f"[CLIENT] Starting background monitor, connecting to {api_url}")
     
     while True:
         try:
+            # Check for config reload
+            new_path = get_last_config_path()
+            if new_path and new_path != current_path:
+                print(f"[CLIENT] Config path changed: {new_path}. Reloading...")
+                config = TransitConfig.load(new_path)
+                current_path = new_path
+                api_url = config.api_url
+                # If we're already connected, the connection will be closed and restarted below
+                # or we can just continue and let the next iteration handle it.
+
             async with websockets.connect(api_url) as ws:
                 print(f"[CLIENT] Connected to {api_url}")
+                # Update current_path inside the connection context too
+                # to allow breaking out if config changes while connected
+                
                 # Build TJ Horner style routeStopPairs string for all subscriptions
                 pairs = []
                 for sub in config.subscriptions:
@@ -39,8 +56,12 @@ async def run_service(config: TransitConfig = None):
                     }))
 
                 async for message in ws:
-                    # In 1-to-1 mode, we just keep the connection alive
-                    # and potentially log updates for debugging.
+                    # Check for config change while connected
+                    check_path = get_last_config_path()
+                    if check_path and check_path != current_path:
+                        print(f"[CLIENT] Config changed while connected. Reconnecting...")
+                        break
+
                     data = json.loads(message)
                     if data.get("event") == "schedule":
                         # Use 'data' key to match TJ Horner protocol

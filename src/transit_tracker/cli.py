@@ -8,80 +8,61 @@ import subprocess
 from .config import TransitConfig, get_last_config_path
 from .network.websocket_server import run_server
 from .network.websocket_service import run_service as run_client
-from .tui import PLIST_NAME, PLIST_PATH, run_cli
+from .tui import run_cli
 
+PLIST_NAME = "org.eastsideurbanism.transit-tracker.plist"
+PLIST_PATH = os.path.expanduser(f"~/Library/LaunchAgents/{PLIST_NAME}")
 
 def get_service_status():
-    """Returns True if the service is currently running."""
-    # 1. Check for the process directly via pgrep (works on macOS and Linux)
-    res = subprocess.run(["pgrep", "-f", "transit-tracker service"], capture_output=True, text=True)
-    if res.returncode == 0:
-        pids = res.stdout.strip().split("\n")
-        # Filter out our own PID if we're currently running a "status" check.
-        current_pid = str(os.getpid())
-        active_pids = [pid for pid in pids if pid != current_pid]
-        if active_pids:
-            return True
-
-    if sys.platform == "darwin":
-        # 2. Check launchctl as a backup/source of truth for managed services
-        label = PLIST_NAME.replace(".plist", "")
-        res_launch = os.system(f"launchctl list {label} > /dev/null 2>&1")
-        if res_launch == 0:
-            return True
-            
-    return False
+    """Returns True if the service is running via launchctl."""
+    label = PLIST_NAME.replace(".plist", "")
+    res = subprocess.run(["launchctl", "list", label], capture_output=True, text=True)
+    return res.returncode == 0
 
 def manage_service(action: str):
-    """Handles starting, stopping, and status for the background service."""
     label = PLIST_NAME.replace(".plist", "")
     
-    if action == "status":
+    if action == "start":
         if get_service_status():
-            print(f"● {label} is [bold green]running[/bold green]")
-        else:
-            print(f"○ {label} is [red]stopped[/red]")
-            
-    elif action == "start":
-        if get_service_status():
-            print("[bold yellow]Service is already running.[/bold yellow]")
+            print(f"[yellow]Service {label} is already running.[/yellow]")
             return
+            
         if sys.platform == "darwin":
             if os.path.exists(PLIST_PATH):
                 print(f"Starting {label} via launchctl...")
                 os.system(f"launchctl load {PLIST_PATH}")
-                print("[green]Service started.[/green]")
             else:
-                print(f"[red]Error:[/red] Service plist not found at {PLIST_PATH}. Run 'transit-tracker' first to configure.")
+                print(f"[red]Error: {PLIST_PATH} not found. Run 'transit-tracker install' first.[/red]")
         else:
-            # Simple background spawn for Linux/Others
-            subprocess.Popen([sys.executable, "-m", "transit_tracker.cli", "service"], start_new_session=True)
-            print("[green]Service started in background.[/green]")
-
+            print("[red]Service management is only supported on macOS.[/red]")
+            
     elif action == "stop":
-        if not get_service_status():
-            print("Service is not running.")
-            return
         if sys.platform == "darwin":
             print(f"Stopping {label} via launchctl...")
-            os.system(f"launchctl unload {PLIST_PATH} > /dev/null 2>&1")
-            # Also clean up any GUI processes just in case
+            os.system(f"launchctl unload {PLIST_PATH}")
+            # Also pkill any lingering GUI or service processes just in case
             subprocess.run(["pkill", "-f", "transit-tracker gui"], capture_output=True)
+            subprocess.run(["pkill", "-f", "transit-tracker service"], capture_output=True)
             print("[green]Service stopped.[/green]")
         else:
-            os.system("pkill -f 'transit-tracker service'")
-            os.system("pkill -f 'transit-tracker gui'")
-            print("[green]Service stopped.[/green]")
-
+            print("[red]Service management is only supported on macOS.[/red]")
+            
     elif action == "restart":
         manage_service("stop")
         time.sleep(1)
         manage_service("start")
+        
+    elif action == "status":
+        if get_service_status():
+            print(f"● {label} is [bold green]running[/bold green]")
+        else:
+            print(f"○ {label} is [red]stopped[/red]")
 
 async def run_full_service():
     """Runs both the WebSocket server (for HW) and the notification client."""
     path = get_last_config_path()
     if path and os.path.exists(path):
+        print(f"[SERVICE] Loading config from {path}")
         config = TransitConfig.load(path)
     else:
         config = TransitConfig.load()
@@ -120,7 +101,12 @@ async def run_full_service():
                 gui_proc.kill()
 
 def main():
-    config = TransitConfig.load()
+    # Use saved config path if available
+    path = get_last_config_path()
+    if path and os.path.exists(path):
+        config = TransitConfig.load(path)
+    else:
+        config = TransitConfig.load()
 
     parser = argparse.ArgumentParser(description="Transit Tracker Configuration")
     parser.add_argument(

@@ -26,6 +26,7 @@ def mock_env(tmp_path):
     
     # Use transit_tracker.config.GLOBAL_SETTINGS_FILE
     with mock.patch("transit_tracker.config.GLOBAL_SETTINGS_FILE", str(settings_file)), \
+         mock.patch("transit_tracker.config.GLOBAL_SETTINGS_DIR", str(settings_file.parent)), \
          mock.patch("transit_tracker.tui.os.path.abspath", side_effect=lambda p: str(p)):
         
         yield {
@@ -43,7 +44,8 @@ def test_tui_persistence_honors_saved_path(mock_env):
     accurate_path = str(mock_env["accurate"])
     
     # Pre-set the last config path to home.yaml
-    set_last_config_path(home_path)
+    with mock.patch.dict(os.environ, {"TRANSIT_TRACKER_TESTING": "0"}):
+        set_last_config_path(home_path)
     assert get_last_config_path() == home_path
     
     # Mock ask_with_live_dashboard to exit immediately
@@ -51,6 +53,7 @@ def test_tui_persistence_honors_saved_path(mock_env):
          mock.patch("transit_tracker.tui.get_last_config_path", return_value=home_path), \
          mock.patch("os.path.exists", side_effect=lambda p: str(p) in [home_path, accurate_path, str(mock_env["project_root"]), str(os.path.dirname(home_path))]), \
          mock.patch("transit_tracker.tui.Console"), \
+         mock.patch.dict(os.environ, {"TRANSIT_TRACKER_TESTING": "0"}), \
          mock.patch("transit_tracker.config.TransitConfig.load", wraps=TransitConfig.load) as mock_load:
         
         try:

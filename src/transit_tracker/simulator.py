@@ -194,13 +194,23 @@ class LEDSimulator:
         while self.running:
             try:
                 async with websockets.connect(api_url) as ws:
-                    # Construct routeStopPairs string: feed:route,feed:stop;...
+                    # Construct routeStopPairs string: feed:route,feed:stop,offset;...
                     pairs = []
                     for sub in self.config.subscriptions:
-                        # The API expects feedId:routeId,feedId:stopId
+                        # The API expects feedId:routeId,feedId:stopId[,offsetInSeconds]
                         r_id = sub.route if ":" in sub.route else f"{sub.feed}:{sub.route}"
                         s_id = sub.stop if ":" in sub.stop else f"{sub.feed}:{sub.stop}"
-                        pairs.append(f"{r_id},{s_id}")
+                        
+                        # Convert "-7min" or "5m" to seconds
+                        off_sec = 0
+                        try:
+                            match = re.search(r"(-?\d+)", str(sub.time_offset))
+                            if match:
+                                off_sec = int(match.group(1)) * 60
+                        except:
+                            pass
+                            
+                        pairs.append(f"{r_id},{s_id},{off_sec}")
                     
                     pairs_str = ";".join(pairs)
                     
@@ -379,28 +389,15 @@ class LEDSimulator:
                     else: arr_time_ms = arr_val * 1000
 
                     # Calculate Offset
-                    # If we are using the local API, the server has already generated a spoofed
-                    # timestamp that incorporates the offset and accounts for clock skew.
-                    offset_min = 0
-                    if not self.config.use_local_api and sub and sub.time_offset:
-                        try:
-                            match = re.search(r"(-?\d+)", sub.time_offset)
-                            if match:
-                                offset_min = int(match.group(1))
-                        except ValueError: pass
-
-                    raw_diff_sec = (arr_time_ms - current_time_ms) / 1000.0
-                    raw_mins = int(raw_diff_sec / 60)
+                    # BOTH Local and Cloud proxies now apply offsets on the server-side
+                    # as part of the TJ Horner protocol alignment. The simulator (like the HW)
+                    # should now treat the arrivalTime as the 'final' display time.
                     
-                    if offset_min > 0:
-                        eff_mins = raw_mins - offset_min
-                    else:
-                        eff_mins = raw_mins + offset_min
-
-                    display_mins = eff_mins
+                    raw_diff_sec = (arr_time_ms - current_time_ms) / 1000.0
+                    display_mins = int(raw_diff_sec / 60)
                     
                     # Filter logic:
-                    if raw_mins >= -1 and display_mins >= -1:
+                    if display_mins >= -1:
                         route_name = str(trip.get("routeName") or trip.get("routeShortName") or "")
                         if not route_name:
                             route_name = sub.label.split("-")[0].strip().split()[0] if sub and sub.label else sub.route.split("_")[-1]

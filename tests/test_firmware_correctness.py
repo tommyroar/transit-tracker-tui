@@ -113,6 +113,34 @@ def test_now_bug_reproduction():
     
     deps = sim.get_upcoming_departures(reference_time=datetime.fromtimestamp(now_ts, tz=timezone.utc))
     assert deps[0]["diff"] == 5
+
+def test_predicted_zero_bug():
+    """
+    Ensures that if predictedArrivalTime is 0, we don't treat it as a real timestamp
+    of 1970 (which causes the 'Now' bug).
+    """
+    now_ts = int(time.time())
+    # Trip arriving in 10 mins (scheduled)
+    scheduled_ts = now_ts + 600
+    
+    trip_data = {
+        "tripId": "trip1",
+        "routeId": "14",
+        "stopId": "1_1234",
+        "arrivalTime": scheduled_ts, # TransitAPI should have already swapped this
+        "predictedArrivalTime": 0,
+        "scheduledArrivalTime": scheduled_ts,
+        "isRealtime": False # TransitAPI should have set this to False
+    }
+    
+    config = TransitConfig()
+    config.subscriptions = [TransitSubscription(feed="st", route="14", stop="1_1234", label="14")]
+    sim = LEDSimulator(config)
+    sim.state["live"] = {"trips": [trip_data], "timestamp": time.time()}
+    
+    deps = sim.get_upcoming_departures(reference_time=datetime.fromtimestamp(now_ts, tz=timezone.utc))
+    assert deps[0]["diff"] == 10
+    assert deps[0]["live"] == False
     
 def test_dumb_firmware_compatibility():
     """
@@ -161,3 +189,27 @@ def test_dumb_firmware_compatibility():
     # It should be 10 minutes (15m real - 5m offset)
     assert display_mins == 10
     print(f"\nDumb Firmware Calculation: ({trip_json['arrivalTime']} - {internal_sntp_now}) / 60 = {display_mins}m")
+
+def test_now_bug_negative_case():
+    """
+    NEGATIVE TEST: Explicitly demonstrates how a 0 prediction triggers the bug
+    in the raw firmware logic. This ensures we stay aware of the physical 
+    device's mathematical constraints.
+    """
+    now_ts = 1700000000 # Fixed point in time
+    
+    # If the API returns 0 for predicted, and we were to use it raw:
+    predicted_arrival_api = 0 
+    
+    # The firmware calculation: (0 - 1700000000) / 60
+    # Results in a massive negative number
+    display_mins_raw = (predicted_arrival_api - now_ts) // 60
+    
+    # In the simulator/firmware, anything <= 0 is rendered as "Now"
+    assert display_mins_raw < -1000000 # It is definitely negative
+    
+    # This confirms that IF a 0 prediction reaches the display logic, 
+    # it WILL be a 'Now' bug. Our TransitAPI fix prevents this by 
+    # swapping 0 for the scheduled time.
+    is_now_bug = display_mins_raw <= 0
+    assert is_now_bug == True

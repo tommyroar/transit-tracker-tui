@@ -96,7 +96,9 @@ import subprocess
 
 async def run_capture(input_path: str = "hardware_averaged.jpg"):
     os.makedirs("captures", exist_ok=True)
-    config = TransitConfig.load(".local/accurate_config.yaml")
+    from .config import get_last_config_path
+    path = get_last_config_path() or ".local/accurate_config.yaml"
+    config = TransitConfig.load(path)
     
     print(f"Generating template from simulator...")
     template = await generate_sim_template(config)

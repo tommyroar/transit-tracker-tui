@@ -16,7 +16,10 @@ class TransitAPI:
 
     @staticmethod
     def _clean_stop_id(stop_id: str) -> str:
-        """Strip internal feed prefix if present (e.g. 'st:1_8494' -> '1_8494')."""
+        """Strip internal feed prefix if present (e.g. 'st:1_8494' -> '1_8494', 'wsf:7' -> '95_7')."""
+        if stop_id.startswith("wsf:"):
+            return stop_id.replace("wsf:", "95_")
+            
         if ":" in stop_id and "_" in stop_id:
             colon_idx = stop_id.find(":")
             underscore_idx = stop_id.find("_")
@@ -214,19 +217,24 @@ class TransitAPI:
                     route_id = arr["routeId"]
                     route_info = routes.get(route_id, {})
 
+                    predicted = arr.get("predictedArrivalTime")
+                    scheduled = arr.get("scheduledArrivalTime")
+                    
+                    # If predicted is 0 or None, it means no real-time data available
+                    is_realtime = bool(predicted and predicted > 0)
+                    
                     results.append(
                         {
                             "tripId": arr["tripId"],
                             "routeId": route_id,
                             "stopId": stop_id,
-                            "arrivalTime": arr.get("predictedArrivalTime")
-                            or arr.get("scheduledArrivalTime"),
-                            "predictedArrivalTime": arr.get("predictedArrivalTime"),
-                            "scheduledArrivalTime": arr.get("scheduledArrivalTime"),
+                            "arrivalTime": (predicted if is_realtime else scheduled),
+                            "predictedArrivalTime": predicted if predicted and predicted > 0 else None,
+                            "scheduledArrivalTime": scheduled,
                             "routeName": route_info.get("shortName")
                             or arr.get("routeShortName"),
                             "headsign": arr.get("tripHeadsign"),
-                            "isRealtime": arr.get("predictedArrivalTime") is not None,
+                            "isRealtime": is_realtime,
                             "routeColor": route_info.get("color"),
                         }
                     )

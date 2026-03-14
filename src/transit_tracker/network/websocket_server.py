@@ -7,7 +7,7 @@ from collections import defaultdict
 
 import websockets
 
-from ..config import TransitConfig
+from ..config import TransitConfig, get_last_config_path
 from ..transit_api import TransitAPI
 
 SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "service_state.json")
@@ -15,6 +15,7 @@ SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"
 class TransitServer:
     def __init__(self, config: TransitConfig):
         self.config = config
+        self.config_path = get_last_config_path()
         self.api = TransitAPI()
         self.clients = set()
         self.subscriptions = {} # ws -> List[Dict] (pairs)
@@ -63,6 +64,9 @@ class TransitServer:
             }
             if last_message:
                 state["last_message"] = last_message
+                
+            if self.config_path:
+                state["config_path"] = self.config_path
 
             os.makedirs(os.path.dirname(SERVICE_STATE_FILE), exist_ok=True)
             with open(SERVICE_STATE_FILE, "w") as f:
@@ -98,12 +102,25 @@ class TransitServer:
 
     def normalize_id(self, item_id):
         if item_id is None: return ""
-        if ":" in item_id and "_" in item_id:
-            c_idx = item_id.find(":")
-            u_idx = item_id.find("_")
+        s_id = str(item_id)
+        if s_id.startswith("wsf:"):
+            return s_id.replace("wsf:", "95_")
+            
+        if ":" in s_id and "_" in s_id:
+            c_idx = s_id.find(":")
+            u_idx = s_id.find("_")
             if c_idx < u_idx:
-                return item_id[c_idx+1:]
-        return item_id
+                return s_id[c_idx+1:]
+        return s_id
+
+    def apply_abbreviations(self, name: str) -> str:
+        """Applies route name abbreviation rules from config."""
+        if not name:
+            return name
+        for abbr in self.config.transit_tracker.abbreviations:
+            if abbr.original.lower() == name.lower():
+                return abbr.short
+        return name
 
     async def register(self, ws):
         self.clients.add(ws)
@@ -242,7 +259,7 @@ class TransitServer:
                         all_trips.append({
                             "tripId": str(arr.get("tripId", "")),
                             "routeId": str(full_route_id),
-                            "routeName": str(arr.get("routeName") or arr.get("routeShortName") or ""),
+                            "routeName": self.apply_abbreviations(str(arr.get("routeName") or arr.get("routeShortName") or "")),
                             "routeColor": str(arr.get("routeColor", "")) if arr.get("routeColor") else None,
                             "stopId": str(stop_id),
                             "headsign": str(arr.get("headsign") or arr.get("tripHeadsign") or "Transit"),
@@ -281,6 +298,14 @@ class TransitServer:
         """Background task that keeps the shared cache fresh with exponential backoff."""
         while True:
             try:
+                # Hot-reload check
+                current_path = get_last_config_path()
+                if current_path and current_path != self.config_path:
+                    print(f"[SERVER] Config path changed: {current_path}. Reloading...")
+                    self.config = TransitConfig.load(current_path)
+                    self.config_path = current_path
+                    self.cache.clear() # Clear cache on config change to avoid stale data for new stops
+                    
                 await self.refresh_all_data()
             except Exception as e:
                 print(f"[SERVER] Refresh Loop Exception: {e}")

@@ -21,6 +21,7 @@ from .config import (
     TransitSubscription,
     get_last_config_path,
     set_last_config_path,
+    list_profiles,
 )
 from .hardware import (
     flash_base_firmware,
@@ -60,6 +61,52 @@ def view_config_diff(config: TransitConfig, config_path: str, console: Console):
         else:
             diff_text = "".join(diff)
             console.print(Panel(Syntax(diff_text, "diff", theme="monokai"), title="Config Diff"))
+        
+        input("\nPress Enter to continue...")
+    except Exception as e:
+        rprint(f"[red]Error generating diff: {e}[/red]")
+        time.sleep(2)
+
+async def diff_profiles_wizard(config: TransitConfig, console: Console):
+    """Wizard to select a profile and diff it against current in-memory config."""
+    profiles = list_profiles()
+    if not profiles:
+        rprint("[yellow]No profiles found to diff against.[/yellow]")
+        time.sleep(2)
+        return
+
+    choices = [
+        questionary.Choice(title=os.path.basename(p), value=p)
+        for p in profiles
+    ]
+    
+    other_path = await questionary.select(
+        "Select profile to diff against:",
+        choices=choices
+    ).ask_async()
+    
+    if not other_path:
+        return
+
+    try:
+        with open(other_path, "r") as f:
+            other_content = f.read()
+        
+        # Current in-memory state
+        mem_content = yaml.safe_dump(config.model_dump(exclude_unset=True), sort_keys=False)
+        
+        diff = list(difflib.unified_diff(
+            other_content.splitlines(keepends=True),
+            mem_content.splitlines(keepends=True),
+            fromfile=f"Profile: {os.path.basename(other_path)}",
+            tofile="Current (In-Memory)"
+        ))
+        
+        if not diff:
+            rprint("[green]No differences detected between selected profile and in-memory config.[/green]")
+        else:
+            diff_text = "".join(diff)
+            console.print(Panel(Syntax(diff_text, "diff", theme="monokai"), title=f"Diff: {os.path.basename(other_path)} vs Current"))
         
         input("\nPress Enter to continue...")
     except Exception as e:
@@ -558,19 +605,27 @@ async def ask_with_live_dashboard(title, choices, config, config_path, console, 
 async def async_main_menu():
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     
-    config_path = get_last_config_path()
-    if not config_path or not os.path.exists(config_path):
+    config_path_saved = get_last_config_path()
+    config_path = config_path_saved
+    
+    # Validate the saved path actually exists
+    if config_path and not os.path.exists(config_path):
+        config_path = None
+        
+    if not config_path:
         candidates = [
-            os.path.join(project_root, "accurate_config.yaml"),
             os.path.join(project_root, ".local", "accurate_config.yaml"),
-            os.path.join(project_root, "config.yaml"),
-            os.path.join(project_root, ".local", "config.yaml")
+            os.path.join(project_root, "accurate_config.yaml"),
+            os.path.join(project_root, ".local", "config.yaml"),
+            os.path.join(project_root, "config.yaml")
         ]
         config_path = next((c for c in candidates if os.path.exists(c)), None)
             
     if config_path:
         config = TransitConfig.load(config_path)
-        set_last_config_path(config_path)
+        # Only update the saved path if it changed (e.g. we fell back)
+        if config_path != config_path_saved:
+            set_last_config_path(config_path)
     else:
         config = TransitConfig()
         config_path = os.path.join(project_root, ".local", "config.yaml") if os.path.exists(".local") else "config.yaml"
@@ -667,7 +722,8 @@ async def async_main_menu():
                             "Load Config File (Manual Path)", 
                             questionary.Choice("Save Config File", disabled="No config file loaded" if not config_path else None),
                             "Save Config File As...", 
-                            "View Config Diff",
+                            "View Config Diff (Local Disk)",
+                            "Diff Config with Profile",
                             "Back"
                         ],
                         config=config,
@@ -675,8 +731,10 @@ async def async_main_menu():
                         console=console
                     )
                     
-                    if f_action == "View Config Diff":
+                    if f_action == "View Config Diff (Local Disk)":
                         view_config_diff(config, config_path, console)
+                    elif f_action == "Diff Config with Profile":
+                        await diff_profiles_wizard(config, console)
                     elif f_action == "Save Config File":
                         try:
                             TransitConfig.model_validate(config.model_dump())

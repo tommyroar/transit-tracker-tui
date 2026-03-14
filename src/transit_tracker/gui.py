@@ -7,6 +7,7 @@ from datetime import datetime
 import rumps
 
 from .cli import PLIST_NAME
+from .config import list_profiles, set_last_config_path, get_last_config_path
 from .network.websocket_server import SERVICE_STATE_FILE
 
 
@@ -19,12 +20,19 @@ class TransitTrackerApp(rumps.App):
         self.last_update_item = rumps.MenuItem("Last Proxy: Never")
         self.stats_item = rumps.MenuItem("Messages Processed: 0")
         
+        # Profile Switcher
+        self.profiles_menu = rumps.MenuItem("👥 Profiles")
+        # Initialize with a dummy item to ensure it's not disabled
+        self.profiles_menu.add(rumps.MenuItem("Loading..."))
+        
         # Rate Limit Alert
         self.rate_limit_item = rumps.MenuItem("✅ API Connection Healthy")
         
         # Create the sub-menu parent
         self.clients_menu = rumps.MenuItem("🛜 Clients (0)")
+        self.clients_menu.add(rumps.MenuItem("No connections..."))
         
+        self.restart_item = rumps.MenuItem("Restart Transit Tracker Proxy", callback=self.restart_service)
         self.shutdown_item = rumps.MenuItem("Shutdown Transit Tracker Proxy", callback=self.quit_app)
         
         # 2. Set the initial menu structure
@@ -34,8 +42,10 @@ class TransitTrackerApp(rumps.App):
             self.last_update_item,
             self.stats_item,
             rumps.separator,
+            self.profiles_menu,
             self.clients_menu,
             rumps.separator,
+            self.restart_item,
             self.shutdown_item
         ]
         
@@ -44,6 +54,7 @@ class TransitTrackerApp(rumps.App):
         self.startup_time = time.time()
         self.last_client_ids = None
         self.is_rate_limited = False
+        self.last_profiles = []
 
     def update_state(self, _):
         try:
@@ -54,6 +65,7 @@ class TransitTrackerApp(rumps.App):
             client_details = []
             uptime_str = ""
             msg_count = 0
+            current_config_path = get_last_config_path()
             
             # 1. Service Status Check
             label = PLIST_NAME.replace(".plist", "")
@@ -103,17 +115,38 @@ class TransitTrackerApp(rumps.App):
             self.last_update_item.title = f"Last Proxy: {last_update_str}"
             self.stats_item.title = f"Messages Processed: {msg_count}"
             
-            # 4. Update the Clients Sub-menu and its Title
+            # 4. Update Profiles Menu
+            profiles = list_profiles()
+            if profiles != self.last_profiles:
+                print(f"[GUI] Found {len(profiles)} profiles. Updating menu.")
+                self.profiles_menu.clear()
+                if not profiles:
+                    self.profiles_menu.add(rumps.MenuItem("No profiles found"))
+                else:
+                    for p_path in profiles:
+                        name = os.path.basename(p_path)
+                        item = rumps.MenuItem(name, callback=self.switch_profile)
+                        item.state = 1 if p_path == current_config_path else 0
+                        item.p_path = p_path # Store path in item
+                        print(f"[GUI] Adding profile: {name}")
+                        self.profiles_menu.add(item)
+                self.last_profiles = profiles
+            else:
+                # Just update checkmarks if profiles haven't changed
+                for item_name, item in self.profiles_menu.items():
+                    if hasattr(item, 'p_path'):
+                        item.state = 1 if item.p_path == current_config_path else 0
+
+            # 5. Update the Clients Sub-menu and its Title
             self.clients_menu.title = f"🛜 Clients ({client_count})"
             
             # Update Rate Limit Status
             if is_rate_limited != self.is_rate_limited:
                 self.is_rate_limited = is_rate_limited
-                self.title = "⚠️" if is_rate_limited else "🚉"
+                self.title = "📵" if is_rate_limited else "🚉"
                 self.rate_limit_item.set_callback(None) # Make it look like a label
-                # In rumps, visibility is tricky, we'll just change the title or add/remove
                 if is_rate_limited:
-                    self.rate_limit_item.title = "⚠️ OneBusAway Rate Limited!"
+                    self.rate_limit_item.title = "📵 OneBusAway Rate Limited!"
                 else:
                     self.rate_limit_item.title = "✅ API Connection Healthy"
             
@@ -126,12 +159,37 @@ class TransitTrackerApp(rumps.App):
                         addr = c.get("address", "0.0.0.0").split(":")[0]
                         self.clients_menu.add(rumps.MenuItem(f"{name} ({addr})"))
                 else:
-                    self.clients_menu.add(rumps.MenuItem("Waiting for connections..."))
+                    self.clients_menu.add(rumps.MenuItem("No connections"))
                 
                 self.last_client_ids = current_client_ids
 
         except Exception:
             pass
+
+    def switch_profile(self, sender):
+        p_path = sender.p_path
+        print(f"[GUI] Switching to profile: {p_path}")
+        set_last_config_path(p_path)
+        # The proxy server (websocket_server) will detect this change 
+        # via its data_refresh_loop and hot-reload.
+        rumps.notification("Transit Tracker", "Profile Switched", f"Active: {os.path.basename(p_path)}")
+
+    def restart_service(self, _):
+        """Restarts the background service via launchctl."""
+        label = PLIST_NAME.replace(".plist", "")
+        plist_path = os.path.expanduser(f"~/Library/LaunchAgents/{PLIST_NAME}")
+        
+        rumps.notification("Transit Tracker", "Service Restart", "Restarting background proxy...")
+        
+        if os.path.exists(plist_path):
+            subprocess.run(["launchctl", "unload", plist_path], capture_output=True)
+            time.sleep(1)
+            subprocess.run(["launchctl", "load", plist_path], capture_output=True)
+        else:
+            # Fallback for manual restart if plist is missing
+            subprocess.run(["pkill", "-f", "transit-tracker service"], capture_output=True)
+            time.sleep(1)
+            subprocess.Popen([sys.executable, "-m", "transit_tracker.cli", "service"])
 
     def quit_app(self, _):
         label = PLIST_NAME.replace(".plist", "")
@@ -152,7 +210,6 @@ class TransitTrackerApp(rumps.App):
 
 def main():
     print("[GUI] Starting singleton check...")
-    # Singleton check to prevent multiple tray icons
     import tempfile
     pid_file = os.path.join(tempfile.gettempdir(), "transit_tracker_gui.pid")
     
@@ -161,13 +218,12 @@ def main():
             with open(pid_file, "r") as f:
                 old_pid = int(f.read().strip())
             print(f"[GUI] Found existing PID file with PID {old_pid}")
-            # Check if process is actually running
             os.kill(old_pid, 0)
             print("[GUI] Existing process is alive. Exiting.")
-            return # Already running
+            return 
         except (OSError, ValueError, ProcessLookupError):
             print("[GUI] Existing process is dead or invalid PID. Continuing.")
-            pass # Stale pid file
+            pass 
             
     with open(pid_file, "w") as f:
         f.write(str(os.getpid()))

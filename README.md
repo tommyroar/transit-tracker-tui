@@ -119,6 +119,32 @@ To stay up to date with the core project:
 - **Firmware Binary Updates:** Releases are published to [EastsideUrbanism/transit-tracker/releases](https://github.com/EastsideUrbanism/transit-tracker/releases). You can apply OTA updates via the web configurator or ESPHome dashboard.
 - **Data APIs:** The transit data proxy is hosted at `wss://tt.horner.tj`. The underlying API project container is maintained at [tjhorner/transit-tracker-api](https://github.com/tjhorner/transit-tracker-api). You can self-host the API using the official Docker image (`ghcr.io/tjhorner/transit-tracker-api:latest`).
 
+## 📸 Hardware Capture & Auto-Crop
+
+The project includes a specialized utility for validating your physical LED board against the simulator. Because LED matrices use PWM (multiplexing), they often appear jittery or have black bands in single photos. 
+
+This tool uses **Temporal Frame Averaging** to merge multiple frames from a video/timelapse into a single smooth image, then uses **Color-Selective Template Matching** to automatically identify and crop the transit board from the photo using the simulator as a "fingerprint".
+
+### 1. Capture & Average
+If you have a DJI Action 4 or similar camera connected, you can use the background watcher to automatically process new timelapse footage:
+
+```bash
+uv run python scripts/watch_and_average.py
+```
+
+### 2. Auto-Crop the Board
+To reliably isolate the transit board from a photo (even if it's handheld or has background clutter):
+
+```bash
+uv run transit-tracker-capture [path_to_image.jpg]
+```
+
+**How it works:**
+- It generates a high-fidelity "template" from the live simulator.
+- It masks for the specific **Hot Pink (Route 14)** and **Neon Yellow** LED colors.
+- It performs a multi-scale search to find that exact pixel pattern in your photo.
+- It saves the result to `captures/capture_YYYYMMDD_HHMMSS.jpg`.
+
 ## 🛠️ Development
 
 If you are developing or modifying the codebase, you can run tests using:

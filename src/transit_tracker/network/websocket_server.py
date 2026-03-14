@@ -276,9 +276,14 @@ class TransitServer:
         final_trips = all_trips[:limit]
         
         # 6. BUILD RESPONSE (Match TJ Horner protocol exactly)
+        # Note: Reference container uses 'payload' key and includes top-level 'stopId'
+        # The stopId should be the one requested by the client
         response = {
             "event": "schedule",
-            "data": {"trips": final_trips}
+            "payload": {
+                "trips": final_trips,
+                "stopId": str(subs[0]["stopId"]) if subs else ""
+            }
         }
 
         try:

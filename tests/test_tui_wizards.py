@@ -5,8 +5,7 @@ from transit_tracker.config import TransitConfig
 from transit_tracker.tui import (
     change_api_mode_wizard, 
     change_threshold_wizard, 
-    change_panels_wizard, 
-    change_ntfy_wizard
+    change_panels_wizard
 )
 
 @pytest.fixture
@@ -15,7 +14,6 @@ def mock_config():
     config.use_local_api = True
     config.arrival_threshold_minutes = 5
     config.num_panels = 2
-    config.ntfy_topic = "test-topic"
     return config
 
 @pytest.mark.asyncio
@@ -83,17 +81,3 @@ async def test_threshold_wizard(mock_config):
         args, kwargs = mock_text.call_args
         assert kwargs["default"] == "5"
 
-@pytest.mark.asyncio
-async def test_ntfy_wizard(mock_config):
-    """Verify ntfy wizard handles input correctly."""
-    with patch("questionary.text") as mock_text, \
-         patch.object(TransitConfig, "save") as mock_save:
-        mock_instance = MagicMock()
-        mock_instance.ask_async = AsyncMock(return_value="new-topic")
-        mock_text.return_value = mock_instance
-        
-        await change_ntfy_wizard(mock_config, "config.yaml")
-        assert mock_config.ntfy_topic == "new-topic"
-        
-        args, kwargs = mock_text.call_args
-        assert kwargs["default"] == "test-topic"

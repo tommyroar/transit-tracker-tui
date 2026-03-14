@@ -13,7 +13,8 @@ def test_cli_main_ui_launch():
          patch("argparse.ArgumentParser.parse_args") as mock_args:
         
         # Setup mock args for 'ui'
-        mock_args.return_value = MagicMock(command="ui")
+        mock_args.return_value = MagicMock()
+        mock_args.return_value.command = ["ui"]
         
         # Run main
         main()
@@ -32,7 +33,8 @@ def test_cli_main_simulator_launch():
          patch("transit_tracker.simulator.run_simulator") as mock_sim, \
          patch("argparse.ArgumentParser.parse_args") as mock_args:
         
-        mock_args.return_value = MagicMock(command="simulator")
+        mock_args.return_value = MagicMock()
+        mock_args.return_value.command = ["simulator"]
         
         # This is where the UnboundLocalError was happening
         main()
@@ -47,7 +49,8 @@ def test_cli_main_gui_command_skips_autolaunch():
          patch("transit_tracker.gui.main") as mock_gui_main, \
          patch("argparse.ArgumentParser.parse_args") as mock_args:
         
-        mock_args.return_value = MagicMock(command="gui")
+        mock_args.return_value = MagicMock()
+        mock_args.return_value.command = ["gui"]
         
         main()
         

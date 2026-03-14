@@ -1,6 +1,7 @@
 import json
 import time
 import asyncio
+import pytest
 from transit_tracker.network.websocket_server import TransitServer
 from transit_tracker.config import TransitConfig, TransitSubscription
 from transit_tracker.simulator import LEDSimulator
@@ -29,6 +30,7 @@ def get_mock_oba_response(now_ms):
         }
     ]
 
+@pytest.mark.asyncio
 async def test_simulator_identity():
     now_ts = int(time.time())
     now_ms = now_ts * 1000
@@ -61,7 +63,7 @@ async def test_simulator_identity():
     server.cache["1_11920"] = (time.time(), [get_mock_oba_response(now_ms)[1]])
     
     await server.send_update(ws)
-    local_json = ws.sent["data"]["trips"]
+    local_json = ws.sent["payload"]["trips"]
     
     # --- 2. CLOUD PROXY LOGIC (Simulated Based on Source Code) ---
     # The cloud proxy does: arrivalTime: new Date(trip.arrivalTime).getTime() / 1000 + offset

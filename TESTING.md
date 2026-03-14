@@ -29,8 +29,8 @@ We employ a multi-layered testing strategy, moving from isolated logic to full-s
 *   **Files:** `test_network.py`, `test_service_isolation.py`, `test_protocol_comparison.py`, `test_proxy_equivalence.py`
 *   **Purpose:** Ensures the WebSocket server and client can communicate using the EXACT schema required by the hardware.
 *   **Errors Caught:**
-    *   `KeyError: 'payload'`: Detecting when the local proxy sends a `data` key instead of the reference-required `payload` key.
-    *   `ProtocolMismatch`: Catching missing top-level `stopId` fields that would cause the ESP32 firmware to ignore updates.
+    *   `KeyError: 'data'`: Detecting when the local proxy sends a `payload` key instead of the reference-required `data` key.
+    *   `ProtocolMismatch`: Catching missing `stopId` fields inside trips that would cause the ESP32 firmware to ignore updates.
     *   `Filtering Error`: Identifying when past or stale trips are not correctly pruned from the live broadcast.
 
 ### 3. System & Simulator (Top)

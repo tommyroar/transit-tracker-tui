@@ -43,8 +43,9 @@ async def run_service(config: TransitConfig = None):
                     # and potentially log updates for debugging.
                     data = json.loads(message)
                     if data.get("event") == "schedule":
-                        payload = data.get("payload") or {}
-                        trips = payload.get("trips", [])
+                        # Use 'data' key to match TJ Horner protocol
+                        d = data.get("data") or {}
+                        trips = d.get("trips", [])
                         if trips:
                             first = trips[0]
                             route = first.get("routeName", "??")

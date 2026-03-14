@@ -70,7 +70,10 @@ async def run_protocol_test():
     await server.send_update(ws)
     
     actual_payload = ws.sent[0]
-    trip = actual_payload.get("data", {}).get("trips", [{}])[0] if "data" in actual_payload else actual_payload.get("payload", {}).get("trips", [{}])[0]
+    # Check both keys just in case, but reference should use 'data'
+    d = actual_payload.get("data") or actual_payload.get("payload") or {}
+    trips = d.get("trips", [{}])
+    trip = trips[0]
 
     # VALIDATORS
     local = ProtocolValidator("Local Proxy", actual_payload)
@@ -78,9 +81,8 @@ async def run_protocol_test():
     # Define Reference (The "Clean" baseline we WANT to match)
     ref_payload = {
         "event": "schedule",
-        "payload": {
-            "trips": [get_reference_trip(now)],
-            "stopId": "1_1234"
+        "data": {
+            "trips": [get_reference_trip(now)]
         }
     }
     reference = ProtocolValidator("Original (Reference)", ref_payload)
@@ -88,14 +90,14 @@ async def run_protocol_test():
     # CHECK SUITE
     checks = [
         ("Event Name", lambda d: d.get("event") == "schedule", "Top-level 'event' is 'schedule'"),
-        ("Payload Key", lambda d: "payload" in d, "Data is wrapped in 'payload' key"),
-        ("StopId Top", lambda d: d.get("payload", {}).get("stopId") == "1_1234", "stopId present at top of payload"),
-        ("Trip Count", lambda d: len(d.get("payload", {}).get("trips", [])) > 0, "At least one trip returned"),
-        ("Arrival Type", lambda d: isinstance(d.get("payload", {}).get("trips", [{}])[0].get("arrivalTime"), int), "arrivalTime is an Integer"),
-        ("Arrival Unit", lambda d: d.get("payload", {}).get("trips", [{}])[0].get("arrivalTime", 0) < 2*10**9, "arrivalTime is Seconds (not ms)"),
-        ("Departure Exist", lambda d: "departureTime" in d.get("payload", {}).get("trips", [{}])[0], "departureTime field is present"),
-        ("RouteColor Format", lambda d: d.get("payload", {}).get("trips", [{}])[0].get("routeColor") is None or "#" not in str(d.get("payload", {}).get("trips", [{}])[0].get("routeColor")), "No # in routeColor"),
-        ("IsRealtime Bool", lambda d: isinstance(d.get("payload", {}).get("trips", [{}])[0].get("isRealtime"), bool), "isRealtime is Boolean"),
+        ("Data Key", lambda d: "data" in d, "Data is wrapped in 'data' key"),
+        ("Trip Count", lambda d: len(d.get("data", {}).get("trips", [])) > 0, "At least one trip returned"),
+        ("StopId Inside", lambda d: "stopId" in d.get("data", {}).get("trips", [{}])[0], "stopId present inside trip"),
+        ("Arrival Type", lambda d: isinstance(d.get("data", {}).get("trips", [{}])[0].get("arrivalTime"), int), "arrivalTime is an Integer"),
+        ("Arrival Unit", lambda d: d.get("data", {}).get("trips", [{}])[0].get("arrivalTime", 0) < 2*10**9, "arrivalTime is Seconds (not ms)"),
+        ("Departure Exist", lambda d: "departureTime" in d.get("data", {}).get("trips", [{}])[0], "departureTime field is present"),
+        ("RouteColor Format", lambda d: d.get("data", {}).get("trips", [{}])[0].get("routeColor") is None or "#" not in str(d.get("data", {}).get("trips", [{}])[0].get("routeColor")), "No # in routeColor"),
+        ("IsRealtime Bool", lambda d: isinstance(d.get("data", {}).get("trips", [{}])[0].get("isRealtime"), bool), "isRealtime is Boolean"),
     ]
 
     for key, cond, desc in checks:

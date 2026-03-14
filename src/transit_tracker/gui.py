@@ -19,6 +19,9 @@ class TransitTrackerApp(rumps.App):
         self.last_update_item = rumps.MenuItem("Last Proxy: Never")
         self.stats_item = rumps.MenuItem("Messages Processed: 0")
         
+        # Rate Limit Alert
+        self.rate_limit_item = rumps.MenuItem("✅ API Connection Healthy")
+        
         # Create the sub-menu parent
         self.clients_menu = rumps.MenuItem("🛜 Clients (0)")
         
@@ -27,6 +30,7 @@ class TransitTrackerApp(rumps.App):
         # 2. Set the initial menu structure
         self.menu = [
             self.status_item,
+            self.rate_limit_item,
             self.last_update_item,
             self.stats_item,
             rumps.separator,
@@ -39,10 +43,12 @@ class TransitTrackerApp(rumps.App):
         self.timer.start()
         self.startup_time = time.time()
         self.last_client_ids = None
+        self.is_rate_limited = False
 
     def update_state(self, _):
         try:
             is_running = False
+            is_rate_limited = False
             client_count = 0
             last_update_str = "Never"
             client_details = []
@@ -73,6 +79,7 @@ class TransitTrackerApp(rumps.App):
                         client_count = state.get("client_count", 0)
                         client_details = state.get("clients", [])
                         msg_count = state.get("messages_processed", 0)
+                        is_rate_limited = state.get("is_rate_limited", False)
                         
                         last_ts = state.get("last_update", 0)
                         if last_ts > 0:
@@ -98,6 +105,17 @@ class TransitTrackerApp(rumps.App):
             
             # 4. Update the Clients Sub-menu and its Title
             self.clients_menu.title = f"🛜 Clients ({client_count})"
+            
+            # Update Rate Limit Status
+            if is_rate_limited != self.is_rate_limited:
+                self.is_rate_limited = is_rate_limited
+                self.title = "⚠️" if is_rate_limited else "🚉"
+                self.rate_limit_item.set_callback(None) # Make it look like a label
+                # In rumps, visibility is tricky, we'll just change the title or add/remove
+                if is_rate_limited:
+                    self.rate_limit_item.title = "⚠️ OneBusAway Rate Limited!"
+                else:
+                    self.rate_limit_item.title = "✅ API Connection Healthy"
             
             current_client_ids = ",".join(sorted([c.get("address", "") for c in client_details]))
             if current_client_ids != self.last_client_ids:
@@ -133,8 +151,38 @@ class TransitTrackerApp(rumps.App):
         rumps.quit_application()
 
 def main():
-    app = TransitTrackerApp()
-    app.run()
+    print("[GUI] Starting singleton check...")
+    # Singleton check to prevent multiple tray icons
+    import tempfile
+    pid_file = os.path.join(tempfile.gettempdir(), "transit_tracker_gui.pid")
+    
+    if os.path.exists(pid_file):
+        try:
+            with open(pid_file, "r") as f:
+                old_pid = int(f.read().strip())
+            print(f"[GUI] Found existing PID file with PID {old_pid}")
+            # Check if process is actually running
+            os.kill(old_pid, 0)
+            print("[GUI] Existing process is alive. Exiting.")
+            return # Already running
+        except (OSError, ValueError, ProcessLookupError):
+            print("[GUI] Existing process is dead or invalid PID. Continuing.")
+            pass # Stale pid file
+            
+    with open(pid_file, "w") as f:
+        f.write(str(os.getpid()))
+    print(f"[GUI] Created PID file at {pid_file} with PID {os.getpid()}")
+        
+    try:
+        print("[GUI] Launching TransitTrackerApp...")
+        app = TransitTrackerApp()
+        app.run()
+    except Exception as e:
+        print(f"[GUI] Error launching app: {e}")
+    finally:
+        print("[GUI] Cleaning up PID file...")
+        if os.path.exists(pid_file):
+            os.remove(pid_file)
 
 if __name__ == "__main__":
     main()

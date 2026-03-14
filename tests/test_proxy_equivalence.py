@@ -84,11 +84,11 @@ async def test_payload_identity():
     msg = ws.sent[0]
     # Check top level
     assert msg["event"] == "schedule"
-    assert "payload" in msg
-    assert msg["payload"]["stopId"] == "1_1234"
+    assert "data" in msg
+    # TJ Horner protocol puts stopId inside each trip, not at top level
     
     # Check trip
-    trip = msg["payload"]["trips"][0]
+    trip = msg["data"]["trips"][0]
     assert trip["tripId"] == "t1"
     assert trip["arrivalTime"] == now + 600 + 120 # Base + offset
     assert trip["departureTime"] == now + 605 + 120
@@ -113,7 +113,7 @@ async def test_filtering_identity():
     
     await server.send_update(ws)
     
-    trips = ws.sent[0]["payload"]["trips"]
+    trips = ws.sent[0]["data"]["trips"]
     ids = [t["tripId"] for t in trips]
     
     assert "past" not in ids
@@ -137,7 +137,7 @@ async def test_sorting_identity():
     
     await server.send_update(ws)
     
-    trips = ws.sent[0]["payload"]["trips"]
+    trips = ws.sent[0]["data"]["trips"]
     assert trips[0]["tripId"] == "sooner"
     assert trips[1]["tripId"] == "middle"
     assert trips[2]["tripId"] == "later"

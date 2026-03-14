@@ -3,6 +3,7 @@ import asyncio
 import os
 import sys
 import time
+import subprocess
 
 from .config import TransitConfig, get_last_config_path
 from .network.websocket_server import run_server
@@ -12,16 +13,24 @@ from .tui import PLIST_NAME, PLIST_PATH, run_cli
 
 def get_service_status():
     """Returns True if the service is currently running."""
+    # 1. Check for the process directly via pgrep (works on macOS and Linux)
+    res = subprocess.run(["pgrep", "-f", "transit-tracker service"], capture_output=True, text=True)
+    if res.returncode == 0:
+        pids = res.stdout.strip().split("\n")
+        # Filter out our own PID if we're currently running a "status" check.
+        current_pid = str(os.getpid())
+        active_pids = [pid for pid in pids if pid != current_pid]
+        if active_pids:
+            return True
+
     if sys.platform == "darwin":
-        # Check launchctl for our label
+        # 2. Check launchctl as a backup/source of truth for managed services
         label = PLIST_NAME.replace(".plist", "")
-        res = os.system(f"launchctl list {label} > /dev/null 2>&1")
-        return res == 0
-    else:
-        # Fallback to pgrep for other platforms
-        import subprocess
-        res = subprocess.run(["pgrep", "-f", "transit-tracker service"], capture_output=True)
-        return res.returncode == 0
+        res_launch = os.system(f"launchctl list {label} > /dev/null 2>&1")
+        if res_launch == 0:
+            return True
+            
+    return False
 
 def manage_service(action: str):
     """Handles starting, stopping, and status for the background service."""
@@ -46,7 +55,6 @@ def manage_service(action: str):
                 print(f"[red]Error:[/red] Service plist not found at {PLIST_PATH}. Run 'transit-tracker' first to configure.")
         else:
             # Simple background spawn for Linux/Others
-            import subprocess
             subprocess.Popen([sys.executable, "-m", "transit_tracker.cli", "service"], start_new_session=True)
             print("[green]Service started in background.[/green]")
 
@@ -57,9 +65,12 @@ def manage_service(action: str):
         if sys.platform == "darwin":
             print(f"Stopping {label} via launchctl...")
             os.system(f"launchctl unload {PLIST_PATH} > /dev/null 2>&1")
+            # Also clean up any GUI processes just in case
+            subprocess.run(["pkill", "-f", "transit-tracker gui"], capture_output=True)
             print("[green]Service stopped.[/green]")
         else:
             os.system("pkill -f 'transit-tracker service'")
+            os.system("pkill -f 'transit-tracker gui'")
             print("[green]Service stopped.[/green]")
 
     elif action == "restart":
@@ -69,9 +80,6 @@ def manage_service(action: str):
 
 async def run_full_service():
     """Runs both the WebSocket server (for HW) and the notification client."""
-    # Priority: 
-    # 1. Last used config from global settings
-    # 2. Default load logic (config.yaml, .local/config.yaml)
     path = get_last_config_path()
     if path and os.path.exists(path):
         config = TransitConfig.load(path)
@@ -79,31 +87,37 @@ async def run_full_service():
         config = TransitConfig.load()
         
     tasks = []
+    gui_proc = None
     
+    # GUI is tied to service lifecycle
+    if sys.platform == "darwin" and config.auto_launch_gui:
+        print("[SERVICE] Starting GUI tray icon...")
+        gui_proc = subprocess.Popen([sys.executable, "-m", "transit_tracker.cli", "gui"])
+
+    # Always start the local proxy server (for hardware/monitors)
+    tasks.append(run_server(config=config))
+
     if config.use_local_api:
-        # Force client to use local server
+        # Force notification client to use the local server we just started
         config.api_url = "ws://localhost:8000"
-        tasks.append(run_server(config=config))
     else:
         # If using public API, ensure it's not pointing to localhost
         if "localhost" in config.api_url or "127.0.0.1" in config.api_url:
             config.api_url = "wss://tt.horner.tj/"
     
+    # Notification client connects to configured target (Cloud or Local)
     tasks.append(run_client(config=config))
     
-    await asyncio.gather(*tasks)
-
-def start_gui_if_needed(config: TransitConfig):
-    """Starts the macOS tray icon if enabled and not already running."""
-    if sys.platform != "darwin" or not config.auto_launch_gui:
-        return
-        
-    # Check if gui is already running
-    import subprocess
-    res = subprocess.run(["pgrep", "-f", "transit-tracker gui"], capture_output=True)
-    if res.returncode != 0:
-        # Start in background
-        subprocess.Popen([sys.executable, "-m", "transit_tracker.cli", "gui"], start_new_session=True)
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        if gui_proc:
+            print("[SERVICE] Cleaning up GUI tray icon...")
+            gui_proc.terminate()
+            try:
+                gui_proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                gui_proc.kill()
 
 def main():
     config = TransitConfig.load()
@@ -121,29 +135,28 @@ def main():
     primary_cmd = cmd_list[0] if cmd_list else "ui"
     sub_cmd = cmd_list[1] if len(cmd_list) > 1 else None
 
-    # The gui is started for any command (except gui itself) to provide visual status.
-    if primary_cmd != "gui":
-        start_gui_if_needed(config)
-
     if primary_cmd == "service":
         if sub_cmd in ["start", "stop", "restart", "status"]:
             manage_service(sub_cmd)
         else:
+            # This is the actual long-running service process
             try:
                 asyncio.run(run_full_service())
             except KeyboardInterrupt:
-                print("\n[SERVICE] Down...")
+                pass
     elif primary_cmd == "gui":
         from .gui import main as run_gui
         run_gui()
     elif primary_cmd == "simulator":
         from .simulator import run_simulator
-        config = TransitConfig.load()
         run_simulator(config, force_live=True)
     elif primary_cmd == "web":
         from .web import run_web
         asyncio.run(run_web(config))
+    elif primary_cmd == "ui":
+        run_cli()
     else:
+        # Default fallback
         run_cli()
 
 if __name__ == "__main__":

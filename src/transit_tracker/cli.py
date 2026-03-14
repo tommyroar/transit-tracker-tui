@@ -110,9 +110,9 @@ def main():
 
     parser = argparse.ArgumentParser(description="Transit Tracker Configuration")
     parser.add_argument(
-        "command", 
-        nargs="*", 
-        help="Command to run: 'ui' (default), 'service [start|stop|restart|status]', 'simulator', 'gui'."
+        "command",
+        nargs="*",
+        help="Command to run: 'ui' (default), 'service [start|stop|restart|status]', 'simulator', 'gui', 'web'."
     )
 
     args = parser.parse_args()
@@ -140,6 +140,9 @@ def main():
         from .simulator import run_simulator
         config = TransitConfig.load()
         run_simulator(config, force_live=True)
+    elif primary_cmd == "web":
+        from .web import run_web
+        asyncio.run(run_web(config))
     else:
         run_cli()
 

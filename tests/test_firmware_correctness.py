@@ -15,20 +15,24 @@ def test_offset_contract_consistency():
     arrival_ts = now_ts + 600 # 10 minutes from now
     
     config = TransitConfig()
-    sub = TransitSubscription(feed="st", route="14", stop="1_1234", label="14 Downtown", time_offset="-2min")
-    config.subscriptions = [sub]
-    
-    # 1. TEST LOCAL API PATH (Server spoofs, Simulator stays dumb)
-    server = TransitServer(config)
-    # Mock a trip from OBA
+    from transit_tracker.config import TransitStop
+    config.transit_tracker.stops = [
+        TransitStop(stop_id="1_1234", routes=["14"], time_offset="-2min")
+    ]
+    config.sync_internal_state()
+    # Ensure routeId in mock trip matches what normalize_id expects
+    arrival_ts = now_ts + 600
     mock_oba_trip = {
         "tripId": "trip1",
-        "routeId": "14",
+        "routeId": "st:14", # Match the synced st: prefix if needed
         "stopId": "1_1234",
-        "predictedArrivalTime": arrival_ts * 1000, # OBA uses ms
+        "predictedArrivalTime": arrival_ts * 1000,
         "routeName": "14",
         "headsign": "Downtown"
     }
+    
+    # 1. TEST LOCAL API PATH (Server spoofs, Simulator stays dumb)
+    server = TransitServer(config)
     
     # Simulate server processing
     # We need to mock the websocket to capture the send
@@ -39,8 +43,7 @@ def test_offset_contract_consistency():
         def remote_address(self): return ("127.0.0.1", 1234)
 
     ws = MockWS()
-    server.subscriptions[ws] = [{"routeId": "14", "stopId": "1_1234"}]
-    
+    server.subscriptions[ws] = [{"routeId": "st:14", "stopId": "1_1234", "offset": -120}]    
     # We'll manually trigger the internal logic of send_update or similar
     # But get_arrivals_cached is async and hits API. Let's mock the cache.
     server.cache["1_1234"] = (time.time(), [mock_oba_trip])
@@ -48,7 +51,7 @@ def test_offset_contract_consistency():
     import asyncio
     asyncio.run(server.send_update(ws))
     
-    sent_data = ws.sent["data"]["trips"][0]
+    sent_data = ws.sent["payload"]["trips"][0]
     # The server should have subtracted 2 mins (120s) from the arrival time
     expected_spoofed = arrival_ts - 120
     assert sent_data["arrivalTime"] == expected_spoofed
@@ -57,22 +60,24 @@ def test_offset_contract_consistency():
     config.use_local_api = True
     config.api_url = "ws://localhost:8000"
     sim = LEDSimulator(config)
-    sim.state["live"] = {"trips": ws.sent["data"]["trips"], "timestamp": time.time()}
+    sim.state["live"] = {"trips": ws.sent["payload"]["trips"], "timestamp": time.time()}
     
     deps = sim.get_upcoming_departures(reference_time=datetime.fromtimestamp(now_ts, tz=timezone.utc))
     assert deps[0]["diff"] == 8 # 10m - 2m offset = 8m
     
-    # 2. TEST REMOTE API PATH (Server is raw, Simulator applies offset)
-    # (Simulating what happens when config.api_url is wss://tt.horner.tj/)
+    # 2. TEST REMOTE API PATH (Simulator stays 'dumb' now, matching HW)
+    # The simulator (like the hardware) now expects the proxy to have handled
+    # any necessary time offsets. If we point it at a raw API (like tt.horner.tj)
+    # it should just show the raw arrival time.
     config.use_local_api = False
     config.api_url = "wss://tt.horner.tj/"
     
     # Raw data from remote (no spoofing)
     remote_data = [{
         "tripId": "trip1",
-        "routeId": "14",
+        "routeId": "st:14", 
         "stopId": "1_1234",
-        "arrivalTime": arrival_ts, # Remote usually sends seconds
+        "arrivalTime": arrival_ts, # 10m from now
         "routeName": "14",
         "headsign": "Downtown",
         "isRealtime": True
@@ -80,7 +85,7 @@ def test_offset_contract_consistency():
     sim.state["live"] = {"trips": remote_data, "timestamp": time.time()}
     
     deps_remote = sim.get_upcoming_departures(reference_time=datetime.fromtimestamp(now_ts, tz=timezone.utc))
-    assert deps_remote[0]["diff"] == 8 # Simulator should apply -2m offset locally
+    assert deps_remote[0]["diff"] == 10 # Shows raw 10m arrival
 
 def test_now_bug_reproduction():
     """
@@ -139,12 +144,12 @@ def test_dumb_firmware_compatibility():
         def remote_address(self): return ("192.168.1.50", 1234) # Hardware IP
 
     ws = MockWS()
-    server.subscriptions[ws] = [{"routeId": "40", "stopId": "1_8494"}]
+    server.subscriptions[ws] = [{"routeId": "40", "stopId": "1_8494", "offset": -300}]
     
     import asyncio
     asyncio.run(server.send_update(ws))
     
-    trip_json = ws.sent["data"]["trips"][0]
+    trip_json = ws.sent["payload"]["trips"][0]
     
     # --- THE DUMB FIRMWARE MODEL ---
     # This represents exactly what the C++ code on the ESP32 does:

@@ -4,16 +4,17 @@ import websockets
 from datetime import datetime, timezone
 from ..config import TransitConfig
 
-# Notifications are temporarily separated to src/transit_tracker/notifications/ntfy.py
-# from .notifications.ntfy import send_ntfy
-
 async def run_service(config: TransitConfig = None):
+    """
+    Background service that maintains a connection to the transit API.
+    Used for monitoring and potentially other background tasks.
+    In 1-to-1 mode, this acts as a verification client for the local proxy.
+    """
     if config is None:
         config = TransitConfig.load()
     api_url = config.api_url
-    notified_trips = set()
 
-    print(f"[CLIENT] Starting notification client, connecting to {api_url}")
+    print(f"[CLIENT] Starting background monitor, connecting to {api_url}")
     
     while True:
         try:
@@ -29,44 +30,23 @@ async def run_service(config: TransitConfig = None):
                 if pairs:
                     await ws.send(json.dumps({
                         "event": "schedule:subscribe",
-                        "client_name": "Notifications",
+                        "client_name": "BackgroundMonitor",
                         "data": {
                             "routeStopPairs": ";".join(pairs)
                         }
                     }))
 
                 async for message in ws:
+                    # In 1-to-1 mode, we just keep the connection alive
+                    # and potentially log updates for debugging.
                     data = json.loads(message)
-                    # Support both 'type' and 'event'
-                    if data.get("type") == "schedule" or data.get("event") == "schedule":
-                        payload = data.get("payload") or data.get("data") or {}
-                        for trip in payload.get("trips", []):
-                            trip_id = trip.get("tripId")
-                            if trip_id in notified_trips:
-                                continue
-
-                            # Calculate arrival
-                            arrival_str = trip.get("arrivalTime") or trip.get("predictedArrivalTime") or trip.get("scheduledArrivalTime")
-                            if not arrival_str:
-                                continue
-
-                            if isinstance(arrival_str, str):
-                                arrival_time = datetime.fromisoformat(arrival_str.replace("Z", "+00:00"))
-                            else:
-                                # Assume unix timestamp (ms or sec)
-                                ts = arrival_str / 1000 if arrival_str > 10**12 else arrival_str
-                                arrival_time = datetime.fromtimestamp(ts, tz=timezone.utc)
-
-                            now = datetime.now(arrival_time.tzinfo)
-                            diff = (arrival_time - now).total_seconds() / 60
-
-                            if 0 < diff <= config.arrival_threshold_minutes:
-                                route_name = trip.get("routeName") or trip.get("routeShortName") or "Bus"
-                                headsign = trip.get("headsign") or "Transit"
-                                label = f"{route_name} to {headsign}"
-                                print(f"[ALERT] {label} arriving! {int(diff)} mins away (Predicted: {arrival_time.strftime('%H:%M')})")
-                                # await send_ntfy(config, f"{label} arriving!", f"Bus is {int(diff)} mins away (Predicted: {arrival_time.strftime('%H:%M')})")
-                                notified_trips.add(trip_id)
+                    if data.get("event") == "schedule":
+                        payload = data.get("payload") or {}
+                        trips = payload.get("trips", [])
+                        if trips:
+                            first = trips[0]
+                            route = first.get("routeName", "??")
+                            print(f"[CLIENT] Received update: {len(trips)} trips. Next: {route} in {first.get('arrivalTime')} (Unix)")
         except Exception as e:
             print(f"[CLIENT] Connection error: {e}. Retrying in 10s...")
             await asyncio.sleep(10)

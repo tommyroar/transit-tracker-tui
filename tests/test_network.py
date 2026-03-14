@@ -14,7 +14,6 @@ def mock_config():
     ]
     config.use_local_api = True
     config.auto_launch_gui = True
-    config.ntfy_topic = "transit-alerts"
     config.arrival_threshold_minutes = 5
     config.check_interval_seconds = 30
     return config
@@ -25,12 +24,13 @@ async def test_server_broadcast_updates(mock_config):
     server = TransitServer(mock_config)
     server.api = AsyncMock()
 
+    now = int(time.time())
     mock_arrivals = [
         {
             "tripId": "trip_123",
             "routeId": "st:40_100240",
             "stopId": "st:1_8494",
-            "arrivalTime": 1773230400000 # 2026-03-11T12:00:00Z in ms
+            "arrivalTime": (now + 600) * 1000 # 10 mins from now in ms
         }
     ]
     server.api.get_arrivals.return_value = mock_arrivals
@@ -44,7 +44,7 @@ async def test_server_broadcast_updates(mock_config):
     ws.send.assert_called_once()
     sent_data = json.loads(ws.send.call_args[0][0])
     assert sent_data["event"] == "schedule"
-    assert sent_data["data"]["trips"][0]["tripId"] == "trip_123"
+    assert sent_data["payload"]["trips"][0]["tripId"] == "trip_123"
 
 @pytest.mark.asyncio
 async def test_fair_diversity_capping(mock_config):
@@ -52,14 +52,15 @@ async def test_fair_diversity_capping(mock_config):
     server = TransitServer(mock_config)
     server.api = AsyncMock()
 
+    now = int(time.time())
     # Two stops, multiple trips per stop
     mock_arrivals_1 = [
-        {"tripId": "stop1_trip1", "routeId": "route1", "stopId": "stop1", "arrivalTime": 1000},
-        {"tripId": "stop1_trip2", "routeId": "route1", "stopId": "stop1", "arrivalTime": 2000},
+        {"tripId": "stop1_trip1", "routeId": "route1", "stopId": "stop1", "arrivalTime": (now + 1000) * 1000},
+        {"tripId": "stop1_trip2", "routeId": "route1", "stopId": "stop1", "arrivalTime": (now + 2000) * 1000},
     ]
     mock_arrivals_2 = [
-        {"tripId": "stop2_trip1", "routeId": "route2", "stopId": "stop2", "arrivalTime": 1500},
-        {"tripId": "stop2_trip2", "routeId": "route2", "stopId": "stop2", "arrivalTime": 2500},
+        {"tripId": "stop2_trip1", "routeId": "route2", "stopId": "stop2", "arrivalTime": (now + 1500) * 1000},
+        {"tripId": "stop2_trip2", "routeId": "route2", "stopId": "stop2", "arrivalTime": (now + 2500) * 1000},
     ]
     
     async def side_effect(stop_id):
@@ -82,7 +83,7 @@ async def test_fair_diversity_capping(mock_config):
 
     ws.send.assert_called_once()
     sent_data = json.loads(ws.send.call_args[0][0])
-    trips = sent_data["data"]["trips"]
+    trips = sent_data["payload"]["trips"]
     
     # Diversity capping should pick:
     # 1. stop1_trip1 (soonest for stop1)

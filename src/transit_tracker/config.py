@@ -83,7 +83,6 @@ class TransitConfig(BaseModel):
     # Application settings
     use_local_api: bool = Field(default=False)
     auto_launch_gui: bool = Field(default=True)
-    ntfy_topic: str = Field(default="transit-alerts")
     arrival_threshold_minutes: int = Field(default=5, ge=1)
     check_interval_seconds: int = Field(default=30, ge=10)
     

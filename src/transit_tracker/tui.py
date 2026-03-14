@@ -359,19 +359,7 @@ async def change_panels_wizard(config: TransitConfig, config_path: str, console:
         config.save(config_path)
         rprint(f"[green]Hardware setup updated to {val} panel(s).[/green]")
 
-async def change_ntfy_wizard(config: TransitConfig, config_path: str):
-    val = await questionary.text(
-        "Enter ntfy.sh topic:",
-        default=config.ntfy_topic or "transit-alerts"
-    ).ask_async()
-    
-    if val:
-        config.ntfy_topic = val
-        if config_path:
-            config.save(config_path)
-            print(f"ntfy.sh topic updated to {val} and saved.")
-        else:
-            print(f"ntfy.sh topic updated to {val} (in-memory).")
+
 
 async def change_api_mode_wizard(config: TransitConfig, config_path: str, console: Console):
     mode = await ask_with_live_dashboard(
@@ -631,7 +619,6 @@ async def async_main_menu():
                     choices=[
                         "Config Files",
                         "Device Config",
-                        "Notifications",
                         "API Settings",
                         "Manage Stops",
                         "Change Number of Panels",
@@ -782,24 +769,6 @@ async def async_main_menu():
                                 else:
                                     print("Configuration read into memory. Please save it to a file.")
 
-                elif c_action == "Notifications":
-                    n_action = await ask_with_live_dashboard(
-                        "Notifications",
-                        choices=[
-                            questionary.Choice("Change Alert Threshold", disabled="Please load or save a config file first" if not has_config else None),
-                            "Add/Change ntfy.sh Endpoint",
-                            "Back"
-                        ],
-                        config=config,
-                        config_path=config_path,
-                        console=console
-                    )
-                    
-                    if n_action == "Change Alert Threshold":
-                        await change_threshold_wizard(config, config_path)
-                    elif n_action == "Add/Change ntfy.sh Endpoint":
-                        await change_ntfy_wizard(config, config_path)
-                        
                 elif c_action == "Manage Stops":
                     s_action = await ask_with_live_dashboard(
                         "Manage Stops",

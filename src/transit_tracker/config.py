@@ -70,6 +70,7 @@ class TransitTrackerSettings(BaseModel):
     stops: List[TransitStop] = Field(default_factory=list)
     styles: List[RouteStyle] = Field(default_factory=list)
     abbreviations: List[Abbreviation] = Field(default_factory=list)
+    mapbox_access_token: Optional[str] = None
     
     # Hardware defaults for the physical board
     num_panels: int = Field(default=2, ge=1, le=4)

@@ -13,6 +13,16 @@ class TransitAPI:
         self.oba_key = "TEST"
         self.client = httpx.AsyncClient(timeout=10.0)
 
+    @staticmethod
+    def _clean_stop_id(stop_id: str) -> str:
+        """Strip internal feed prefix if present (e.g. 'st:1_8494' -> '1_8494')."""
+        if ":" in stop_id and "_" in stop_id:
+            colon_idx = stop_id.find(":")
+            underscore_idx = stop_id.find("_")
+            if colon_idx < underscore_idx:
+                return stop_id[colon_idx + 1:]
+        return stop_id
+
     async def geocode(self, query: str) -> Optional[Tuple[float, float, str]]:
         """
         Geocodes a street intersection or address using Nominatim.
@@ -94,19 +104,33 @@ class TransitAPI:
         except Exception as e:
             raise TransitAPIError(f"Failed to fetch stops: {e}")
 
+    async def get_stop(self, stop_id: str) -> Optional[Dict[str, Any]]:
+        """Fetches details for a single stop by ID, including lat/lon."""
+        clean_stop_id = self._clean_stop_id(stop_id)
+        url = f"{self.oba_base_url}/stop/{urllib.parse.quote(clean_stop_id)}.json"
+        params = {"key": self.oba_key}
+
+        try:
+            response = await self.client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            if data.get("code") == 200:
+                s = data["data"]["entry"]
+                return {
+                    "id": stop_id,
+                    "name": s["name"],
+                    "lat": s["lat"],
+                    "lon": s["lon"],
+                }
+            return None
+        except Exception as e:
+            raise TransitAPIError(f"Failed to fetch stop {stop_id}: {e}")
+
     async def get_arrivals(self, stop_id: str) -> List[Dict[str, Any]]:
         """
         Fetches real-time arrivals for a specific stop.
         """
-        # Strip internal feed prefix if present (e.g. 'st:1_8494' -> '1_8494')
-        clean_stop_id = stop_id
-        if ":" in stop_id and "_" in stop_id:
-            # Check if the colon is before the underscore (likely our prefix)
-            colon_idx = stop_id.find(":")
-            underscore_idx = stop_id.find("_")
-            if colon_idx < underscore_idx:
-                clean_stop_id = stop_id[colon_idx+1:]
-
+        clean_stop_id = self._clean_stop_id(stop_id)
         url = f"{self.oba_base_url}/arrivals-and-departures-for-stop/{urllib.parse.quote(clean_stop_id)}.json"
         params = {"key": self.oba_key}
         

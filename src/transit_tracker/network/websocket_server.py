@@ -210,14 +210,21 @@ class TransitServer:
                 arrivals = await self.get_arrivals_cached(clean_stop_id)
                 
                 # Map normalized routeId to its specific subscription for offset processing
+                # We normalize BOTH sides to ensure a match even if prefixes differ
                 route_to_sub = {normalize_id(s.get("routeId")): s for s in stop_subs}
                 relevant_routes = set(route_to_sub.keys())
                 
                 now_ts = int(time.time())
 
                 for arr in arrivals:
-                    arr_route_id = normalize_id(arr["routeId"])
-                    if not relevant_routes or "" in relevant_routes or None in relevant_routes or arr_route_id in relevant_routes:
+                    # Use full IDs for the response to match cloud proxy
+                    full_route_id = arr.get("routeId", "")
+                    normalized_route_id = normalize_id(full_route_id)
+                    
+                    # Match if relevant_routes is empty (all routes) or if normalized IDs match
+                    is_match = not relevant_routes or "" in relevant_routes or None in relevant_routes or normalized_route_id in relevant_routes
+                    
+                    if is_match:
                         # 1. Get raw timestamps
                         arr_val = arr.get("predictedArrivalTime") or arr.get("scheduledArrivalTime") or arr.get("arrivalTime")
                         dep_val = arr.get("predictedDepartureTime") or arr.get("scheduledDepartureTime") or arr.get("departureTime") or arr_val
@@ -231,14 +238,13 @@ class TransitServer:
                         if dep_val > 10**12: dep_val //= 1000
                         
                         # 3. Apply the per-pair offset (from the subscription handshake)
-                        sub = route_to_sub.get(arr_route_id) or stop_subs[0]
+                        sub = route_to_sub.get(normalized_route_id) or stop_subs[0]
                         offset_sec = sub.get("offset", 0)
                         
                         final_arrival = arr_val + offset_sec
                         final_departure = dep_val + offset_sec
 
                         # 4. STRICT FILTERING (Original Project Behavior)
-                        # Don't send trips that are already in the past (after offset)
                         if final_arrival < now_ts - 60:
                             continue
 
@@ -248,7 +254,7 @@ class TransitServer:
 
                         all_trips.append({
                             "tripId": str(arr.get("tripId", "")),
-                            "routeId": str(arr_route_id),
+                            "routeId": str(full_route_id),
                             "routeName": str(route_name),
                             "routeColor": str(arr.get("routeColor", "")) if arr.get("routeColor") else None,
                             "stopId": str(stop_id),

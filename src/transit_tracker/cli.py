@@ -74,7 +74,6 @@ async def run_full_service():
     # 2. Default load logic (config.yaml, .local/config.yaml)
     path = get_last_config_path()
     if path and os.path.exists(path):
-        print(f"[SERVICE] Loading config from {path}")
         config = TransitConfig.load(path)
     else:
         config = TransitConfig.load()
@@ -82,56 +81,32 @@ async def run_full_service():
     tasks = []
     
     if config.use_local_api:
-        print("[SERVICE] Mode: Local API (Starting internal server)")
         # Force client to use local server
-        config.api_url = "ws://Tommys-Mac-mini.local:8000"
+        config.api_url = "ws://localhost:8000"
         tasks.append(run_server(config=config))
     else:
         # If using public API, ensure it's not pointing to localhost
         if "localhost" in config.api_url or "127.0.0.1" in config.api_url:
             config.api_url = "wss://tt.horner.tj/"
-        print(f"[SERVICE] Mode: Public API ({config.api_url})")
     
     tasks.append(run_client(config=config))
     
-    print(f"[SERVICE] Starting all background tasks...")
     await asyncio.gather(*tasks)
 
 def start_gui_if_needed(config: TransitConfig):
     """Starts the macOS tray icon if enabled and not already running."""
     if sys.platform != "darwin" or not config.auto_launch_gui:
         return
-    try:
-        import subprocess
-        # Check if already running using pgrep (idempotent)
-        res = subprocess.run(["pgrep", "-f", "transit-tracker gui"], capture_output=True)
-        if res.returncode != 0:
-            # Find the absolute path to ourselves
-            # sys.executable is .../.venv/bin/python
-            # transit-tracker is .../.venv/bin/transit-tracker
-            python_bin_dir = os.path.dirname(sys.executable)
-            transit_tracker_bin = os.path.join(python_bin_dir, "transit-tracker")
-            
-            # Fallback to just the command if not found in same bin
-            cmd = [transit_tracker_bin, "gui"] if os.path.exists(transit_tracker_bin) else ["transit-tracker", "gui"]
-            
-            # Not running, launch it in the background
-            subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True
-            )
-    except Exception:
-        pass
+        
+    # Check if gui is already running
+    import subprocess
+    res = subprocess.run(["pgrep", "-f", "transit-tracker gui"], capture_output=True)
+    if res.returncode != 0:
+        # Start in background
+        subprocess.Popen([sys.executable, "-m", "transit_tracker.cli", "gui"], start_new_session=True)
 
 def main():
-    # Load config early to check auto_launch_gui
-    path = get_last_config_path()
-    if path and os.path.exists(path):
-        config = TransitConfig.load(path)
-    else:
-        config = TransitConfig.load()
+    config = TransitConfig.load()
 
     parser = argparse.ArgumentParser(description="Transit Tracker Configuration")
     parser.add_argument(

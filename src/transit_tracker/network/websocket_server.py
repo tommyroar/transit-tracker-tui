@@ -286,11 +286,19 @@ class TransitServer:
                         sub = route_to_sub.get(normalized_route_id) or stop_subs[0]
                         offset_sec = sub.get("offset", 0)
                         
-                        # Choose time based on display mode
-                        base_time = raw_dep if display_mode == "departure" else raw_arr
-                        final_display_time = base_time + offset_sec
+                        # robustness: if the preferred time is missing or in the distant past
+                        # (OBA sometimes has stale values for one but not the other), fall back.
+                        now_minus_buffer = now_ts - 3600 # 1 hour ago
+                        
+                        if display_mode == "departure":
+                            base_time = raw_dep if (raw_dep and raw_dep > now_minus_buffer) else raw_arr
+                        else:
+                            base_time = raw_arr if (raw_arr and raw_arr > now_minus_buffer) else raw_dep
+                        
+                        if not base_time or base_time < now_minus_buffer:
+                            continue
 
-                        if final_display_time < now_ts - 60: continue
+                        final_display_time = base_time + offset_sec
 
                         all_trips.append({
                             "tripId": str(arr.get("tripId", "")),

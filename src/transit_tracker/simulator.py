@@ -308,16 +308,19 @@ class LEDSimulator:
                 
         # Draw Icon (left of time)
         if is_realtime:
-            icon_bm = self.microfont.get_bitmap(">")
-            icon_w_actual = len(icon_bm[0])
-            icon_x = time_x - icon_w_actual - 2
-            icon_color = "bright_blue"
-            for r in range(7):
-                for c in range(icon_w_actual):
+            icon_bm = self.microfont.get_live_icon_frame(elapsed)
+            icon_x = time_x - 8 # 2px gap + 6px icon
+            icon_color = "white"
+            icon_color_dark = "bright_blue"
+            for r in range(6):
+                for c in range(6):
                     ix = icon_x + c
                     if 0 <= ix < display_width:
-                        if icon_bm[r][c]:
+                        val = icon_bm[r][c]
+                        if val == 2:
                             canvas[r][ix] = icon_color
+                        elif val == 1:
+                            canvas[r][ix] = icon_color_dark
 
         # Draw Headsign (with clipping and scroll)
         for r in range(7):
@@ -402,7 +405,15 @@ class LEDSimulator:
                     if arr_val is None: continue
                     
                     display_mode = getattr(self.config, "time_display", "arrival")
-                    base_val = dep_val if display_mode == "departure" else arr_val
+                    
+                    now_minus_buffer_ms = current_time_ms - (3600 * 1000)
+                    
+                    if display_mode == "departure":
+                        base_val = dep_val if (dep_val and dep_val > now_minus_buffer_ms / 1000) else arr_val
+                    else:
+                        base_val = arr_val if (arr_val and arr_val > now_minus_buffer_ms / 1000) else dep_val
+
+                    if base_val is None: continue
 
                     if isinstance(base_val, str):
                         try:
@@ -411,6 +422,9 @@ class LEDSimulator:
                         except ValueError: continue
                     elif base_val > 10**12: base_time_ms = base_val
                     else: base_time_ms = base_val * 1000
+
+                    if base_time_ms < now_minus_buffer_ms:
+                        continue
 
                     # Calculate Offset
                     # BOTH Local and Cloud proxies now apply offsets on the server-side

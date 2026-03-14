@@ -129,34 +129,34 @@ class TransitServer:
                     elif "client_name" in data:
                         self.client_names[ws] = data["client_name"]
                     else:
-                        # RELIABLE DETECTION: If an unknown device connects from a 
-                        # known local IP or with specific subscription patterns, 
-                        # label it as the Hardware Controller.
                         addr = getattr(ws, "remote_address", None)
                         if addr and (addr[0].startswith("192.168.") or addr[0].startswith("10.0.")):
                              self.client_names[ws] = "Hardware Controller"
                     
                     pairs = []
                     # Case 1: routeStopPairs string (TJ Horner style)
+                    # Support: routeId,stopId[,offset]
                     pairs_str = payload.get("routeStopPairs")
                     if pairs_str:
                         for pair in pairs_str.split(";"):
-                            if "," in pair:
-                                r_id, s_id = pair.split(",")
-                                pairs.append({"routeId": r_id, "stopId": s_id})
+                            parts = [p.strip() for p in pair.split(",")]
+                            if len(parts) >= 2:
+                                r_id, s_id = parts[0], parts[1]
+                                offset = int(parts[2]) if len(parts) >= 3 else 0
+                                pairs.append({"routeId": r_id, "stopId": s_id, "offset": offset})
                     elif pairs_str == "":
-                        # FALLBACK: If device sends empty string, it might have lost its config.
-                        # Use the server's own configured subscriptions as a default.
+                        # FALLBACK: Use server-side config if board sends empty string
                         print(f"[SERVER] Client sent empty routeStopPairs, using server defaults.")
                         for sub in self.config.subscriptions:
-                            pairs.append({"routeId": sub.route, "stopId": sub.stop})
-                    # Case 2: Individual stop/route (Older/Custom style)
-                    elif "stopId" in payload:
-                        pairs.append({
-                            "routeId": payload.get("routeId"), 
-                            "stopId": payload.get("stopId")
-                        })
-                    
+                            # Map the human-readable 'time_offset' to seconds
+                            off_sec = 0
+                            try:
+                                import re
+                                match = re.search(r"(-?\d+)", str(sub.time_offset))
+                                if match: off_sec = int(match.group(1)) * 60
+                            except: pass
+                            pairs.append({"routeId": sub.route, "stopId": sub.stop, "offset": off_sec})
+
                     if pairs:
                         self.subscriptions[ws] = pairs
                         # Store limit if provided
@@ -165,7 +165,7 @@ class TransitServer:
                             self.client_limits[ws] = int(limit)
                         
                         self.sync_state()
-                        print(f"[SERVER] Client {ws.remote_address} subscribed to {len(pairs)} pairs (limit={limit})")
+                        print(f"[SERVER] Client {ws.remote_address} subscribed to {len(pairs)} pairs")
                         # Send immediate update
                         await self.send_update(ws)
         except websockets.exceptions.ConnectionClosed:
@@ -213,139 +213,105 @@ class TransitServer:
                 route_to_sub = {normalize_id(s.get("routeId")): s for s in stop_subs}
                 relevant_routes = set(route_to_sub.keys())
                 
+                now_ts = int(time.time())
+                found_at_stop = 0
+
                 for arr in arrivals:
-                    arr_route_id = normalize_id(arr["routeId"])
-                    # If relevant_routes is effectively empty (e.g. subscribing to all routes at a stop)
-                    # or if the specific route is matched, include it.
-                    if not relevant_routes or "" in relevant_routes or None in relevant_routes or arr_route_id in relevant_routes:
-                        arr_copy = arr.copy()
-                        arr_copy["stopId"] = stop_id
-                        
-                        # Apply Travel Time Offset on the Server
-                        # We must look this up in the server's master config because the client
-                        # doesn't send offset info in the routeStopPairs protocol.
-                        offset_sec = 0
-                        master_sub = None
-                        for s in self.config.subscriptions:
-                            if normalize_id(s.route) == arr_route_id and normalize_id(s.stop) == clean_stop_id:
-                                master_sub = s
-                                break
-                            
-                        if master_sub and master_sub.time_offset:
-                            try:
-                                import re
-                                match = re.search(r"(-?\d+)", str(master_sub.time_offset))
-                                if match:
-                                    offset_sec = int(match.group(1)) * 60
-                            except (ValueError, TypeError):
-                                pass
-
-                        # Fix for the "Now" Bug: The ESPHome firmware strictly expects 
-                        # `arrivalTime` AND `departureTime`. If the board is configured to 
-                        # display departures, a missing `departureTime` parses as `0` in C++, 
-                        # resulting in a massive negative duration that evaluates to "Now".
-                        # We must conform EXACTLY to the original TJ Horner TypeScript interface.
-
+                    # Use full IDs for the response to match cloud proxy
+                    full_route_id = arr.get("routeId", "")
+                    normalized_route_id = normalize_id(full_route_id)
+                    
+                    # Match if relevant_routes is empty (all routes) or if normalized IDs match
+                    is_match = not relevant_routes or "" in relevant_routes or None in relevant_routes or normalized_route_id in relevant_routes
+                    
+                    if is_match:
+                        # 1. Get raw timestamps
                         arr_val = arr.get("predictedArrivalTime") or arr.get("scheduledArrivalTime") or arr.get("arrivalTime")
                         dep_val = arr.get("predictedDepartureTime") or arr.get("scheduledDepartureTime") or arr.get("departureTime") or arr_val
                         
-                        # Handle strings defensively
+                        if not arr_val: continue
                         if isinstance(arr_val, str) and arr_val.isdigit(): arr_val = int(arr_val)
                         if isinstance(dep_val, str) and dep_val.isdigit(): dep_val = int(dep_val)
-
-                        if not arr_val: continue
-
-                        # Convert to Unix seconds
-                        if isinstance(arr_val, (int, float)) and arr_val > 10**12:
-                            arr_val = int(arr_val // 1000)
-                        if isinstance(dep_val, (int, float)) and dep_val > 10**12:
-                            dep_val = int(dep_val // 1000)
-
-                        now_ts = int(time.time())
                         
-                        # The absolute timestamps sent down must be shifted by the offset.
-                        # This creates a "spoofed" Unix timestamp immune to board SNTP clock skew.
-                        spoofed_arrival = now_ts + (arr_val - now_ts) + offset_sec
-                        spoofed_departure = now_ts + (dep_val - now_ts) + offset_sec
+                        # 2. Convert to seconds
+                        if arr_val > 10**12: arr_val //= 1000
+                        if dep_val > 10**12: dep_val //= 1000
+                        
+                        # 3. Apply the per-pair offset (from the subscription handshake)
+                        sub = route_to_sub.get(normalized_route_id) or stop_subs[0]
+                        offset_sec = sub.get("offset", 0)
+                        
+                        final_arrival = arr_val + offset_sec
+                        final_departure = dep_val + offset_sec
 
-                        is_realtime = arr.get("isRealtime") if "isRealtime" in arr else ("predictedArrivalTime" in arr)
+                        # 4. STRICT FILTERING (Original Project Behavior)
+                        if final_arrival < now_ts - 60:
+                            continue
+
                         route_name = arr.get("routeName") or arr.get("routeShortName") or ""
                         headsign = arr.get("headsign") or arr.get("tripHeadsign") or "Transit"
+                        is_realtime = bool(arr.get("isRealtime") or "predictedArrivalTime" in arr)
 
-                        clean_trip = {
+                        all_trips.append({
                             "tripId": str(arr.get("tripId", "")),
-                            "routeId": str(arr_route_id),
+                            "routeId": str(full_route_id),
                             "routeName": str(route_name),
                             "routeColor": str(arr.get("routeColor", "")) if arr.get("routeColor") else None,
                             "stopId": str(stop_id),
                             "headsign": str(headsign),
-                            "arrivalTime": int(spoofed_arrival),
-                            "departureTime": int(spoofed_departure),
-                            "isRealtime": bool(is_realtime)
-                        }
-
-                        all_trips.append(clean_trip)
-            except Exception as e:
-                print(f"[SERVER] Error fetching arrivals for {stop_id}: {e}")
-
-        # 1. Sort all aggregated trips by arrival time
-        all_trips.sort(key=lambda x: x.get("arrivalTime", 0))
-
-        # 2. Apply "Fair" Diversity Capping to respect hardware vertical space
-        # We want to ensure at least one trip from each stop is shown if possible,
-        # but stay strictly within the hardware's requested limit.
-        limit = self.client_limits.get(ws, 3)
-        
-        final_trips = []
-        seen_stops = set()
-        
-        # Pass 1: Get the soonest arrival for every stop
-        for trip in all_trips:
-            stop_id = trip.get("stopId")
-            if stop_id not in seen_stops:
-                final_trips.append(trip)
-                seen_stops.add(stop_id)
-            if len(final_trips) >= limit:
-                break
+                            "arrivalTime": int(final_arrival),
+                            "departureTime": int(final_departure),
+                            "isRealtime": is_realtime
+                        })
+                        found_at_stop += 1
                 
-        # Pass 2: Fill remaining slots with the next soonest arrivals overall
-        if len(final_trips) < limit:
-            for trip in all_trips:
-                if trip not in final_trips:
-                    final_trips.append(trip)
-                if len(final_trips) >= limit:
-                    break
-        
-        # Sort the final subset by time so they appear in order on the board
-        final_trips.sort(key=lambda x: x.get("arrivalTime", 0))
+                if found_at_stop > 0:
+                    print(f"[SERVER] Found {found_at_stop} active trips for stop {stop_id}", flush=True)
+            except Exception as e:
+                print(f"[SERVER] Error processing stop {stop_id}: {e}", flush=True)
 
-        # 3. Build the response
+        # 5. SORTING & LAPPING (Original Project Behavior)
+        all_trips.sort(key=lambda x: x.get("arrivalTime", 0))
+        limit = self.client_limits.get(ws, 3)
+        final_trips = all_trips[:limit]
+        
+        # 6. BUILD RESPONSE (Match TJ Horner protocol exactly)
         response = {
             "event": "schedule",
-            "type": "schedule",
-            "data": {"trips": final_trips},
-            "payload": {
-                "trips": final_trips
-            }
+            "data": {"trips": final_trips}
         }
-        
-        # Hardware/TJ Horner protocol: top-level stopId is usually expected.
-        # Use the first stop in our subscription list for compatibility.
-        if subs:
-            response["payload"]["stopId"] = subs[0]["stopId"]
-        elif stop_to_subs:
-            first_stop = sorted(stop_to_subs.keys())[0]
-            response["payload"]["stopId"] = first_stop
 
-        await ws.send(json.dumps(response))
-        self.messages_processed += 1
-        self.last_broadcast_time = time.time()
-        self.sync_state(last_message=response)
+        try:
+            msg_json = json.dumps(response)
+            addr = getattr(ws, "remote_address", None)
+            if addr and addr[0] != "127.0.0.1":
+                print(f"[SERVER] Sending {len(final_trips)} trips to {addr}: {msg_json[:150]}...", flush=True)
+                
+            await ws.send(msg_json)
+            self.messages_processed += 1
+            self.last_broadcast_time = time.time()
+            self.sync_state(last_message=response)
+        except Exception as e:
+            print(f"[SERVER] Error sending update to {getattr(ws, 'remote_address', 'Unknown')}: {e}", flush=True)
 
     async def broadcast_loop(self):
+        last_heartbeat = 0
         while True:
+            now = time.time()
+            
+            # Send heartbeat every 10 seconds to prevent hardware timeout
+            send_heartbeat = (now - last_heartbeat >= 10)
+            
             # Copy clients to avoid mutation during iteration
             for ws in list(self.clients):
+                # 1. Handle Heartbeat
+                if send_heartbeat:
+                    try:
+                        await ws.send(json.dumps({"event": "heartbeat", "data": None}))
+                    except:
+                        pass
+                
+                # 2. Handle Schedule Updates
                 if ws in self.subscriptions:
                     try:
                         await self.send_update(ws)
@@ -355,6 +321,9 @@ class TransitServer:
                     except Exception as e:
                         print(f"[SERVER] Error updating client {ws.remote_address}: {e}")
             
+            if send_heartbeat:
+                last_heartbeat = now
+
             # Always update heartbeat so GUI knows we are alive
             self.sync_state()
             await asyncio.sleep(self.config.check_interval_seconds)

@@ -11,6 +11,9 @@ dependencies = [
     "bdfparser>=2.2.0",
     "esptool>=5.2.0",
     "httpx>=0.28.1",
+    "numpy>=2.4.3",
+    "opencv-python>=4.13.0.92",
+    "opencv-python-headless>=4.13.0.92",
     "pillow>=12.1.1",
     "pydantic>=2.12.5",
     "pyobjc-framework-quartz>=12.1",
@@ -25,6 +28,7 @@ dependencies = [
 [project.scripts]
 transit-tracker = "transit_tracker.cli:main"
 transit-tracker-gui = "transit_tracker.gui:main"
+transit-tracker-capture = "transit_tracker.capture:main"
 
 [build-system]
 requires = ["uv_build>=0.10.4,<0.11.0"]

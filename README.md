@@ -123,6 +123,8 @@ To stay up to date with the core project:
 
 The project includes a specialized utility for validating your physical LED board against the simulator. Because LED matrices use PWM (multiplexing), they often appear jittery or have black bands in single photos. 
 
+![Hardware vs Simulator Comparison](docs/assets/comparison.jpg)
+
 This tool uses **Temporal Frame Averaging** to merge multiple frames from a video/timelapse into a single smooth image, then uses **Color-Selective Template Matching** to automatically identify and crop the transit board from the photo using the simulator as a "fingerprint".
 
 ### 1. Capture & Average

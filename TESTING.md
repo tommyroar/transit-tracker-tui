@@ -25,6 +25,8 @@ We employ a multi-layered testing strategy, moving from isolated logic to full-s
 ### 3. System & Simulator (Top)
 *   **Files:** `test_captures.py`, `test_simulator_mock_equivalence.py`, `test_firmware_correctness.py`
 *   **Purpose:** High-fidelity end-to-end simulation. This layer ensures that the final rendered text on the LED matrix (simulated) perfectly matches expected behavior.
+*   **Visual Ground Truth:** 
+    *   **`scripts/capture_cam.py`**: This script uses an attached webcam to capture the **physical LED display**. This is our "final word" verification. We use these images to manually verify that the text on the real hardware matches the character-by-character logic in `accurate_config.yaml`.
 *   **Errors Caught:**
     *   `Now Bug`: Catching massive negative minute offsets (e.g., "-2938423m") when `departureTime` is missing.
     *   `Offset Inconsistency`: Verifying that a `-2min` offset applied by the server results in exactly `8m` being displayed for a `10m` arrival.

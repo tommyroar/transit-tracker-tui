@@ -4,14 +4,15 @@
 
 To ensure the simulator perfectly matches the physical hardware display, follow this iterative process:
 
-1.  **Record Input Data:** In `.local/accurate_config.yaml`, add a new entry to `captures`:
+1.  **Capture Visual Evidence:** Run `python scripts/capture_cam.py` to take a snapshot of the **real hardware display**.
+2.  **Record Input Data:** In `.local/accurate_config.yaml`, add a new entry to `captures` based on the webcam image:
     - `time`: Timestamp of the test.
     - `display`: EXACT text observed on the **real hardware display**.
     - `simulator`: EXACT text observed on the **live simulator** (before the fix).
-2.  **Reproduction:** Run `uv run pytest tests/test_captures.py` from the project root to confirm the failure.
-3.  **Debug & Fix:** Identify discrepancies in `src/transit_tracker/simulator.py` logic (e.g., time offsets, route name parsing, truncation, scroll speed) and apply fixes.
-4.  **Verify:** Re-run the test harness until all captures pass.
-5.  **Loop:** Repeat until the simulator's rendered output is char-for-char identical to the hardware display.
+3.  **Reproduction:** Run `uv run pytest tests/test_captures.py` from the project root to confirm the failure.
+4.  **Debug & Fix:** Identify discrepancies in `src/transit_tracker/simulator.py` logic (e.g., time offsets, route name parsing, truncation, scroll speed) and apply fixes.
+5.  **Verify:** Re-run the test harness until all captures pass.
+6.  **Loop:** Repeat until the simulator's rendered output is char-for-char identical to the hardware display.
 
 A task involving the simulator is **not complete** until all recorded captures in `.local/accurate_config.yaml` pass verification.
 

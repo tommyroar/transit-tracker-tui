@@ -41,11 +41,20 @@ We employ a multi-layered testing strategy, moving from isolated logic to full-s
 *   **Errors Caught:**
     *   `Now Bug`: Catching massive negative minute offsets (e.g., "-2938423m") when `departureTime` is missing.
     *   `Offset Inconsistency`: Verifying that a `-2min` offset applied by the server results in exactly `8m` being displayed for a `10m` arrival.
-    *   `Visual Discrepancy`: Using hardware captures in `accurate_config.yaml` to detect when the simulator's scrolling speed or truncation logic differs from the physical panel.
+    *   **Visual Discrepancy**: Using hardware captures in `accurate_config.yaml` to detect when the simulator's scrolling speed or truncation logic differs from the physical panel.
 
----
+    ### 4. Live Cloud Equivalence (Integration)
+    *   **File:** `scripts/verify_cloud_equivalence.py`
+    *   **Purpose:** Live integration test that connects to both the local proxy and the production cloud endpoint (`wss://tt.horner.tj/`) simultaneously.
+    *   **Verification:**
+        *   **Protocol Parity:** Ensures the local server sends the exact same schema (top-level `data` key, trip-level `stopId`) as the reference cloud proxy.
+        *   **Real-time Accuracy:** Compares the arrival times and offsets between both endpoints to ensure the local implementation isn't drifting or miscalculating.
+        *   **Hot-Reloading:** Verifies that switching profiles locally correctly updates the broadcast without requiring a client reconnection.
 
-## 🔗 Reference Compatibility Verification
+    ---
+
+    ## 🔗 Reference Compatibility Verification
+
 
 To ensure this Python service is a drop-in replacement for the official Node.js container, we use a specialized "Contract Test" pattern:
 

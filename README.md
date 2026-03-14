@@ -149,8 +149,17 @@ uv run transit-tracker-capture [path_to_image.jpg]
 
 ## 🛠️ Development
 
-If you are developing or modifying the codebase, you can run tests using:
+If you are developing or modifying the codebase, you can run the full test suite using:
 
 ```bash
-uv run pytest
+./scripts/ci_local.sh
 ```
+
+### Live Cloud Equivalence Check
+To verify that your local proxy is producing data identical to the official cloud endpoint, run:
+
+```bash
+uv run python scripts/verify_cloud_equivalence.py
+```
+
+This performs a live structural and data-parity check against `wss://tt.horner.tj/`.

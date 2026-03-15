@@ -18,7 +18,7 @@ def test_offset_contract_consistency():
     config = TransitConfig()
     from transit_tracker.config import TransitStop
     config.transit_tracker.stops = [
-        TransitStop(stop_id="1_1234", routes=["14"], time_offset="-2min")
+        TransitStop(stop_id="1_1234", routes=["st:14"], time_offset="-2min")
     ]
     config.sync_internal_state()
     # Ensure routeId in mock trip matches what normalize_id expects

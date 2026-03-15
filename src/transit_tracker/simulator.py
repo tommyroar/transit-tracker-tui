@@ -441,14 +441,17 @@ class LEDSimulator:
                             route_name = sub.label.split("-")[0].strip().split()[0] if sub and sub.label else sub.route.split("_")[-1]
                         
                         headsign = trip.get("headsign")
-                        # If headsign is already a vessel name (from server), use it. Otherwise, construct from sub label.
+                        
+                        # Fallback for old data or direct simulator runs
+                        vehicle_id_full = trip.get("vehicleId")
+                        if vehicle_id_full and ("95_" in vehicle_id_full or "wsf" in route_name.lower()):
+                            vehicle_id_short = vehicle_id_full.split("_")[-1]
+                            vessel_name = WSF_VESSELS.get(vehicle_id_short)
+                            if vessel_name:
+                                route_name = vessel_name.upper()
+                                
                         if not headsign:
-                            # Fallback for old data or direct simulator runs
-                            vehicle_id_full = trip.get("vehicleId")
-                            if vehicle_id_full and ("95_" in vehicle_id_full or "wsf" in route_name.lower()):
-                                vehicle_id_short = vehicle_id_full.split("_")[-1]
-                                headsign = WSF_VESSELS.get(vehicle_id_short, "FERRY").upper()
-                            elif sub:
+                            if sub:
                                 headsign = sub.label.split("-")[-1].strip() if "-" in sub.label else sub.label
                         
                         is_live = trip.get("isRealtime", False)

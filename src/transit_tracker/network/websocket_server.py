@@ -56,6 +56,7 @@ class TransitServer:
         # stop_id -> (timestamp, List[arrivals])
         self.cache = {}
         self.rate_limited_stops = set() # Stops currently hitting 429
+        self.rate_limit_until = {} # stop_id -> timestamp when retry is allowed
         
         # Exponential Backoff State
         self.base_interval = self.config.check_interval_seconds
@@ -107,24 +108,34 @@ class TransitServer:
     async def get_arrivals_cached(self, clean_stop_id: str):
         """Returns arrivals for a stop, fetching from OBA only if not recently cached."""
         now = time.time()
+
+        # Skip rate-limited stops until their cooldown expires
+        if clean_stop_id in self.rate_limited_stops:
+            retry_at = self.rate_limit_until.get(clean_stop_id, 0)
+            if now < retry_at:
+                return self.cache.get(clean_stop_id, (0, []))[1]
+            # Cooldown expired — allow retry
+            self.rate_limited_stops.discard(clean_stop_id)
+
         if clean_stop_id in self.cache:
             ts, data = self.cache[clean_stop_id]
             # Use cached data if it's within the check interval - 2s buffer for safety
             if now - ts < (self.base_interval - 2):
                 return data
-        
+
         # Fetch fresh
         print(f"[SERVER] Making OBA API call for clean_stop_id={clean_stop_id}...", flush=True)
         try:
             arrivals = await self.api.get_arrivals(clean_stop_id)
             self.cache[clean_stop_id] = (now, arrivals)
             self.rate_limited_stops.discard(clean_stop_id)
+            self.rate_limit_until.pop(clean_stop_id, None)
             return arrivals
         except Exception as e:
             if "429" in str(e):
                 print(f"[SERVER] ⚠️ RATE LIMITED for {clean_stop_id}", flush=True)
                 self.rate_limited_stops.add(clean_stop_id)
-                # Let the data_refresh_loop handle the backoff logic
+                self.rate_limit_until[clean_stop_id] = now + self.current_refresh_interval
                 raise e
             else:
                 print(f"[SERVER] OBA Error for {clean_stop_id}: {e}", flush=True)
@@ -262,8 +273,8 @@ class TransitServer:
                 if clean_stop_id in self.cache:
                     arrivals = self.cache[clean_stop_id][1]
                 else:
-                    # If not in cache, try to fetch (will raise if 429)
-                    arrivals = await self.get_arrivals_cached(clean_stop_id)
+                    # Cache miss — data_refresh_loop will populate shortly; skip for now
+                    arrivals = []
                 
                 route_to_sub = {self.normalize_id(s.get("routeId")): s for s in stop_subs}
                 relevant_routes = set(route_to_sub.keys())
@@ -301,7 +312,7 @@ class TransitServer:
                         
                         # robustness: if the preferred time is missing or in the distant past
                         # (OBA sometimes has stale values for one but not the other), fall back.
-                        now_minus_buffer = now_ts - 3600 # 1 hour ago
+                        now_minus_buffer = now_ts - 60 # 1 minute ago
                         
                         if display_mode == "departure":
                             base_time = raw_dep if (raw_dep and raw_dep > now_minus_buffer) else raw_arr
@@ -313,20 +324,21 @@ class TransitServer:
 
                         final_display_time = base_time + offset_sec
 
-                        # For ferries, replace headsign with vessel name
+                        # For ferries, replace route name with vessel name
                         headsign = self.apply_abbreviations(str(arr.get("headsign") or arr.get("tripHeadsign") or "Transit"))
+                        route_name = self.apply_abbreviations(str(arr.get("routeName") or arr.get("routeShortName") or ""))
                         vehicle_id_full = arr.get("vehicleId")
                         # Check if route is a ferry route
                         if vehicle_id_full and ("95_" in vehicle_id_full or "wsf" in full_route_id.lower()):
                             vehicle_id_short = vehicle_id_full.split("_")[-1]
                             vessel_name = WSF_VESSELS.get(vehicle_id_short)
                             if vessel_name:
-                                headsign = vessel_name.upper()
+                                route_name = vessel_name.upper()
 
                         all_trips.append({
                             "tripId": str(arr.get("tripId", "")),
                             "routeId": str(full_route_id),
-                            "routeName": self.apply_abbreviations(str(arr.get("routeName") or arr.get("routeShortName") or "")),
+                            "routeName": route_name,
                             "routeColor": str(arr.get("routeColor", "")) if arr.get("routeColor") else None,
                             "stopId": str(stop_id),
                             "headsign": headsign,
@@ -334,7 +346,10 @@ class TransitServer:
                             "departureTime": int((raw_dep or raw_arr) + offset_sec),
                             "isRealtime": bool(arr.get("isRealtime"))
                         })
-            except Exception:
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f"[SERVER ERROR] Exception in send_update: {e}", flush=True)
                 # 429s during send_update are ignored (we use last cache)
                 pass
 

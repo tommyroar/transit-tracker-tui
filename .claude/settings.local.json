@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(uv run:*)",
+      "Bash(git fetch:*)",
+      "Bash(pkill:*)",
+      "Bash(kill:*)",
+      "Bash(launchctl list:*)",
+      "Bash(find:*)",
+      "Bash(git commit:*)",
+      "Bash(grep:*)",
+      "Bash(git add:*)",
+      "Bash(git push:*)",
+      "Bash(wc:*)",
+      "Bash(TRANSIT_TRACKER_TESTING=1 uv run pytest tests/test_network.py::test_ferry_uses_departure_time_not_arrival tests/test_network.py::test_ferry_uses_predicted_departure_when_realtime tests/test_network.py::test_bus_still_respects_arrival_display_mode -v 2>&1)",
+      "Bash(TRANSIT_TRACKER_TESTING=1 uv run pytest tests/test_network.py -v 2>&1)",
+      "Bash(TRANSIT_TRACKER_TESTING=1 uv run pytest -v 2>&1)",
+      "Bash(ls:*)",
+      "Bash(TRANSIT_TRACKER_TESTING=1 uv run pytest tests/test_gui_profiles.py -v 2>&1)",
+      "Bash(TRANSIT_TRACKER_TESTING=1 uv run pytest tests/test_network.py tests/test_gui_profiles.py tests/test_proxy_equivalence.py -v 2>&1)",
+      "Bash(python3 -m json.tool)",
+      "WebSearch",
+      "WebFetch(domain:developer.onebusaway.org)",
+      "Bash(node:*)",
+      "mcp__dev-server__dev_server_start",
+      "mcp__dev-server__port_check"
+    ]
+  }
+}

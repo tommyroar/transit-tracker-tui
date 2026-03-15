@@ -9,6 +9,15 @@ from .config import TransitConfig
 from .transit_api import TransitAPI
 
 
+import csv
+import sqlite3
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+_GTFS_DIR = _PROJECT_ROOT / "data" / "gtfs"
+_GTFS_DB = _PROJECT_ROOT / "data" / "gtfs_index.sqlite"
+
+
 async def resolve_stop_coordinates(config: TransitConfig) -> List[Dict[str, Any]]:
     """Fetch lat/lon for all configured stops from the OBA API."""
     api = TransitAPI()
@@ -546,6 +555,352 @@ def generate_index_html(pages: List[Dict[str, str]]) -> str:
 </body>
 </html>"""
 
+def resolve_route_polylines(config: TransitConfig) -> List[Dict[str, Any]]:
+    """Return route polylines from local GTFS shapes for configured subscriptions.
+
+    Each entry: {name, color, polylines: [[[lat, lon], ...], ...]}
+    Falls back to empty list if GTFS data is not available.
+    """
+    if not _GTFS_DB.exists():
+        return []
+
+    conn = sqlite3.connect(_GTFS_DB)
+    conn.row_factory = sqlite3.Row
+    result = []
+    seen_routes: set[str] = set()
+
+    for sub in config.subscriptions:
+        raw_route = sub.route
+        # Strip agency prefix: "1_100001" -> "100001", "wsf:7" -> "7"
+        if ":" in raw_route:
+            raw_route = raw_route.split(":", 1)[1]
+        parts = raw_route.split("_", 1)
+        agency_id = parts[0] if len(parts) == 2 and parts[0].isdigit() else None
+        gtfs_route_id = parts[1] if len(parts) == 2 and parts[0].isdigit() else raw_route
+
+        if gtfs_route_id in seen_routes:
+            continue
+        seen_routes.add(gtfs_route_id)
+
+        row = conn.execute(
+            "SELECT short_name, color FROM routes WHERE route_id=?", (gtfs_route_id,)
+        ).fetchone()
+        if not row:
+            continue
+
+        # Find shape_ids for this route from the GTFS files
+        if agency_id and (_GTFS_DIR / agency_id / "trips.txt").exists():
+            trips_path = _GTFS_DIR / agency_id / "trips.txt"
+        else:
+            # Search all agencies
+            trips_path = None
+            for aid in ["1", "40", "95"]:
+                p = _GTFS_DIR / aid / "trips.txt"
+                if p.exists():
+                    # Quick check if route exists in this agency
+                    with open(p) as f:
+                        for line in f:
+                            if gtfs_route_id in line:
+                                trips_path = p
+                                agency_id = aid
+                                break
+                if trips_path:
+                    break
+
+        if not trips_path:
+            continue
+
+        shape_ids: set[str] = set()
+        with open(trips_path) as f:
+            for t in csv.DictReader(f):
+                if t["route_id"] == gtfs_route_id and t.get("shape_id"):
+                    shape_ids.add(t["shape_id"])
+
+        if not shape_ids:
+            continue
+
+        shapes_path = _GTFS_DIR / agency_id / "shapes.txt"
+        raw_shapes: dict[str, list[tuple[int, float, float]]] = {}
+        with open(shapes_path) as f:
+            for s in csv.DictReader(f):
+                if s["shape_id"] in shape_ids:
+                    raw_shapes.setdefault(s["shape_id"], []).append(
+                        (int(s["shape_pt_sequence"]), float(s["shape_pt_lat"]), float(s["shape_pt_lon"]))
+                    )
+
+        polylines = [
+            [[lat, lon] for _, lat, lon in sorted(pts)]
+            for pts in raw_shapes.values()
+        ]
+
+        result.append({
+            "name": row["short_name"] or gtfs_route_id,
+            "color": f"#{row['color']}" if row["color"] else "#888888",
+            "polylines": polylines,
+        })
+
+    conn.close()
+    return result
+
+
+def generate_walkshed_html(
+    stops: List[Dict[str, Any]],
+    routes: List[Dict[str, Any]] = None,
+) -> str:
+    """Generate a self-contained HTML walkshed map using Leaflet + OpenRouteService isochrones.
+
+    No API token required. Isochrones are fetched from the free ORS public API.
+    Route polylines come from local GTFS shapes data.
+    """
+    stops_json = json.dumps(stops)
+    routes_json = json.dumps(routes or [])
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transit Tracker — Walksheds</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }}
+  #map {{ height: 100vh; }}
+  .legend {{
+    background: rgba(20,20,30,0.88); color: #e4e7eb;
+    padding: 12px 16px; border-radius: 8px;
+    font-size: 13px; line-height: 1.8;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }}
+  .legend b {{ display: block; margin-bottom: 4px; color: #fff; }}
+  .swatch {{
+    display: inline-block; width: 16px; height: 10px;
+    border-radius: 2px; margin-right: 6px; vertical-align: middle;
+  }}
+  .route-swatch {{
+    display: inline-block; width: 16px; height: 3px;
+    border-radius: 1px; margin-right: 6px; vertical-align: middle;
+  }}
+  #loading {{
+    position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(20,20,30,0.9); color: #fff;
+    padding: 20px 30px; border-radius: 8px;
+    font-size: 16px; z-index: 9999;
+  }}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="loading">Loading walksheds...</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const STOPS = {stops_json};
+const ROUTES = {routes_json};
+const HIGHLIGHT = '#f58220';
+
+const center = STOPS.length
+  ? [STOPS[0].lat, STOPS[0].lon]
+  : [47.6062, -122.3321];
+
+const map = L.map('map').setView(center, 14);
+L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
+  attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  maxZoom: 19,
+}}).addTo(map);
+
+// Fit to all stops
+if (STOPS.length > 1) {{
+  const bounds = L.latLngBounds(STOPS.map(s => [s.lat, s.lon]));
+  map.fitBounds(bounds, {{ padding: [60, 60] }});
+}}
+
+// Draw route polylines from GTFS
+ROUTES.forEach(route => {{
+  route.polylines.forEach(coords => {{
+    L.polyline(coords, {{
+      color: route.color || '#888',
+      weight: 3,
+      opacity: 0.7,
+    }}).addTo(map);
+  }});
+}});
+
+// Legend
+const legend = L.control({{ position: 'bottomright' }});
+legend.onAdd = () => {{
+  const div = L.DomUtil.create('div', 'legend');
+  div.innerHTML =
+    '<b>Walk Time</b>' +
+    `<div><span class="swatch" style="background:rgba(245,130,32,0.5)"></span>5 min</div>` +
+    `<div><span class="swatch" style="background:rgba(245,130,32,0.3)"></span>10 min</div>` +
+    `<div><span class="swatch" style="background:rgba(245,130,32,0.15)"></span>15 min</div>`;
+  if (ROUTES.length) {{
+    div.innerHTML += '<b style="margin-top:8px;display:block">Routes</b>';
+    ROUTES.forEach(r => {{
+      div.innerHTML += `<div><span class="route-swatch" style="background:${{r.color}}"></span>${{r.name}}</div>`;
+    }});
+  }}
+  return div;
+}};
+legend.addTo(map);
+
+// Fetch isochrones from OpenRouteService (free, no token)
+const CONTOURS = [
+  {{ minutes: 15, fillOpacity: 0.15 }},
+  {{ minutes: 10, fillOpacity: 0.30 }},
+  {{ minutes: 5,  fillOpacity: 0.50 }},
+];
+
+async function loadWalkshed(stop, i) {{
+  if (i > 0) await new Promise(r => setTimeout(r, 300));
+  try {{
+    const resp = await fetch(
+      `https://api.openrouteservice.org/v2/isochrones/foot-walking`,
+      {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json', 'Accept': 'application/json, application/geo+json' }},
+        body: JSON.stringify({{
+          locations: [[stop.lon, stop.lat]],
+          range: [900, 600, 300],  // 15, 10, 5 min in seconds
+          range_type: 'time',
+        }}),
+      }}
+    );
+    if (!resp.ok) throw new Error(`ORS ${{resp.status}}`);
+    const data = await resp.json();
+
+    data.features.forEach((feature, fi) => {{
+      const contour = CONTOURS[fi];
+      if (!contour) return;
+      // GeoJSON coords are [lon, lat], Leaflet wants [lat, lon]
+      const latlngs = feature.geometry.coordinates[0].map(([lon, lat]) => [lat, lon]);
+      L.polygon(latlngs, {{
+        color: HIGHLIGHT,
+        fillColor: HIGHLIGHT,
+        weight: 1.5,
+        opacity: 0.6,
+        fillOpacity: contour.fillOpacity,
+      }}).addTo(map);
+    }});
+  }} catch (err) {{
+    console.warn(`Walkshed failed for ${{stop.name}}:`, err);
+    // Fallback: draw approximate circles (400m ≈ 5min walk)
+    [900, 600, 300].forEach((secs, fi) => {{
+      L.circle([stop.lat, stop.lon], {{
+        radius: secs * 1.2,  // ~1.2 m/s walking
+        color: HIGHLIGHT,
+        fillColor: HIGHLIGHT,
+        weight: 1,
+        opacity: 0.4,
+        fillOpacity: CONTOURS[fi].fillOpacity * 0.6,
+      }}).addTo(map);
+    }});
+  }}
+
+  L.marker([stop.lat, stop.lon])
+    .bindPopup(`<b>${{stop.label}}</b><br>ID: ${{stop.stop_id}}`)
+    .addTo(map);
+
+  document.getElementById('loading').textContent =
+    `Loading walksheds... (${{i + 1}}/${{STOPS.length}})`;
+}}
+
+(async () => {{
+  for (let i = 0; i < STOPS.length; i++) {{
+    await loadWalkshed(STOPS[i], i);
+  }}
+  document.getElementById('loading').style.display = 'none';
+}})();
+</script>
+</body>
+</html>"""
+
+
+def generate_simulator_html(config: TransitConfig) -> str:
+    """Generate a self-contained web LED matrix simulator page."""
+    pairs = []
+    for sub in config.subscriptions:
+        r_id = sub.route if ":" in sub.route else f"{sub.feed}:{sub.route}"
+        s_id = sub.stop if ":" in sub.stop else f"{sub.feed}:{sub.stop}"
+        off_sec = 0
+        match = re.search(r"(-?\d+)", str(sub.time_offset))
+        if match:
+            off_sec = int(match.group(1)) * 60
+        pairs.append(f"{r_id},{s_id},{off_sec}")
+    pairs_str = ";".join(pairs)
+
+    api_url = config.api_url
+    if (
+        config.use_local_api
+        and "localhost" not in api_url
+        and "127.0.0.1" not in api_url
+    ):
+        api_url = "ws://localhost:8000"
+
+    display_width = config.panel_width * config.num_panels
+    display_height = 32
+    pixel_scale = 7
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transit Tracker — LED Simulator</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    background: #111; color: #e4e7eb;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; min-height: 100vh; gap: 16px;
+  }}
+  canvas {{ border-radius: 8px; box-shadow: 0 0 40px rgba(0,0,0,0.5); }}
+  .status {{ font-size: 13px; color: #888; display: flex; gap: 12px; align-items: center; }}
+  .dot {{ width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }}
+  .dot.connected {{ background: #4ade80; }}
+  .dot.disconnected {{ background: #ef4444; }}
+  .dot.connecting {{ background: #facc15; }}
+  h1 {{ font-size: 16px; font-weight: 600; color: #999; letter-spacing: 1px; text-transform: uppercase; }}
+</style>
+</head>
+<body>
+<h1>HUB75 {display_width}x{display_height} LED Simulator</h1>
+<canvas id="led" width="{display_width * pixel_scale}" height="{display_height * pixel_scale}"></canvas>
+<div class="status">
+  <span><span id="statusDot" class="dot connecting"></span><span id="statusText">Connecting...</span></span>
+  <span id="stopInfo"></span>
+</div>
+<script>
+const CONFIG = {{
+  apiUrl: {json.dumps(api_url)},
+  pairsStr: {json.dumps(pairs_str)},
+  displayWidth: {display_width},
+  displayHeight: {display_height},
+  pixelScale: {pixel_scale},
+}};
+const GLYPHS={{'0':[0x0E,0x11,0x11,0x11,0x11,0x11,0x0E],'1':[0x04,0x0C,0x04,0x04,0x04,0x04,0x0E],'2':[0x0E,0x11,0x01,0x02,0x04,0x08,0x1F],'3':[0x1F,0x02,0x04,0x02,0x01,0x11,0x0E],'4':[0x02,0x06,0x0A,0x12,0x1F,0x02,0x02],'5':[0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E],'6':[0x0E,0x10,0x10,0x1E,0x11,0x11,0x0E],'7':[0x1F,0x01,0x02,0x04,0x08,0x08,0x08],'8':[0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E],'9':[0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C],'A':[0x04,0x0A,0x11,0x11,0x1F,0x11,0x11],'B':[0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E],'C':[0x0E,0x11,0x10,0x10,0x10,0x11,0x0E],'D':[0x1C,0x12,0x11,0x11,0x11,0x12,0x1C],'E':[0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F],'F':[0x1F,0x10,0x10,0x1E,0x10,0x10,0x10],'G':[0x0E,0x11,0x10,0x17,0x11,0x11,0x0F],'H':[0x11,0x11,0x11,0x1F,0x11,0x11,0x11],'I':[0x0E,0x04,0x04,0x04,0x04,0x04,0x0E],'J':[0x07,0x02,0x02,0x02,0x02,0x12,0x0C],'K':[0x11,0x12,0x14,0x18,0x14,0x12,0x11],'L':[0x10,0x10,0x10,0x10,0x10,0x10,0x1F],'M':[0x11,0x1B,0x15,0x11,0x11,0x11,0x11],'N':[0x11,0x11,0x19,0x15,0x13,0x11,0x11],'O':[0x0E,0x11,0x11,0x11,0x11,0x11,0x0E],'P':[0x1E,0x11,0x11,0x1E,0x10,0x10,0x10],'Q':[0x0E,0x11,0x11,0x11,0x15,0x12,0x0D],'R':[0x1E,0x11,0x11,0x1E,0x14,0x12,0x11],'S':[0x0E,0x11,0x10,0x0E,0x01,0x11,0x0E],'T':[0x1F,0x04,0x04,0x04,0x04,0x04,0x04],'U':[0x11,0x11,0x11,0x11,0x11,0x11,0x0E],'V':[0x11,0x11,0x11,0x11,0x11,0x0A,0x04],'W':[0x11,0x11,0x11,0x15,0x15,0x1B,0x11],'X':[0x11,0x11,0x0A,0x04,0x0A,0x11,0x11],'Y':[0x11,0x11,0x0A,0x04,0x04,0x04,0x04],'Z':[0x1F,0x01,0x02,0x04,0x08,0x10,0x1F],' ':[0,0,0,0,0,0,0],'m':[0,0,0x1A,0x15,0x15,0x15,0x15],'.':[0,0,0,0,0,0,0x04],'-':[0,0,0,0x1F,0,0,0],'>':[0x10,0x08,0x04,0x08,0x10,0,0],'(':[0x04,0x08,0x08,0x08,0x08,0x08,0x04],')':[0x08,0x04,0x04,0x04,0x04,0x04,0x08],'/':[0x01,0x02,0x04,0x08,0x10,0,0],'?':[0x0E,0x11,0x01,0x02,0x04,0,0x04]}};
+const REALTIME_ICON=[[0,0,0,3,3,3],[0,0,3,0,0,0],[0,3,0,0,2,2],[3,0,0,2,0,0],[3,0,2,0,0,1],[3,0,2,0,1,1]];
+const COLORS={{yellow:'#FFD700',hot_pink:'#FF69B4',white:'#FFFFFF',bright_blue:'#5B9BD5',grey74:'#BDBDBD',cyan:'#00CED1'}};
+function getBitmap(t){{const rows=[[],[],[],[],[],[],[]];for(const ch of t){{const g=GLYPHS[ch.toUpperCase()]||GLYPHS['?'];for(let r=0;r<7;r++){{for(let b=4;b>=0;b--)rows[r].push((g[r]>>b)&1);rows[r].push(0);}}}}return rows;}}
+function getLiveIconFrame(e){{const c=e%4000;let f=0;if(c>=3000)f=Math.min(Math.floor((c-3000)/200)+1,5);const rows=[[],[],[],[],[],[],[]];for(let r=0;r<6;r++){{for(let c2=0;c2<6;c2++){{const s=REALTIME_ICON[r][c2];if(s===0){{rows[r].push(0);continue;}}let lit=false;if(s===1&&[1,2,3].includes(f))lit=true;else if(s===2&&[2,3,4].includes(f))lit=true;else if(s===3&&[3,4,5].includes(f))lit=true;rows[r].push(lit?2:1);}}}}rows[6]=[0,0,0,0,0,0];return rows;}}
+function resolveColor(c){{if(!c)return COLORS.yellow;if(c.startsWith('#'))return c;return COLORS[c]||COLORS.yellow;}}
+let trips=[],startTime=performance.now(),wsStatus='connecting';
+function connectWS(){{wsStatus='connecting';updateStatus();const ws=new WebSocket(CONFIG.apiUrl);ws.onopen=()=>{{wsStatus='connected';updateStatus();ws.send(JSON.stringify({{event:'schedule:subscribe',client_name:'Web Simulator',data:{{routeStopPairs:CONFIG.pairsStr,limit:10}}}}))}};ws.onmessage=(e)=>{{const d=JSON.parse(e.data);if(d.event==='schedule'){{const p=d.payload||d.data||{{}};trips=p.trips||[];}}}};ws.onclose=()=>{{wsStatus='disconnected';updateStatus();setTimeout(connectWS,5000)}};ws.onerror=()=>ws.close();}}
+function updateStatus(){{const dot=document.getElementById('statusDot'),text=document.getElementById('statusText');dot.className='dot '+wsStatus;text.textContent=wsStatus.charAt(0).toUpperCase()+wsStatus.slice(1);}}
+function getUpcomingDepartures(){{const nowMs=Date.now(),deps=[];for(const trip of trips){{let a=trip.arrivalTime||trip.predictedArrivalTime||trip.scheduledArrivalTime;if(!a)continue;if(a<1e12)a*=1000;const diff=Math.floor((a-nowMs)/60000);if(diff<-1)continue;const rn=trip.routeName||'';let color='yellow';if(rn.includes('14'))color='hot_pink';else if(trip.routeColor)color='#'+trip.routeColor;deps.push({{tripId:trip.tripId,diff:Math.max(0,diff),route:rn,headsign:trip.headsign||'Transit',color,live:!!trip.isRealtime,stopId:trip.stopId}});}}deps.sort((a,b)=>a.diff-b.diff);const limit=3,final=[],seenStops=new Set();for(const d of deps){{if(!seenStops.has(d.stopId)){{final.push(d);seenStops.add(d.stopId);}}if(final.length>=limit)break;}}if(final.length<limit)for(const d of deps){{if(!final.includes(d))final.push(d);if(final.length>=limit)break;}}final.sort((a,b)=>a.diff-b.diff);return final;}}
+const canvas=document.getElementById('led'),ctx=canvas.getContext('2d');
+const W=CONFIG.displayWidth,H=CONFIG.displayHeight,S=CONFIG.pixelScale,LED_RADIUS=S*0.35,DIM='#1a1a2e';
+function renderFrame(){{const elapsed=performance.now()-startTime;ctx.fillStyle='#0a0a0f';ctx.fillRect(0,0,canvas.width,canvas.height);const pixels=Array.from({{length:H}},()=>Array(W).fill(null));const deps=getUpcomingDepartures();if(deps.length===0){{const bm=getBitmap(trips.length===0?'Connecting...':'No Buses');for(let r=0;r<7&&r<bm.length;r++)for(let c=0;c<bm[r].length&&c<W;c++)if(bm[r][c])pixels[r][c]=COLORS.cyan;}}else{{let y=0;for(let di=0;di<deps.length&&di<3;di++){{renderTripRow(pixels,deps[di],elapsed,y);y+=8;}}}}for(let r=0;r<H;r++)for(let c=0;c<W;c++){{const cx=c*S+S/2,cy=r*S+S/2;ctx.beginPath();ctx.arc(cx,cy,LED_RADIUS,0,Math.PI*2);ctx.fillStyle=pixels[r][c]||DIM;ctx.fill();}}requestAnimationFrame(renderFrame);}}
+function renderTripRow(pixels,dep,elapsed,yOff){{const routeBm=getBitmap(dep.route),routeW=routeBm[0].length,timeText=dep.diff<=0?'Now':dep.diff+'m',timeBm=getBitmap(timeText),timeW=timeBm[0].length,iconW=dep.live?6:0,hsXStart=routeW+3,hsAreaW=W-hsXStart-timeW-(dep.live?iconW+2:0),hsBmFull=getBitmap(dep.headsign),hsFullW=hsBmFull[0].length;let scrollOff=0;if(hsFullW>hsAreaW){{const overflow=hsFullW-hsAreaW,scrollSpeed=100,waitMs=2000,scrollDur=overflow*scrollSpeed,totalCycle=(waitMs+scrollDur)*2,pos=elapsed%totalCycle;if(pos<waitMs)scrollOff=0;else if(pos<waitMs+scrollDur)scrollOff=Math.floor((pos-waitMs)/scrollSpeed);else if(pos<waitMs*2+scrollDur)scrollOff=overflow;else scrollOff=overflow-Math.floor((pos-waitMs*2-scrollDur)/scrollSpeed);scrollOff=Math.max(0,Math.min(overflow,scrollOff));}}const routeColor=resolveColor(dep.color),timeColor=dep.live?COLORS.bright_blue:COLORS.grey74;for(let r=0;r<7;r++){{for(let c=0;c<routeW&&c<W;c++)if(routeBm[r][c])pixels[yOff+r][c]=routeColor;}}const timeX=W-timeW;for(let r=0;r<7;r++)for(let c=0;c<timeW;c++){{const tx=timeX+c;if(tx>=0&&tx<W&&timeBm[r][c])pixels[yOff+r][tx]=timeColor;}}if(dep.live){{const iconBm=getLiveIconFrame(elapsed),iconX=timeX-8;for(let r=0;r<6;r++)for(let c=0;c<6;c++){{const ix=iconX+c;if(ix>=0&&ix<W){{const v=iconBm[r][c];if(v===2)pixels[yOff+r][ix]=COLORS.white;else if(v===1)pixels[yOff+r][ix]=COLORS.bright_blue;}}}}}}for(let r=0;r<7;r++)for(let c=0;c<hsAreaW;c++){{const srcC=c+scrollOff,destX=hsXStart+c;if(destX<W&&srcC<hsFullW&&hsBmFull[r][srcC])pixels[yOff+r][destX]=COLORS.white;}}}}
+connectWS();
+requestAnimationFrame(renderFrame);
+</script>
+</body>
+</html>"""
+
+
+
 
 class TransitWebHandler(BaseHTTPRequestHandler):
     """HTTP request handler with a routes dict for extensibility."""
@@ -575,7 +930,7 @@ class TransitWebHandler(BaseHTTPRequestHandler):
 
 
 async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None):
-    """Start the Transit Tracker web server with API spec and stop data."""
+    """Start the Transit Tracker web server."""
     if port is None:
         port = int(os.environ.get("PORT", 8080))
 
@@ -584,34 +939,31 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
     if not stops:
         print("[WEB] No stops found in config. Add stops first with 'transit-tracker'.")
         return
-
     print(f"[WEB] Resolved {len(stops)} stops")
 
-    stops_json = json.dumps(stops, indent=2)
+    print("[WEB] Loading route polylines from GTFS...")
+    routes = resolve_route_polylines(config)
+    print(f"[WEB] Loaded {len(routes)} route shapes")
+
     spec_json = generate_api_spec(config)
     spec_html = generate_spec_html(spec_json)
+    simulator_html = generate_simulator_html(config)
+    walkshed_html = generate_walkshed_html(stops, routes)
+    stops_json = json.dumps(stops, indent=2)
 
     pages = [
-        {
-            "path": "/spec",
-            "name": "API Docs",
-            "description": "Interactive WebSocket API documentation",
-        },
-        {
-            "path": "/api/spec",
-            "name": "API Spec (JSON)",
-            "description": "Raw JSON specification with example payloads",
-        },
-        {
-            "path": "/api/stops",
-            "name": "Stops",
-            "description": "Configured stop coordinates as JSON",
-        },
+        {"path": "/walkshed", "name": "Walksheds", "description": "Walking distance isochrone map with route lines"},
+        {"path": "/simulator", "name": "LED Simulator", "description": "Web-based HUB75 LED matrix simulator"},
+        {"path": "/spec", "name": "API Docs", "description": "Interactive WebSocket API documentation"},
+        {"path": "/api/spec", "name": "API Spec (JSON)", "description": "Raw JSON specification with example payloads"},
+        {"path": "/api/stops", "name": "Stops", "description": "Configured stop coordinates as JSON"},
     ]
     index_html = generate_index_html(pages)
 
     TransitWebHandler.routes = {
         "/": index_html,
+        "/walkshed": walkshed_html,
+        "/simulator": simulator_html,
         "/spec": spec_html,
         "/api/spec": spec_json,
         "/api/stops": stops_json,
@@ -619,6 +971,8 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
 
     server = HTTPServer((host, port), TransitWebHandler)
     print(f"[WEB] Transit Tracker web server at http://{host}:{port}")
+    print("[WEB]   /walkshed   — Walking distance isochrone map")
+    print("[WEB]   /simulator  — LED matrix simulator")
     print("[WEB]   /spec       — API documentation page")
     print("[WEB]   /api/spec   — Raw JSON specification")
     print("[WEB]   /api/stops  — Stop coordinates JSON")
@@ -629,3 +983,4 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
     except KeyboardInterrupt:
         print("\n[WEB] Shutting down...")
         server.shutdown()
+

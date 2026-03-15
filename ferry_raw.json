@@ -1,0 +1,340 @@
+{
+    "code": 200,
+    "currentTime": 1773532836546,
+    "data": {
+        "entry": {
+            "arrivalsAndDepartures": [
+                {
+                    "actualTrack": "",
+                    "arrivalEnabled": false,
+                    "blockTripSequence": 14,
+                    "departureEnabled": true,
+                    "distanceFromStop": 8307.688306974422,
+                    "frequency": null,
+                    "historicalOccupancy": "",
+                    "lastUpdateTime": 1773532810000,
+                    "numberOfStopsAway": 1,
+                    "occupancyStatus": "",
+                    "predicted": true,
+                    "predictedArrivalInterval": null,
+                    "predictedArrivalTime": 1773472499000,
+                    "predictedDepartureInterval": null,
+                    "predictedDepartureTime": 1773472499000,
+                    "predictedOccupancy": "",
+                    "routeId": "95_37",
+                    "routeLongName": "Bainbridge Island - Seattle",
+                    "routeShortName": "Bainbridge Island - Seattle",
+                    "scheduledArrivalInterval": null,
+                    "scheduledArrivalTime": 1773534900000,
+                    "scheduledDepartureInterval": null,
+                    "scheduledDepartureTime": 1773534900000,
+                    "scheduledTrack": "",
+                    "serviceDate": 1773471600000,
+                    "situationIds": [],
+                    "status": "default",
+                    "stopId": "95_3",
+                    "stopSequence": 0,
+                    "totalStopsInTrip": 2,
+                    "tripHeadsign": "Seattle",
+                    "tripId": "95_37503142613",
+                    "tripStatus": {
+                        "activeTripId": "95_73503142611",
+                        "blockTripSequence": 13,
+                        "closestStop": "95_7",
+                        "closestStopTimeOffset": -790,
+                        "distanceAlongTrip": 4980.178499887086,
+                        "frequency": null,
+                        "lastKnownDistanceAlongTrip": 0,
+                        "lastKnownLocation": {
+                            "lat": 47.60465621948242,
+                            "lon": -122.40209197998047
+                        },
+                        "lastKnownOrientation": 192.0,
+                        "lastLocationUpdateTime": 1773532810000,
+                        "lastUpdateTime": 1773532810000,
+                        "nextStop": "95_3",
+                        "nextStopTimeOffset": 1310,
+                        "occupancyCapacity": -1,
+                        "occupancyCount": -1,
+                        "occupancyStatus": "",
+                        "orientation": 173.93802988103454,
+                        "phase": "in_progress",
+                        "position": {
+                            "lat": 47.60995932868724,
+                            "lon": -122.4035808673023
+                        },
+                        "predicted": true,
+                        "scheduleDeviation": 120,
+                        "scheduledDistanceAlongTrip": 4980.178499887086,
+                        "serviceDate": 1773471600000,
+                        "situationIds": [],
+                        "status": "SCHEDULED",
+                        "totalDistanceAlongTrip": 13263.018953429077,
+                        "vehicleFeatures": [],
+                        "vehicleId": "95_25"
+                    },
+                    "vehicleId": "95_25"
+                },
+                {
+                    "actualTrack": "",
+                    "arrivalEnabled": true,
+                    "blockTripSequence": 13,
+                    "departureEnabled": false,
+                    "distanceFromStop": 8258.270677027991,
+                    "frequency": null,
+                    "historicalOccupancy": "",
+                    "lastUpdateTime": 1773532810000,
+                    "numberOfStopsAway": 0,
+                    "occupancyStatus": "",
+                    "predicted": true,
+                    "predictedArrivalInterval": null,
+                    "predictedArrivalTime": 1773534120000,
+                    "predictedDepartureInterval": null,
+                    "predictedDepartureTime": 1773471599000,
+                    "predictedOccupancy": "",
+                    "routeId": "95_73",
+                    "routeLongName": "Seattle - Bainbridge Island",
+                    "routeShortName": "Seattle - Bainbridge Island",
+                    "scheduledArrivalInterval": null,
+                    "scheduledArrivalTime": 1773534000000,
+                    "scheduledDepartureInterval": null,
+                    "scheduledDepartureTime": 1773534000000,
+                    "scheduledTrack": "",
+                    "serviceDate": 1773471600000,
+                    "situationIds": [],
+                    "status": "default",
+                    "stopId": "95_3",
+                    "stopSequence": 1,
+                    "totalStopsInTrip": 2,
+                    "tripHeadsign": "Bainbridge Island",
+                    "tripId": "95_73503142611",
+                    "tripStatus": {
+                        "activeTripId": "95_73503142611",
+                        "blockTripSequence": 13,
+                        "closestStop": "95_7",
+                        "closestStopTimeOffset": -790,
+                        "distanceAlongTrip": 4980.178499887086,
+                        "frequency": null,
+                        "lastKnownDistanceAlongTrip": 0,
+                        "lastKnownLocation": {
+                            "lat": 47.60465621948242,
+                            "lon": -122.40209197998047
+                        },
+                        "lastKnownOrientation": 192.0,
+                        "lastLocationUpdateTime": 1773532810000,
+                        "lastUpdateTime": 1773532810000,
+                        "nextStop": "95_3",
+                        "nextStopTimeOffset": 1310,
+                        "occupancyCapacity": -1,
+                        "occupancyCount": -1,
+                        "occupancyStatus": "",
+                        "orientation": 173.93802988103454,
+                        "phase": "in_progress",
+                        "position": {
+                            "lat": 47.60995932868724,
+                            "lon": -122.4035808673023
+                        },
+                        "predicted": true,
+                        "scheduleDeviation": 120,
+                        "scheduledDistanceAlongTrip": 4980.178499887086,
+                        "serviceDate": 1773471600000,
+                        "situationIds": [],
+                        "status": "SCHEDULED",
+                        "totalDistanceAlongTrip": 13263.018953429077,
+                        "vehicleFeatures": [],
+                        "vehicleId": "95_25"
+                    },
+                    "vehicleId": "95_25"
+                }
+            ],
+            "nearbyStopIds": [
+                "20_1017"
+            ],
+            "situationIds": [],
+            "stopId": "95_3"
+        },
+        "references": {
+            "agencies": [
+                {
+                    "disclaimer": "",
+                    "email": "kitsapride@kitsaptransit.com",
+                    "fareUrl": "http://www.kitsaptransit.com/fares/fares",
+                    "id": "20",
+                    "lang": "en",
+                    "name": "Kitsap Transit",
+                    "phone": "(800) 501-7433",
+                    "privateService": false,
+                    "timezone": "America/Los_Angeles",
+                    "url": "http://www.kitsaptransit.com"
+                },
+                {
+                    "disclaimer": "",
+                    "email": "",
+                    "fareUrl": "https://wave2go.wsdot.com/webstore/landingPage?cg=21&c=76",
+                    "id": "95",
+                    "lang": "en",
+                    "name": "Washington State Ferries",
+                    "phone": "1 (888) 808-7977",
+                    "privateService": false,
+                    "timezone": "America/Los_Angeles",
+                    "url": "https://www.wsdot.wa.gov/ferries/"
+                }
+            ],
+            "routes": [
+                {
+                    "agencyId": "20",
+                    "color": "984807",
+                    "description": "",
+                    "id": "20_390",
+                    "longName": "Poulsbo/Bainbridge",
+                    "nullSafeShortName": "390",
+                    "shortName": "390",
+                    "textColor": "ffffff",
+                    "type": 3,
+                    "url": "https://www.kitsaptransit.com/service/routed-buses/390-poulsbobainbridge"
+                },
+                {
+                    "agencyId": "95",
+                    "color": "",
+                    "description": "",
+                    "id": "95_37",
+                    "longName": "Bainbridge Island - Seattle",
+                    "nullSafeShortName": "95_37",
+                    "shortName": "",
+                    "textColor": "",
+                    "type": 4,
+                    "url": ""
+                },
+                {
+                    "agencyId": "95",
+                    "color": "",
+                    "description": "",
+                    "id": "95_47",
+                    "longName": "Bremerton - Seattle",
+                    "nullSafeShortName": "95_47",
+                    "shortName": "",
+                    "textColor": "",
+                    "type": 4,
+                    "url": ""
+                },
+                {
+                    "agencyId": "95",
+                    "color": "",
+                    "description": "",
+                    "id": "95_73",
+                    "longName": "Seattle - Bainbridge Island",
+                    "nullSafeShortName": "95_73",
+                    "shortName": "",
+                    "textColor": "",
+                    "type": 4,
+                    "url": ""
+                },
+                {
+                    "agencyId": "95",
+                    "color": "",
+                    "description": "",
+                    "id": "95_74",
+                    "longName": "Seattle - Bremerton",
+                    "nullSafeShortName": "95_74",
+                    "shortName": "",
+                    "textColor": "",
+                    "type": 4,
+                    "url": ""
+                }
+            ],
+            "situations": [],
+            "stopTimes": [],
+            "stops": [
+                {
+                    "code": "3",
+                    "direction": "",
+                    "id": "95_3",
+                    "lat": 47.623094,
+                    "locationType": 0,
+                    "lon": -122.510809,
+                    "name": "Bainbridge Island",
+                    "parent": "",
+                    "routeIds": [
+                        "95_37",
+                        "95_73"
+                    ],
+                    "staticRouteIds": [
+                        "95_37",
+                        "95_73"
+                    ],
+                    "wheelchairBoarding": "UNKNOWN"
+                },
+                {
+                    "code": "7",
+                    "direction": "",
+                    "id": "95_7",
+                    "lat": 47.602597,
+                    "locationType": 0,
+                    "lon": -122.337635,
+                    "name": "Seattle",
+                    "parent": "",
+                    "routeIds": [
+                        "95_37",
+                        "95_47",
+                        "95_73",
+                        "95_74"
+                    ],
+                    "staticRouteIds": [
+                        "95_37",
+                        "95_47",
+                        "95_73",
+                        "95_74"
+                    ],
+                    "wheelchairBoarding": "UNKNOWN"
+                },
+                {
+                    "code": "861",
+                    "direction": "",
+                    "id": "20_1017",
+                    "lat": 47.623693,
+                    "locationType": 0,
+                    "lon": -122.511537,
+                    "name": "Bainbridge Island Ferry Terminal",
+                    "parent": "",
+                    "routeIds": [
+                        "20_390"
+                    ],
+                    "staticRouteIds": [
+                        "20_390"
+                    ],
+                    "wheelchairBoarding": "UNKNOWN"
+                }
+            ],
+            "trips": [
+                {
+                    "blockId": "95_25",
+                    "directionId": "",
+                    "id": "95_37503142613",
+                    "peakOffpeak": 0,
+                    "routeId": "95_37",
+                    "routeShortName": "",
+                    "serviceId": "95_20260314",
+                    "shapeId": "95_37",
+                    "timeZone": "",
+                    "tripHeadsign": "To Seattle",
+                    "tripShortName": ""
+                },
+                {
+                    "blockId": "95_25",
+                    "directionId": "",
+                    "id": "95_73503142611",
+                    "peakOffpeak": 0,
+                    "routeId": "95_73",
+                    "routeShortName": "",
+                    "serviceId": "95_20260314",
+                    "shapeId": "95_73",
+                    "timeZone": "",
+                    "tripHeadsign": "To Bainbridge Island",
+                    "tripShortName": ""
+                }
+            ]
+        }
+    },
+    "text": "OK",
+    "version": 2
+}

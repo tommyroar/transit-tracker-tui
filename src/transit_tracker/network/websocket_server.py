@@ -313,8 +313,13 @@ class TransitServer:
                         # robustness: if the preferred time is missing or in the distant past
                         # (OBA sometimes has stale values for one but not the other), fall back.
                         now_minus_buffer = now_ts - 60 # 1 minute ago
-                        
-                        if display_mode == "departure":
+
+                        # Ferries always use departure time — users at the dock need to
+                        # know when the vessel leaves, not when it arrives at the destination.
+                        is_ferry = full_route_id.startswith("95_") or "wsf" in full_route_id.lower()
+                        effective_mode = "departure" if is_ferry else display_mode
+
+                        if effective_mode == "departure":
                             base_time = raw_dep if (raw_dep and raw_dep > now_minus_buffer) else raw_arr
                         else:
                             base_time = raw_arr if (raw_arr and raw_arr > now_minus_buffer) else raw_dep

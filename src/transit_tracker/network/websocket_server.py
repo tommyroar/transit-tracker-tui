@@ -47,7 +47,7 @@ class TransitServer:
     def __init__(self, config: TransitConfig):
         self.config = config
         self.config_path = get_last_config_path()
-        self.api = TransitAPI()
+        self.api = TransitAPI(oba_api_key=config.transit_tracker.oba_api_key)
         self.clients = set()
         self.subscriptions = {} # ws -> List[Dict] (pairs)
         self.client_names = {} # ws -> str
@@ -279,6 +279,7 @@ class TransitServer:
             except Exception as e:
                 if "429" in str(e):
                     any_429 = True
+                    break  # Stop firing requests once rate-limited
 
         # Exponential Backoff Logic
         if any_429:

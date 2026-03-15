@@ -1,3 +1,4 @@
+import os
 import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -9,9 +10,9 @@ class TransitAPIError(Exception):
 
 
 class TransitAPI:
-    def __init__(self):
+    def __init__(self, oba_api_key: str | None = None):
         self.oba_base_url = "https://api.pugetsound.onebusaway.org/api/where"
-        self.oba_key = "TEST"
+        self.oba_key = oba_api_key or os.environ.get("OBA_API_KEY") or "TEST"
         self.client = httpx.AsyncClient(timeout=10.0)
 
     @staticmethod

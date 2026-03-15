@@ -112,10 +112,12 @@ class TransitTrackerSettings(BaseModel):
     panel_width: int = Field(default=64)
     panel_height: int = Field(default=32)
     check_interval_seconds: int = Field(default=30, ge=10)
+    request_spacing_ms: int = Field(default=500, ge=0, le=2000)
     arrival_threshold_minutes: int = Field(default=5, ge=1)
     stops: List[TransitStop] = Field(default_factory=list)
     styles: List[Dict[str, Any]] = Field(default_factory=list)
     abbreviations: List[Abbreviation] = Field(default_factory=list)
+    oba_api_key: Optional[str] = None
     mapbox_access_token: Optional[str] = None
 
 

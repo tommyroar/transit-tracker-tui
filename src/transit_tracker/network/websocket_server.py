@@ -55,8 +55,6 @@ class TransitServer:
         # Centralized cache for arrivals
         # stop_id -> (timestamp, List[arrivals])
         self.cache = {}
-        # Last known vessel per route: routeId -> vessel_name
-        self.vessel_cache = {}
         self.rate_limited_stops = set() # Stops currently hitting 429
         self.rate_limit_until = {} # stop_id -> timestamp when retry is allowed
         
@@ -326,21 +324,19 @@ class TransitServer:
 
                         final_display_time = base_time + offset_sec
 
-                        # For ferries, replace headsign with vessel name
+                        # For ferries, replace headsign with vessel name when vehicleId is live;
+                        # fall back to destination headsign (e.g. "Bainbridge Island") otherwise,
+                        # since different vessels serve different scheduled runs and caching the
+                        # last-seen vessel would show the wrong name for upcoming trips.
                         headsign = self.apply_abbreviations(str(arr.get("headsign") or arr.get("tripHeadsign") or "Transit"))
                         route_name = self.apply_abbreviations(str(arr.get("routeName") or arr.get("routeShortName") or ""))
-                        is_ferry = full_route_id.startswith("95_") or "wsf" in full_route_id.lower()
-                        if is_ferry:
+                        if full_route_id.startswith("95_") or "wsf" in full_route_id.lower():
                             vehicle_id_full = arr.get("vehicleId") or (arr.get("tripStatus") or {}).get("vehicleId")
                             if vehicle_id_full:
                                 vehicle_id_short = vehicle_id_full.split("_")[-1]
                                 vessel_name = WSF_VESSELS.get(vehicle_id_short)
                                 if vessel_name:
-                                    self.vessel_cache[full_route_id] = vessel_name
-                            # Use live vessel name or fall back to last known vessel for this route
-                            cached = self.vessel_cache.get(full_route_id)
-                            if cached:
-                                headsign = cached
+                                    headsign = vessel_name
 
                         all_trips.append({
                             "tripId": str(arr.get("tripId", "")),

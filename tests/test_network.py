@@ -275,21 +275,24 @@ async def test_ferry_headsign_fallback_when_no_vehicle_id(ferry_config):
 
 
 @pytest.mark.asyncio
-async def test_ferry_vessel_cache_persists_after_vehicle_id_drops(ferry_config):
-    """Once a vessel is seen, subsequent trips with no vehicleId reuse the cached name."""
+async def test_ferry_no_cross_trip_vessel_bleed(ferry_config):
+    """A vessel seen on one trip must NOT bleed into a different scheduled trip on the same route.
+    Different runs are served by different vessels; caching would show the wrong name."""
     server = TransitServer(ferry_config)
     now = int(time.time())
 
-    # First poll: vehicleId present — populates vessel_cache
+    # Trip 1: Puyallup is live (vehicleId present)
     server.cache["95_3"] = (time.time(), [
-        _make_ferry_arrival(now, "trip_1", "Seattle", vehicle_id="95_25"),
+        _make_ferry_arrival(now, "trip_1", "Seattle", vehicle_id="95_25"),  # Puyallup
     ])
     ws = AsyncMock()
     server.subscriptions[ws] = [{"routeId": "95_37", "stopId": "95_3"}]
     await server.send_update(ws)
-    assert server.vessel_cache.get("95_37") == "Puyallup"
+    trips = json.loads(ws.send.call_args[0][0])["data"]["trips"]
+    assert trips[0]["headsign"] == "Puyallup"
 
-    # Second poll: vehicleId absent — should still show cached vessel name
+    # Trip 2: a different run with no vehicleId yet (scheduled, Wenatchee hasn't sailed)
+    # Must show destination, NOT "Puyallup" inherited from trip_1
     server.cache["95_3"] = (time.time(), [
         _make_ferry_arrival(now, "trip_2", "Bainbridge Island", vehicle_id=None),
     ])
@@ -297,34 +300,8 @@ async def test_ferry_vessel_cache_persists_after_vehicle_id_drops(ferry_config):
     server.subscriptions[ws2] = [{"routeId": "95_37", "stopId": "95_3"}]
     await server.send_update(ws2)
 
-    trips = json.loads(ws2.send.call_args[0][0])["data"]["trips"]
-    assert trips[0]["headsign"] == "Puyallup"
-
-
-@pytest.mark.asyncio
-async def test_ferry_vessel_cache_updates_when_new_vessel_seen(ferry_config):
-    """vessel_cache updates when a different vessel ID appears on the same route."""
-    server = TransitServer(ferry_config)
-    now = int(time.time())
-
-    server.cache["95_3"] = (time.time(), [
-        _make_ferry_arrival(now, "trip_1", "Seattle", vehicle_id="95_15"),  # Wenatchee
-    ])
-    ws = AsyncMock()
-    server.subscriptions[ws] = [{"routeId": "95_37", "stopId": "95_3"}]
-    await server.send_update(ws)
-    assert server.vessel_cache.get("95_37") == "Wenatchee"
-
-    server.cache["95_3"] = (time.time(), [
-        _make_ferry_arrival(now, "trip_2", "Bainbridge Island", vehicle_id="95_7"),  # Puyallup
-    ])
-    ws2 = AsyncMock()
-    server.subscriptions[ws2] = [{"routeId": "95_37", "stopId": "95_3"}]
-    await server.send_update(ws2)
-
-    trips = json.loads(ws2.send.call_args[0][0])["data"]["trips"]
-    assert trips[0]["headsign"] == "Puyallup"
-    assert server.vessel_cache.get("95_37") == "Puyallup"
+    trips2 = json.loads(ws2.send.call_args[0][0])["data"]["trips"]
+    assert trips2[0]["headsign"] == "Bainbridge Island"
 
 
 @pytest.mark.asyncio

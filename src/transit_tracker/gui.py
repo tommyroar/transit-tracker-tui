@@ -226,10 +226,10 @@ class TransitTrackerApp(rumps.App):
             throttle_rate = state.get("throttle_rate", 0) if os.path.exists(SERVICE_STATE_FILE) else 0
 
             if is_rate_limited:
-                self.title = f"📵 {throttle_total}"
+                self.title = "📵"
                 self.rate_limit_item.title = f"📵 Rate Limited — {throttle_total}/{api_calls} throttled ({throttle_rate:.0%})"
             else:
-                self.title = f"🚉 {throttle_total}" if throttle_total > 0 else "🚉"
+                self.title = "🚉"
                 self.rate_limit_item.title = f"✅ Healthy — {throttle_total}/{api_calls} throttled ({throttle_rate:.0%})" if api_calls > 0 else "✅ API Connection Healthy"
             
             current_client_ids = ",".join(sorted([c.get("address", "") for c in client_details]))

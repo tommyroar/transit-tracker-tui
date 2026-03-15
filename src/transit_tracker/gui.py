@@ -210,7 +210,7 @@ class TransitTrackerApp(rumps.App):
                             profile_root.add(rumps.MenuItem("Error loading stops"))
                         
                         # Add metadata info
-                        profile_root.add(rumps.separator)
+                        profile_root.add(rumps.MenuItem("─────────────"))  # visual divider, no callback
                         profile_root.add(rumps.MenuItem(f"File: {p_path}"))
                         if is_active:
                             refresh_str = datetime.fromtimestamp(self.last_update_ts).strftime('%H:%M:%S') if self.last_update_ts else "Never"

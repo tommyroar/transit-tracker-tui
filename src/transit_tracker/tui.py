@@ -726,8 +726,10 @@ async def async_main_menu():
             
     if config_path:
         config = TransitConfig.load(config_path)
-        # Only update the saved path if it changed (e.g. we fell back)
-        if config_path != config_path_saved:
+        # Only persist if there was no previous explicit choice (first-time setup).
+        # If a saved path existed but was unavailable, load fallback locally but
+        # do NOT overwrite the user's last explicit selection.
+        if config_path_saved is None:
             set_last_config_path(config_path)
     else:
         config = TransitConfig()
@@ -785,6 +787,11 @@ async def async_main_menu():
             
         elif action == "Profiles":
             await profiles_menu(console)
+            # Sync local state in case user activated a different profile
+            new_path = get_last_config_path()
+            if new_path and new_path != config_path and os.path.exists(new_path):
+                config_path = new_path
+                config = TransitConfig.load(config_path)
 
         elif action == "Configurator":
             while True:

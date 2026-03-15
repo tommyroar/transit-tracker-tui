@@ -333,7 +333,7 @@ class TransitServer:
                             vehicle_id_short = vehicle_id_full.split("_")[-1]
                             vessel_name = WSF_VESSELS.get(vehicle_id_short)
                             if vessel_name:
-                                route_name = vessel_name.upper()
+                                headsign = vessel_name  # CamelCase vessel name replaces destination
 
                         all_trips.append({
                             "tripId": str(arr.get("tripId", "")),

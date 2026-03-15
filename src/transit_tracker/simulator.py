@@ -448,8 +448,8 @@ class LEDSimulator:
                             vehicle_id_short = vehicle_id_full.split("_")[-1]
                             vessel_name = WSF_VESSELS.get(vehicle_id_short)
                             if vessel_name:
-                                route_name = vessel_name.upper()
-                                
+                                headsign = vessel_name  # CamelCase vessel name replaces destination
+
                         if not headsign:
                             if sub:
                                 headsign = sub.label.split("-")[-1].strip() if "-" in sub.label else sub.label

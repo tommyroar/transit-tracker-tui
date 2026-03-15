@@ -1,5 +1,6 @@
 import os
 import re
+import tempfile
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -32,8 +33,15 @@ def set_last_config_path(path: str):
         except Exception:
             pass
     data["last_config_path"] = os.path.abspath(path)
-    with open(GLOBAL_SETTINGS_FILE, "w") as f:
-        yaml.safe_dump(data, f)
+    # Write atomically: temp file in same directory, then rename
+    fd, tmp_path = tempfile.mkstemp(dir=GLOBAL_SETTINGS_DIR, suffix=".yaml")
+    try:
+        with os.fdopen(fd, "w") as f:
+            yaml.safe_dump(data, f)
+        os.replace(tmp_path, GLOBAL_SETTINGS_FILE)
+    except Exception:
+        os.unlink(tmp_path)
+        raise
 
 
 def list_profiles() -> List[str]:

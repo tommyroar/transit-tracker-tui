@@ -73,35 +73,31 @@ class TransitTrackerApp(rumps.App):
         self.last_update_ts = 0
 
     def bg_fetch_loop(self):
-        """Periodically fetches arrivals for all stops in all profiles."""
-        import asyncio
-        
-        async def fetch():
-            while True:
-                profiles = list_profiles()
-                all_stops = set()
-                for p_path in profiles:
-                    try:
-                        cfg = TransitConfig.load(p_path)
-                        for sub in cfg.subscriptions:
-                            all_stops.add(sub.stop)
-                    except:
-                        pass
-                
-                for stop_id in all_stops:
-                    try:
-                        arrivals = await self.api.get_arrivals(stop_id)
-                        with self.cache_lock:
-                            self.arrivals_cache[stop_id] = arrivals
-                    except:
-                        pass
-                
-                # Refresh cache every 60 seconds
-                await asyncio.sleep(60)
+        """Reads arrivals from the proxy's cache via the service state file.
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(fetch())
+        Previously this made independent OBA API calls for every stop across
+        all profiles, bypassing the proxy's rate-limit backoff entirely and
+        causing perpetual 429s.  Now it piggybacks on the proxy's cached data
+        via the last_message field in service_state.json.
+        """
+        while True:
+            try:
+                if os.path.exists(SERVICE_STATE_FILE):
+                    with open(SERVICE_STATE_FILE, "r") as f:
+                        state = json.load(f)
+                    last_msg = state.get("last_message", {})
+                    trips = last_msg.get("data", {}).get("trips", [])
+                    if trips:
+                        # Group trips by stopId for the arrivals cache
+                        by_stop = {}
+                        for t in trips:
+                            stop = t.get("stopId", "")
+                            by_stop.setdefault(stop, []).append(t)
+                        with self.cache_lock:
+                            self.arrivals_cache.update(by_stop)
+            except Exception:
+                pass
+            time.sleep(10)
 
     def update_state(self, _):
         try:
@@ -112,6 +108,7 @@ class TransitTrackerApp(rumps.App):
             client_details = []
             uptime_str = ""
             msg_count = 0
+            state = {}
             current_config_path = get_last_config_path()
             
             # 1. Service Status Check
@@ -221,16 +218,19 @@ class TransitTrackerApp(rumps.App):
 
             # 5. Update the Clients Sub-menu and its Title
             self.clients_menu.title = f"🛜 Clients ({client_count})"
-            
-            # Update Rate Limit Status
-            if is_rate_limited != self.is_rate_limited:
-                self.is_rate_limited = is_rate_limited
-                self.title = "📵" if is_rate_limited else "🚉"
-                self.rate_limit_item.set_callback(None) # Make it look like a label
-                if is_rate_limited:
-                    self.rate_limit_item.title = "📵 OneBusAway Rate Limited!"
-                else:
-                    self.rate_limit_item.title = "✅ API Connection Healthy"
+
+            # Update Rate Limit Status — always sync from service state
+            self.is_rate_limited = is_rate_limited
+            throttle_total = state.get("throttle_total", 0) if os.path.exists(SERVICE_STATE_FILE) else 0
+            api_calls = state.get("api_calls_total", 0) if os.path.exists(SERVICE_STATE_FILE) else 0
+            throttle_rate = state.get("throttle_rate", 0) if os.path.exists(SERVICE_STATE_FILE) else 0
+
+            if is_rate_limited:
+                self.title = f"📵 {throttle_total}"
+                self.rate_limit_item.title = f"📵 Rate Limited — {throttle_total}/{api_calls} throttled ({throttle_rate:.0%})"
+            else:
+                self.title = f"🚉 {throttle_total}" if throttle_total > 0 else "🚉"
+                self.rate_limit_item.title = f"✅ Healthy — {throttle_total}/{api_calls} throttled ({throttle_rate:.0%})" if api_calls > 0 else "✅ API Connection Healthy"
             
             current_client_ids = ",".join(sorted([c.get("address", "") for c in client_details]))
             if current_client_ids != self.last_client_ids:

@@ -331,6 +331,124 @@ async def test_non_ferry_route_headsign_unchanged(mock_config):
 
 
 @pytest.mark.asyncio
+async def test_ferry_uses_departure_time_not_arrival(ferry_config):
+    """Ferries must always display departure time (when vessel leaves the dock),
+    not arrival time (when it reaches the destination), regardless of time_display setting.
+
+    Real OBA data for ferries has different scheduledDepartureTime and scheduledArrivalTime
+    at the origin dock — departure is when the boat leaves, arrival is when it reaches the
+    other side. Users waiting at the dock need the departure time.
+    """
+    # time_display is "arrival" (the default), but ferries should still use departure
+    ferry_config.time_display = "arrival"
+    server = TransitServer(ferry_config)
+    now = int(time.time())
+
+    scheduled_departure = now + 600   # 10 min from now — ferry leaves the dock
+    scheduled_arrival = now + 2100    # 35 min from now — ferry arrives at destination
+
+    server.cache["95_7"] = (time.time(), [
+        {
+            "tripId": "95_73503142611",
+            "routeId": "95_73",
+            "stopId": "95_7",
+            "scheduledArrivalTime": scheduled_arrival * 1000,
+            "scheduledDepartureTime": scheduled_departure * 1000,
+            "predictedArrivalTime": None,
+            "predictedDepartureTime": None,
+            "tripHeadsign": "Bainbridge Island",
+            "headsign": "Bainbridge Island",
+            "routeName": "Seattle - Bainbridge Island",
+            "isRealtime": False,
+            "vehicleId": None,
+        }
+    ])
+
+    ws = AsyncMock()
+    server.subscriptions[ws] = [{"routeId": "95_73", "stopId": "95_7"}]
+    await server.send_update(ws)
+
+    trips = json.loads(ws.send.call_args[0][0])["data"]["trips"]
+    assert len(trips) == 1
+    # Must show departure time (600s from now), NOT arrival time (2100s from now)
+    assert trips[0]["arrivalTime"] == scheduled_departure
+
+
+@pytest.mark.asyncio
+async def test_ferry_uses_predicted_departure_when_realtime(ferry_config):
+    """When a ferry has realtime predicted departure, use that over scheduled."""
+    ferry_config.time_display = "arrival"
+    server = TransitServer(ferry_config)
+    now = int(time.time())
+
+    scheduled_departure = now + 600
+    predicted_departure = now + 720   # 2 min late
+    scheduled_arrival = now + 2100
+    predicted_arrival = now + 2220
+
+    server.cache["95_7"] = (time.time(), [
+        {
+            "tripId": "95_73503142611",
+            "routeId": "95_73",
+            "stopId": "95_7",
+            "scheduledArrivalTime": scheduled_arrival * 1000,
+            "scheduledDepartureTime": scheduled_departure * 1000,
+            "predictedArrivalTime": predicted_arrival * 1000,
+            "predictedDepartureTime": predicted_departure * 1000,
+            "tripHeadsign": "Bainbridge Island",
+            "headsign": "Bainbridge Island",
+            "routeName": "Seattle - Bainbridge Island",
+            "isRealtime": True,
+            "vehicleId": "95_25",
+        }
+    ])
+
+    ws = AsyncMock()
+    server.subscriptions[ws] = [{"routeId": "95_73", "stopId": "95_7"}]
+    await server.send_update(ws)
+
+    trips = json.loads(ws.send.call_args[0][0])["data"]["trips"]
+    assert len(trips) == 1
+    # Must use predicted departure (720s), not predicted arrival (2220s)
+    assert trips[0]["arrivalTime"] == predicted_departure
+
+
+@pytest.mark.asyncio
+async def test_bus_still_respects_arrival_display_mode(mock_config):
+    """Non-ferry routes must still respect the time_display setting (arrival mode)."""
+    mock_config.time_display = "arrival"
+    server = TransitServer(mock_config)
+    now = int(time.time())
+
+    scheduled_departure = now + 590
+    scheduled_arrival = now + 600
+
+    server.cache["1_8494"] = (time.time(), [
+        {
+            "tripId": "bus_trip_1",
+            "routeId": "st:40_100240",
+            "stopId": "st:1_8494",
+            "scheduledArrivalTime": scheduled_arrival * 1000,
+            "scheduledDepartureTime": scheduled_departure * 1000,
+            "predictedArrivalTime": None,
+            "predictedDepartureTime": None,
+            "headsign": "Downtown Seattle",
+            "routeName": "40",
+            "isRealtime": False,
+        }
+    ])
+
+    ws = AsyncMock()
+    server.subscriptions[ws] = [{"routeId": "st:40_100240", "stopId": "st:1_8494"}]
+    await server.send_update(ws)
+
+    trips = json.loads(ws.send.call_args[0][0])["data"]["trips"]
+    assert len(trips) == 1
+    # Bus should use arrival time per config setting
+    assert trips[0]["arrivalTime"] == scheduled_arrival
+
+
+@pytest.mark.asyncio
 async def test_rate_limit_sets_backoff_interval(mock_config):
     """A 429 during refresh_all_data must double the refresh interval (exponential backoff)."""
     server = TransitServer(mock_config)

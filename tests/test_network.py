@@ -203,6 +203,156 @@ async def test_refresh_all_data_skips_rate_limited_stops(mock_config):
     assert "stop_limited" not in called_stops
 
 
+# --- Ferry Vessel Name Tests ---
+
+def _make_ferry_arrival(now, trip_id, headsign, vehicle_id=None, offset_ms=600_000):
+    """Helper: build a minimal ferry arrival dict as transit_api would return."""
+    arr = {
+        "tripId": trip_id,
+        "routeId": "95_37",
+        "stopId": "95_3",
+        "arrivalTime": (now + offset_ms // 1000) * 1000,
+        "tripHeadsign": headsign,
+        "headsign": headsign,
+        "routeName": "Bainbridge Island - Seattle",
+        "isRealtime": vehicle_id is not None,
+    }
+    if vehicle_id:
+        arr["vehicleId"] = vehicle_id
+    return arr
+
+
+@pytest.fixture
+def ferry_config():
+    config = MagicMock()
+    config.subscriptions = [
+        TransitSubscription(feed="wsf", route="95_37", stop="95_3", label="SEA-BI")
+    ]
+    config.use_local_api = True
+    config.auto_launch_gui = False
+    config.arrival_threshold_minutes = 5
+    config.check_interval_seconds = 30
+    config.time_display = "arrival"
+    config.transit_tracker = MagicMock()
+    config.transit_tracker.abbreviations = []
+    return config
+
+
+@pytest.mark.asyncio
+async def test_ferry_vessel_name_shown_when_vehicle_id_present(ferry_config):
+    """When vehicleId is present and maps to a known vessel, headsign is the vessel name."""
+    server = TransitServer(ferry_config)
+    now = int(time.time())
+    server.cache["95_3"] = (time.time(), [
+        _make_ferry_arrival(now, "trip_1", "Seattle", vehicle_id="95_25"),
+    ])
+
+    ws = AsyncMock()
+    server.subscriptions[ws] = [{"routeId": "95_37", "stopId": "95_3"}]
+    await server.send_update(ws)
+
+    trips = json.loads(ws.send.call_args[0][0])["data"]["trips"]
+    assert len(trips) == 1
+    assert trips[0]["headsign"] == "Puyallup"
+
+
+@pytest.mark.asyncio
+async def test_ferry_headsign_fallback_when_no_vehicle_id(ferry_config):
+    """When vehicleId is absent, headsign falls back to the OBA destination (correct behavior)."""
+    server = TransitServer(ferry_config)
+    now = int(time.time())
+    server.cache["95_3"] = (time.time(), [
+        _make_ferry_arrival(now, "trip_1", "Bainbridge Island", vehicle_id=None),
+    ])
+
+    ws = AsyncMock()
+    server.subscriptions[ws] = [{"routeId": "95_37", "stopId": "95_3"}]
+    await server.send_update(ws)
+
+    trips = json.loads(ws.send.call_args[0][0])["data"]["trips"]
+    assert len(trips) == 1
+    assert trips[0]["headsign"] == "Bainbridge Island"
+
+
+@pytest.mark.asyncio
+async def test_ferry_vessel_cache_persists_after_vehicle_id_drops(ferry_config):
+    """Once a vessel is seen, subsequent trips with no vehicleId reuse the cached name."""
+    server = TransitServer(ferry_config)
+    now = int(time.time())
+
+    # First poll: vehicleId present — populates vessel_cache
+    server.cache["95_3"] = (time.time(), [
+        _make_ferry_arrival(now, "trip_1", "Seattle", vehicle_id="95_25"),
+    ])
+    ws = AsyncMock()
+    server.subscriptions[ws] = [{"routeId": "95_37", "stopId": "95_3"}]
+    await server.send_update(ws)
+    assert server.vessel_cache.get("95_37") == "Puyallup"
+
+    # Second poll: vehicleId absent — should still show cached vessel name
+    server.cache["95_3"] = (time.time(), [
+        _make_ferry_arrival(now, "trip_2", "Bainbridge Island", vehicle_id=None),
+    ])
+    ws2 = AsyncMock()
+    server.subscriptions[ws2] = [{"routeId": "95_37", "stopId": "95_3"}]
+    await server.send_update(ws2)
+
+    trips = json.loads(ws2.send.call_args[0][0])["data"]["trips"]
+    assert trips[0]["headsign"] == "Puyallup"
+
+
+@pytest.mark.asyncio
+async def test_ferry_vessel_cache_updates_when_new_vessel_seen(ferry_config):
+    """vessel_cache updates when a different vessel ID appears on the same route."""
+    server = TransitServer(ferry_config)
+    now = int(time.time())
+
+    server.cache["95_3"] = (time.time(), [
+        _make_ferry_arrival(now, "trip_1", "Seattle", vehicle_id="95_15"),  # Wenatchee
+    ])
+    ws = AsyncMock()
+    server.subscriptions[ws] = [{"routeId": "95_37", "stopId": "95_3"}]
+    await server.send_update(ws)
+    assert server.vessel_cache.get("95_37") == "Wenatchee"
+
+    server.cache["95_3"] = (time.time(), [
+        _make_ferry_arrival(now, "trip_2", "Bainbridge Island", vehicle_id="95_7"),  # Puyallup
+    ])
+    ws2 = AsyncMock()
+    server.subscriptions[ws2] = [{"routeId": "95_37", "stopId": "95_3"}]
+    await server.send_update(ws2)
+
+    trips = json.loads(ws2.send.call_args[0][0])["data"]["trips"]
+    assert trips[0]["headsign"] == "Puyallup"
+    assert server.vessel_cache.get("95_37") == "Puyallup"
+
+
+@pytest.mark.asyncio
+async def test_non_ferry_route_headsign_unchanged(mock_config):
+    """Non-ferry routes must not have their headsign substituted with a vessel name."""
+    server = TransitServer(mock_config)
+    now = int(time.time())
+    server.cache["1_8494"] = (time.time(), [
+        {
+            "tripId": "bus_trip_1",
+            "routeId": "st:40_100240",
+            "stopId": "st:1_8494",
+            "arrivalTime": (now + 600) * 1000,
+            "headsign": "Downtown Seattle",
+            "routeName": "40",
+            "isRealtime": True,
+        }
+    ])
+
+    ws = AsyncMock()
+    server.subscriptions[ws] = [{"routeId": "st:40_100240", "stopId": "st:1_8494"}]
+    await server.send_update(ws)
+
+    trips = json.loads(ws.send.call_args[0][0])["data"]["trips"]
+    assert len(trips) == 1
+    assert trips[0]["headsign"] == "Downtown Seattle"
+
+
 @pytest.mark.asyncio
 async def test_rate_limit_sets_backoff_interval(mock_config):
     """A 429 during refresh_all_data must double the refresh interval (exponential backoff)."""

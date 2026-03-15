@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import random
 import time
 from typing import Any, Dict, List, Set, Tuple
 from collections import defaultdict
@@ -46,7 +47,7 @@ class TransitServer:
     def __init__(self, config: TransitConfig):
         self.config = config
         self.config_path = get_last_config_path()
-        self.api = TransitAPI()
+        self.api = TransitAPI(oba_api_key=config.transit_tracker.oba_api_key)
         self.clients = set()
         self.subscriptions = {} # ws -> List[Dict] (pairs)
         self.client_names = {} # ws -> str
@@ -267,13 +268,19 @@ class TransitServer:
         print(f"[SERVER] Refreshing data for {len(unique_stops)} unique stops...", flush=True)
         
         any_429 = False
-        for clean_id in unique_stops:
+        spacing_sec = self.config.transit_tracker.request_spacing_ms / 1000.0
+        stops_list = sorted(unique_stops)
+        for i, clean_id in enumerate(stops_list):
+            if i > 0 and spacing_sec > 0:
+                jittered = spacing_sec * random.uniform(0.75, 1.25)
+                await asyncio.sleep(jittered)
             try:
                 await self.get_arrivals_cached(clean_id)
             except Exception as e:
                 if "429" in str(e):
                     any_429 = True
-        
+                    break  # Stop firing requests once rate-limited
+
         # Exponential Backoff Logic
         if any_429:
             # Double the interval on any rate limit

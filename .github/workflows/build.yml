@@ -25,6 +25,8 @@ jobs:
         run: uv sync --all-extras --dev
 
       - name: Run Tests (including Capture Validation)
+        env:
+          TRANSIT_TRACKER_TESTING: "1"
         run: uv run pytest -v
 
       - name: Verify CLI Launch

@@ -21,7 +21,9 @@ def mock_config():
     config.time_display = "arrival"
     config.transit_tracker = MagicMock()
     config.transit_tracker.abbreviations = []
+    config.transit_tracker.request_spacing_ms = 250
     return config
+
 
 @pytest.mark.asyncio
 async def test_server_broadcast_updates(mock_config):
@@ -235,6 +237,7 @@ def ferry_config():
     config.time_display = "arrival"
     config.transit_tracker = MagicMock()
     config.transit_tracker.abbreviations = []
+    config.transit_tracker.request_spacing_ms = 250
     return config
 
 
@@ -523,3 +526,118 @@ async def test_rate_limit_sets_backoff_interval(mock_config):
 
     assert server.current_refresh_interval == initial_interval * 2
     assert "stop1" in server.rate_limited_stops
+
+
+# --- Inter-Request Spacing Tests ---
+
+
+@pytest.mark.asyncio
+async def test_refresh_all_data_applies_inter_request_spacing(mock_config):
+    """With 200ms spacing and 3 stops, gaps between API calls should be >= 130ms (75% jitter floor)."""
+    mock_config.transit_tracker.request_spacing_ms = 200
+    server = TransitServer(mock_config)
+    server.api = AsyncMock()
+
+    call_times = []
+
+    async def record_time(stop_id):
+        call_times.append(time.monotonic())
+        return []
+
+    server.api.get_arrivals.side_effect = record_time
+
+    ws = MagicMock()
+    server.subscriptions[ws] = [
+        {"routeId": "r1", "stopId": "stop_a"},
+        {"routeId": "r2", "stopId": "stop_b"},
+        {"routeId": "r3", "stopId": "stop_c"},
+    ]
+
+    await server.refresh_all_data()
+
+    assert len(call_times) == 3
+    for i in range(1, len(call_times)):
+        gap_ms = (call_times[i] - call_times[i - 1]) * 1000
+        # 200ms * 0.75 jitter floor = 150ms, with some tolerance
+        assert gap_ms >= 130, f"Gap {i} was {gap_ms:.0f}ms, expected >= 130ms"
+
+
+@pytest.mark.asyncio
+async def test_refresh_all_data_zero_spacing_fires_immediately(mock_config):
+    """With spacing=0, all requests fire back-to-back (backwards compat)."""
+    mock_config.transit_tracker.request_spacing_ms = 0
+    server = TransitServer(mock_config)
+    server.api = AsyncMock()
+
+    call_times = []
+
+    async def record_time(stop_id):
+        call_times.append(time.monotonic())
+        return []
+
+    server.api.get_arrivals.side_effect = record_time
+
+    ws = MagicMock()
+    server.subscriptions[ws] = [
+        {"routeId": "r1", "stopId": "stop_a"},
+        {"routeId": "r2", "stopId": "stop_b"},
+    ]
+
+    await server.refresh_all_data()
+
+    assert len(call_times) == 2
+    gap_ms = (call_times[1] - call_times[0]) * 1000
+    assert gap_ms < 50, f"Gap was {gap_ms:.0f}ms, expected < 50ms with zero spacing"
+
+
+@pytest.mark.asyncio
+async def test_spacing_preserves_backoff_on_429(mock_config):
+    """Inter-request spacing must not interfere with exponential backoff on 429."""
+    mock_config.transit_tracker.request_spacing_ms = 200
+    server = TransitServer(mock_config)
+    server.api = AsyncMock()
+    server.api.get_arrivals.side_effect = Exception("HTTP 429 Too Many Requests")
+
+    ws = MagicMock()
+    server.subscriptions[ws] = [{"routeId": "r1", "stopId": "stop1"}]
+
+    initial_interval = server.current_refresh_interval
+    await server.refresh_all_data()
+
+    assert server.current_refresh_interval == initial_interval * 2
+    assert "stop1" in server.rate_limited_stops
+
+
+@pytest.mark.asyncio
+async def test_spacing_prevents_burst_429s(mock_config):
+    """Simulate a 150ms server rate limit: 250ms spacing should yield zero 429s."""
+    mock_config.transit_tracker.request_spacing_ms = 250
+    server = TransitServer(mock_config)
+    server.api = AsyncMock()
+
+    last_call_time = [0.0]
+    rate_limit_window = 0.150  # 150ms minimum between requests
+
+    async def rate_limited_api(stop_id):
+        now = time.monotonic()
+        if last_call_time[0] > 0 and (now - last_call_time[0]) < rate_limit_window:
+            last_call_time[0] = now
+            raise Exception("HTTP 429 Too Many Requests")
+        last_call_time[0] = now
+        return []
+
+    server.api.get_arrivals.side_effect = rate_limited_api
+
+    ws = MagicMock()
+    server.subscriptions[ws] = [
+        {"routeId": "r1", "stopId": "stop_a"},
+        {"routeId": "r2", "stopId": "stop_b"},
+        {"routeId": "r3", "stopId": "stop_c"},
+        {"routeId": "r4", "stopId": "stop_d"},
+    ]
+
+    await server.refresh_all_data()
+
+    # With 250ms spacing (jitter floor 187ms) vs 150ms rate limit, no 429s should occur
+    assert server.throttle_total == 0
+    assert server.current_refresh_interval == server.base_interval

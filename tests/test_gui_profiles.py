@@ -26,6 +26,7 @@ class MockApp:
         self.last_profiles = []
         self.last_update_ts = 0
         self.display_format = None
+        self.profile_previews = {}
         self.title = "🚉"
 
     # Copy the logic from gui.py but make it testable

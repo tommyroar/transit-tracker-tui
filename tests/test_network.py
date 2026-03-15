@@ -485,6 +485,29 @@ async def test_missing_flags_falls_back_to_display_mode(mock_config):
 
 
 @pytest.mark.asyncio
+async def test_cache_respects_backoff_interval(mock_config):
+    """Cache freshness must use the backed-off interval, not the base interval.
+
+    Bug: base_interval=30s, but after backoff current_refresh_interval=600s.
+    Cache entry aged 60s was considered stale (60 > 28) and triggered a fresh
+    OBA call every cycle, defeating the backoff entirely.
+    """
+    server = TransitServer(mock_config)
+    server.api = AsyncMock()
+    server.api.get_arrivals.return_value = [{"tripId": "t1"}]
+
+    # Simulate backed-off state: interval is 120s, cache is 60s old (within 120s)
+    server.current_refresh_interval = 120
+    server.cache["stop1"] = (time.time() - 60, [{"tripId": "cached"}])
+
+    result = await server.get_arrivals_cached("stop1")
+
+    # Must return cached data without calling the API
+    server.api.get_arrivals.assert_not_called()
+    assert result == [{"tripId": "cached"}]
+
+
+@pytest.mark.asyncio
 async def test_rate_limit_sets_backoff_interval(mock_config):
     """A 429 during refresh_all_data must double the refresh interval (exponential backoff)."""
     server = TransitServer(mock_config)

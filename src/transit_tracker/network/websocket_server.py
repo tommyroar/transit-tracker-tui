@@ -119,8 +119,9 @@ class TransitServer:
 
         if clean_stop_id in self.cache:
             ts, data = self.cache[clean_stop_id]
-            # Use cached data if it's within the check interval - 2s buffer for safety
-            if now - ts < (self.base_interval - 2):
+            # Use cached data if it's within the current refresh interval (which may
+            # be longer than base_interval during backoff) minus a 2s buffer for safety
+            if now - ts < (self.current_refresh_interval - 2):
                 return data
 
         # Fetch fresh

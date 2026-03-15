@@ -3,7 +3,14 @@
 Maps API response fields to named template variables and renders
 trip lines using str.format_map(). The default template produces
 output identical to the legacy hardcoded format in gui.py.
+
+For bitmap rendering (LED simulator), use build_bitmap_segments()
+to parse the template into ordered segments with variable names,
+resolved text, and color roles that the renderer can map to fonts
+and colors independently.
 """
+
+import re
 
 DISPLAY_VARIABLES = {
     "ROUTE": "Route short name (e.g. '554')",
@@ -55,3 +62,79 @@ def format_trip_line(trip: dict, now: float, fmt: str | None = None) -> str:
         return fmt.format_map(variables)
     except (KeyError, ValueError, IndexError):
         return DEFAULT_DISPLAY_FORMAT.format_map(variables)
+
+
+# Pattern to split "{VAR}" tokens from literal text
+_SEGMENT_RE = re.compile(r"\{([A-Z_]+)\}")
+
+
+def build_bitmap_segments(
+    dep: dict, fmt: str | None = None
+) -> list[dict]:
+    """Parse a display format into ordered bitmap segments.
+
+    Each segment dict has:
+        variable: str | None  — variable name or None for literal
+        text: str             — resolved text to render
+        role: str             — color role for the renderer
+
+    The simulator uses these segments to render bitmaps left-to-right
+    with per-segment color and special handling (e.g. LIVE icon).
+
+    *dep* uses the simulator's internal departure dict format
+    (keys: route, headsign, diff, live, color, stop_id).
+    """
+    if fmt is None:
+        fmt = DEFAULT_DISPLAY_FORMAT
+
+    # Resolve variable values from the simulator dep dict
+    diff = dep.get("diff", 0)
+    values = {
+        "ROUTE": str(dep.get("route", "?")),
+        "HEADSIGN": dep.get("headsign", ""),
+        "LIVE": "",  # handled as icon by renderer
+        "TIME": "Now" if diff <= 0 else f"{diff}m",
+        "WAIT": str(diff),
+        "ROUTE_ID": dep.get("route_id", ""),
+        "STOP_ID": dep.get("stop_id", ""),
+        "ROUTE_COLOR": dep.get("color", ""),
+    }
+
+    # Color roles per variable
+    route_color = dep.get("color", "yellow")
+    is_live = dep.get("live", False)
+    roles = {
+        "ROUTE": route_color,
+        "HEADSIGN": "white",
+        "LIVE": "live_icon",
+        "TIME": "bright_blue" if is_live else "grey74",
+        "WAIT": "bright_blue" if is_live else "grey74",
+        "ROUTE_ID": route_color,
+        "STOP_ID": "white",
+        "ROUTE_COLOR": "white",
+    }
+
+    segments: list[dict] = []
+    pos = 0
+    for m in _SEGMENT_RE.finditer(fmt):
+        # Literal text before this variable
+        if m.start() > pos:
+            literal = fmt[pos : m.start()]
+            segments.append(
+                {"variable": None, "text": literal, "role": "white"}
+            )
+        var = m.group(1)
+        segments.append({
+            "variable": var,
+            "text": values.get(var, ""),
+            "role": roles.get(var, "white"),
+        })
+        pos = m.end()
+
+    # Trailing literal
+    if pos < len(fmt):
+        segments.append(
+            {"variable": None, "text": fmt[pos:], "role": "white"}
+        )
+
+    return segments

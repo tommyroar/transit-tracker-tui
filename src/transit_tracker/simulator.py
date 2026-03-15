@@ -13,6 +13,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from .config import TransitConfig
+from .display import build_bitmap_segments
 
 
 class MicroFont:
@@ -244,93 +245,129 @@ class LEDSimulator:
                     await asyncio.sleep(5) # Retry on connection loss
 
     def _render_trip_row(self, dep: dict, elapsed: float) -> list[Text]:
-        """Renders a single trip row (7 lines) matching hardware layout exactly."""
+        """Renders a single trip row (7 lines) matching hardware layout exactly.
+
+        Uses the configured display_format template via build_bitmap_segments()
+        to determine segment order and colors.  The HEADSIGN segment gets
+        scrolling support; the LIVE segment renders the animated icon.
+        """
         display_width = self.config.panel_width * self.config.num_panels
-        
-        # 1. Prepare segments
-        route_text = str(dep['route'])
-        headsign_text = dep['headsign']
-        time_text = "Now" if dep['diff'] <= 0 else f"{dep['diff']}m"
-        is_realtime = dep['live']
-        
-        # 2. Get bitmaps
-        route_bm = self.microfont.get_bitmap(route_text)
-        route_w = len(route_bm[0])
-        
-        time_bm = self.microfont.get_bitmap(time_text)
-        time_w = len(time_bm[0])
-        
-        # 3. Calculate Headsign Scroll
-        # Headsign area is between route and time
-        headsign_x_start = route_w + 3
-        icon_w = 6 if is_realtime else 0
-        headsign_area_w = display_width - headsign_x_start - time_w - (icon_w + 2 if is_realtime else 0)
-        
-        headsign_bm_full = self.microfont.get_bitmap(headsign_text)
-        headsign_full_w = len(headsign_bm_full[0])
-        
-        scroll_offset = 0
-        if self.config.scroll_headsigns and headsign_full_w > headsign_area_w:
-            overflow = headsign_full_w - headsign_area_w
-            # Standard hardware-like scroll timing
-            scroll_speed = 0.1 # Seconds per pixel
-            scroll_duration = overflow * scroll_speed
-            wait_duration = 2.0
-            total_cycle = (wait_duration + scroll_duration) * 2
-            
-            cycle_pos = elapsed % total_cycle
-            if cycle_pos < wait_duration:
+        fmt = getattr(self.config, "display_format", None)
+        segments = build_bitmap_segments(dep, fmt=fmt)
+
+        # Pre-compute total fixed width (everything except HEADSIGN)
+        # so we know how much room the headsign gets.
+        fixed_width = 0
+        for seg in segments:
+            if seg["variable"] == "HEADSIGN":
+                continue
+            if seg["variable"] == "LIVE" and dep.get("live"):
+                fixed_width += 8  # 6px icon + 2px gap
+            elif seg["text"]:
+                bm = self.microfont.get_bitmap(seg["text"])
+                fixed_width += len(bm[0])
+
+        headsign_area_w = max(0, display_width - fixed_width)
+
+        # Build bitmap list for each segment
+        rendered: list[dict] = []
+        for seg in segments:
+            var = seg["variable"]
+            if var == "LIVE":
+                if dep.get("live"):
+                    rendered.append({
+                        "type": "icon",
+                        "role": seg["role"],
+                        "width": 8,
+                    })
+                continue
+            if var == "HEADSIGN":
+                text = seg["text"]
+                bm_full = self.microfont.get_bitmap(text)
+                full_w = len(bm_full[0])
                 scroll_offset = 0
-            elif cycle_pos < (wait_duration + scroll_duration):
-                progress = (cycle_pos - wait_duration) / scroll_duration
-                scroll_offset = int(progress * overflow)
-            elif cycle_pos < (wait_duration * 2 + scroll_duration):
-                scroll_offset = overflow
-            else:
-                progress = (cycle_pos - (wait_duration * 2 + scroll_duration)) / scroll_duration
-                scroll_offset = overflow - int(progress * overflow)
+                if (
+                    self.config.scroll_headsigns
+                    and full_w > headsign_area_w > 0
+                ):
+                    overflow = full_w - headsign_area_w
+                    scroll_speed = 0.1
+                    scroll_dur = overflow * scroll_speed
+                    wait = 2.0
+                    total_cycle = (wait + scroll_dur) * 2
+                    cp = elapsed % total_cycle
+                    if cp < wait:
+                        scroll_offset = 0
+                    elif cp < wait + scroll_dur:
+                        p = (cp - wait) / scroll_dur
+                        scroll_offset = int(p * overflow)
+                    elif cp < wait * 2 + scroll_dur:
+                        scroll_offset = overflow
+                    else:
+                        p = (cp - wait * 2 - scroll_dur) / scroll_dur
+                        scroll_offset = overflow - int(p * overflow)
+                rendered.append({
+                    "type": "headsign",
+                    "bitmap": bm_full,
+                    "full_w": full_w,
+                    "area_w": headsign_area_w,
+                    "scroll_offset": scroll_offset,
+                    "color": seg["role"],
+                })
+                continue
+            if not seg["text"]:
+                continue
+            bm = self.microfont.get_bitmap(seg["text"])
+            rendered.append({
+                "type": "text",
+                "bitmap": bm,
+                "width": len(bm[0]),
+                "color": seg["role"],
+            })
 
-        # 4. Construct Row Pixels (Full Width Canvas)
-        canvas = [[None for _ in range(display_width)] for _ in range(7)]
-        
-        # Draw Route (at x=0)
-        for r in range(7):
-            for c in range(route_w):
-                if c < display_width and route_bm[r][c]: canvas[r][c] = dep['color']
-                
-        # Draw Time (right-aligned)
-        time_x = display_width - time_w
-        time_color = "bright_blue" if is_realtime else "grey74"
-        for r in range(7):
-            for c in range(time_w):
-                tx = time_x + c
-                if 0 <= tx < display_width and time_bm[r][c]: canvas[r][tx] = time_color
-                
-        # Draw Icon (left of time)
-        if is_realtime:
-            icon_bm = self.microfont.get_live_icon_frame(elapsed)
-            icon_x = time_x - 8 # 2px gap + 6px icon
-            icon_color = "white"
-            icon_color_dark = "bright_blue"
-            for r in range(6):
-                for c in range(6):
-                    ix = icon_x + c
-                    if 0 <= ix < display_width:
-                        val = icon_bm[r][c]
-                        if val == 2:
-                            canvas[r][ix] = icon_color
-                        elif val == 1:
-                            canvas[r][ix] = icon_color_dark
+        # Paint canvas left-to-right
+        canvas = [[None] * display_width for _ in range(7)]
+        x = 0
+        for item in rendered:
+            if item["type"] == "text":
+                bm = item["bitmap"]
+                w = item["width"]
+                for r in range(7):
+                    for c in range(w):
+                        px = x + c
+                        if 0 <= px < display_width and bm[r][c]:
+                            canvas[r][px] = item["color"]
+                x += w
+            elif item["type"] == "headsign":
+                bm = item["bitmap"]
+                area_w = item["area_w"]
+                so = item["scroll_offset"]
+                for r in range(7):
+                    for c in range(area_w):
+                        src = c + so
+                        px = x + c
+                        if (
+                            0 <= px < display_width
+                            and src < item["full_w"]
+                            and bm[r][src]
+                        ):
+                            canvas[r][px] = item["color"]
+                x += area_w
+            elif item["type"] == "icon":
+                icon_bm = self.microfont.get_live_icon_frame(elapsed)
+                ix = x + 1  # 1px leading gap
+                for r in range(6):
+                    for c in range(6):
+                        px = ix + c
+                        if 0 <= px < display_width:
+                            val = icon_bm[r][c]
+                            if val == 2:
+                                canvas[r][px] = "white"
+                            elif val == 1:
+                                canvas[r][px] = "bright_blue"
+                x += 8  # 6px icon + 2px gap
 
-        # Draw Headsign (with clipping and scroll)
-        for r in range(7):
-            for c in range(headsign_area_w):
-                src_c = c + scroll_offset
-                dest_x = headsign_x_start + c
-                if 0 <= dest_x < display_width and src_c < headsign_full_w and headsign_bm_full[r][src_c]:
-                    canvas[r][dest_x] = "white"
-
-        # 5. Convert Canvas to Rich Text lines
+        # Convert canvas to Rich Text lines
         rich_lines = []
         for r in range(7):
             line = Text(no_wrap=True)
@@ -501,25 +538,39 @@ class LEDSimulator:
     def get_current_display_text(self) -> str:
         """Returns a string representation of the current display (e.g., '14 Downtown 2m')."""
         deps = self.get_upcoming_departures()
+        fmt = getattr(self.config, "display_format", None)
+        display_width = self.config.panel_width * self.config.num_panels
         lines = []
         for d in deps[:3]:
-            route_str = str(d['route'])
-            time_str = "Now" if d['diff'] <= 0 else f"{d['diff']}m"
-            live_flag = "{LIVE}" if d['live'] else ""
-            
-            route_w = len(self.microfont.get_bitmap(route_str)[0])
-            time_w = len(self.microfont.get_bitmap(time_str)[0])
-            icon_w = 6 if d['live'] else 0
-            
-            display_width = self.config.panel_width * self.config.num_panels
-            headsign_x_start = route_w + 3
-            headsign_area_w = display_width - headsign_x_start - time_w - (icon_w + 2 if d['live'] else 0)
-            
-            headsign = d['headsign']
-            while headsign and len(self.microfont.get_bitmap(headsign)[0]) > headsign_area_w:
-                headsign = headsign[:-1]
-                
-            lines.append(f"{route_str} {headsign} {live_flag}{time_str}")
+            segments = build_bitmap_segments(d, fmt=fmt)
+
+            # Compute fixed width to truncate headsign appropriately
+            fixed_width = 0
+            for seg in segments:
+                if seg["variable"] == "HEADSIGN":
+                    continue
+                if seg["variable"] == "LIVE" and d.get("live"):
+                    fixed_width += 8
+                elif seg["text"]:
+                    bm = self.microfont.get_bitmap(seg["text"])
+                    fixed_width += len(bm[0])
+            headsign_area_w = max(0, display_width - fixed_width)
+
+            parts = []
+            for seg in segments:
+                if seg["variable"] == "LIVE":
+                    if d.get("live"):
+                        parts.append("{LIVE}")
+                    continue
+                if seg["variable"] == "HEADSIGN":
+                    headsign = seg["text"]
+                    while headsign and len(self.microfont.get_bitmap(headsign)[0]) > headsign_area_w:
+                        headsign = headsign[:-1]
+                    parts.append(headsign)
+                    continue
+                if seg["text"]:
+                    parts.append(seg["text"])
+            lines.append("".join(parts))
         return "\n".join(lines)
 
     def _generate_frame(self, reference_time: Optional[datetime] = None) -> Panel:

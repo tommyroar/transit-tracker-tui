@@ -83,6 +83,9 @@ The GUI tray icon is a subprocess of the service (`run_full_service()` in `cli.p
 - Service detects config file changes and reconnects automatically
 - Profile `.yaml` files can live in project root or `.local/`
 
+### Integration testing
+`tests/test_cloud_equivalence.py` connects to both `wss://tt.horner.tj` (cloud) and `ws://localhost:8000` (local) with identical subscriptions and compares response schema, trip field types, sort order, and route metadata. Skipped in CI mode (`TRANSIT_TRACKER_TESTING=1`). Run without the env var to exercise live.
+
 ## Service management
 
 The daemon runs under launchd. Use `launchctl kickstart` to restart — do not use `pkill` or background processes directly.
@@ -90,6 +93,6 @@ The daemon runs under launchd. Use `launchctl kickstart` to restart — do not u
 ```bash
 transit-tracker service start
 transit-tracker service stop
-transit-tracker service restart
+transit-tracker service restart   # uses launchctl kickstart -k internally
 transit-tracker service status
 ```

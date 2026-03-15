@@ -25,6 +25,7 @@ class MockApp:
         self.is_rate_limited = False
         self.last_profiles = []
         self.last_update_ts = 0
+        self.display_format = None
         self.title = "🚉"
 
     # Copy the logic from gui.py but make it testable
@@ -147,6 +148,90 @@ def test_switch_profile_callback(test_app):
     sender.p_path = "/path/to/new.yaml"
     
     with patch("transit_tracker.gui.set_last_config_path") as mock_set, \
+         patch("transit_tracker.gui.TransitConfig"), \
          patch("rumps.notification"):
         test_app.switch_profile(sender)
         mock_set.assert_called_with("/path/to/new.yaml")
+
+
+def _sample_trip(**overrides):
+    base = {
+        "routeName": "554",
+        "headsign": "Downtown Seattle",
+        "arrivalTime": 1700000600,
+        "isRealtime": True,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_format_trip_line_custom_template():
+    """Custom template renders correctly."""
+    from transit_tracker.display import format_trip_line
+    now = 1700000000.0
+    trip = _sample_trip()
+    fmt = "{ROUTE} \u2192 {HEADSIGN} {TIME}"
+    assert format_trip_line(trip, now, fmt=fmt) == (
+        "554 \u2192 Downtown Seattle 10m"
+    )
+
+
+def test_format_trip_line_invalid_template_fallback():
+    """Invalid template falls back to default format."""
+    from transit_tracker.display import format_trip_line
+    now = 1700000000.0
+    trip = _sample_trip()
+    line = format_trip_line(trip, now, fmt="{NONEXISTENT}")
+    assert "554" in line
+    assert "Downtown Seattle" in line
+
+
+def test_build_trip_variables_keys():
+    """Variables dict contains all documented keys."""
+    from transit_tracker.display import (
+        DISPLAY_VARIABLES,
+        build_trip_variables,
+    )
+    now = 1700000000.0
+    trip = _sample_trip(headsign="Test")
+    variables = build_trip_variables(trip, now)
+    for key in DISPLAY_VARIABLES:
+        assert key in variables
+
+
+def test_display_format_in_config():
+    """Config model accepts and preserves display_format."""
+    from transit_tracker.config import TransitTrackerSettings
+    s = TransitTrackerSettings(
+        display_format="{ROUTE} {TIME}"
+    )
+    assert s.display_format == "{ROUTE} {TIME}"
+
+
+def test_display_format_default_matches_legacy():
+    """Default format produces identical output to legacy."""
+    from transit_tracker.display import (
+        DEFAULT_DISPLAY_FORMAT,
+        format_trip_line,
+    )
+    now = 1700000000.0
+    trip = _sample_trip()
+    expected = "554  Downtown Seattle  \u25c9 10m"
+    assert format_trip_line(trip, now) == expected
+    assert format_trip_line(
+        trip, now, fmt=DEFAULT_DISPLAY_FORMAT
+    ) == expected
+
+
+def test_format_trip_line_live_only_template():
+    """Template using only LIVE and WAIT variables."""
+    from transit_tracker.display import format_trip_line
+    now = 1700000000.0
+    trip = _sample_trip(
+        routeName="E",
+        headsign="Aurora",
+        arrivalTime=1700000300,
+        isRealtime=False,
+    )
+    line = format_trip_line(trip, now, fmt="{LIVE} {WAIT}min")
+    assert line == "\u25cb 5min"

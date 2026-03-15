@@ -23,6 +23,7 @@ from .config import (
     set_last_config_path,
     list_profiles,
 )
+from .display import format_trip_line, DISPLAY_VARIABLES
 from .hardware import (
     flash_base_firmware,
     flash_hardware,
@@ -69,6 +70,50 @@ def view_config_diff(config: TransitConfig, config_path: str, console: Console):
     except Exception as e:
         rprint(f"[red]Error generating diff: {e}[/red]")
         time.sleep(2)
+
+def preview_display_format(config: TransitConfig, console: Console):
+    """Show how the current display_format renders with sample and live data."""
+    from .network.websocket_server import SERVICE_STATE_FILE
+
+    fmt = config.transit_tracker.display_format
+    now = time.time()
+
+    # Try loading live trips from service state
+    trips = []
+    try:
+        with open(SERVICE_STATE_FILE) as f:
+            state = json.load(f)
+        last_msg = state.get("last_message", {})
+        trips = last_msg.get("data", {}).get("trips", [])
+    except Exception:
+        pass
+
+    # Fall back to sample data if no live trips
+    if not trips:
+        trips = [
+            {"routeName": "554", "headsign": "Downtown Seattle", "arrivalTime": int(now) + 600, "isRealtime": True, "routeId": "40_100240", "stopId": "1_8494", "routeColor": "2B376E"},
+            {"routeName": "14", "headsign": "Summit", "arrivalTime": int(now) + 1800, "isRealtime": False, "routeId": "1_100039", "stopId": "1_11920", "routeColor": "FDB71A"},
+            {"routeName": "SEA-BI", "headsign": "Bainbridge Island", "arrivalTime": int(now) + 300, "isRealtime": True, "routeId": "95_73", "stopId": "wsf:7", "routeColor": ""},
+        ]
+
+    # Render
+    table = Table(title="Display Format Preview", show_header=False, box=None, padding=(0, 2))
+    table.add_column(style="bold")
+    for t in trips:
+        table.add_row(format_trip_line(t, now, fmt=fmt))
+
+    console.print()
+    console.print(Panel(
+        Group(
+            Text(f"Format: {fmt}", style="dim"),
+            Text(f"Variables: {', '.join(f'{{{k}}}' for k in DISPLAY_VARIABLES)}", style="dim"),
+            Text(""),
+            table,
+        ),
+        title="Display Format",
+    ))
+    input("\nPress Enter to continue...")
+
 
 async def diff_profiles_wizard(config: TransitConfig, console: Console):
     """Wizard to select a profile and diff it against current in-memory config."""
@@ -838,6 +883,7 @@ async def async_main_menu():
                             "Save Config File As...", 
                             "View Config Diff (Local Disk)",
                             "Diff Config with Profile",
+                            "Preview Display Format",
                             "Back"
                         ],
                         config=config,
@@ -849,6 +895,8 @@ async def async_main_menu():
                         view_config_diff(config, config_path, console)
                     elif f_action == "Diff Config with Profile":
                         await diff_profiles_wizard(config, console)
+                    elif f_action == "Preview Display Format":
+                        preview_display_format(config, console)
                     elif f_action == "Save Config File":
                         try:
                             TransitConfig.model_validate(config.model_dump())

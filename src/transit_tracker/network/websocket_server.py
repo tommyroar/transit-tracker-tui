@@ -9,6 +9,7 @@ from collections import defaultdict
 import websockets
 
 from ..config import TransitConfig, get_last_config_path
+from ..display import format_trip_line
 from ..transit_api import TransitAPI
 
 SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "service_state.json")
@@ -427,7 +428,9 @@ class TransitServer:
             self.messages_processed += 1
             addr = getattr(ws, "remote_address", (None,))
             if addr[0] and addr[0] != "127.0.0.1":
-                print(f"[SERVER] Push to {addr[0]}: {len(final_trips)} trips", flush=True)
+                fmt = self.config.transit_tracker.display_format if self.config else None
+                lines = [format_trip_line(t, time.time(), fmt=fmt) for t in final_trips]
+                print(f"[SERVER] Push to {addr[0]}: {' | '.join(lines) or '0 trips'}", flush=True)
             self.sync_state(last_message=response)
         except Exception:
             pass

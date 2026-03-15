@@ -241,6 +241,7 @@ class TransitAPI:
                             "headsign": arr.get("tripHeadsign"),
                             "isRealtime": is_realtime,
                             "routeColor": route_info.get("color"),
+                            "vehicleId": arr.get("vehicleId"),
                         }
                     )
                 return results

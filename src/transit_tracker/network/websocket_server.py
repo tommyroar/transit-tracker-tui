@@ -12,6 +12,19 @@ from ..transit_api import TransitAPI
 
 SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "service_state.json")
 
+# Official WSDOT Ferry Vessel Mapping (Agency 95)
+WSF_VESSELS = {
+    "1": "Cathlamet", "2": "Chelan", "3": "Issaquah", "4": "Kitsap",
+    "5": "Kittitas", "6": "Muckleshoot", "7": "Puyallup", "8": "Samish",
+    "9": "Sealth", "10": "Suquamish", "11": "Tacoma", "12": "Tillikum",
+    "13": "Tokitae", "14": "Walla Walla", "15": "Wenatchee", "16": "Yakima",
+    "17": "Kaleetan", "18": "Kitsap", "19": "Kittitas", "20": "Cathlamet", # Some IDs overlap or vary by feed
+    "25": "Puyallup", "28": "Sealth", "30": "Spokane", "32": "Tacoma",
+    "33": "Tillikum", "36": "Walla Walla", "37": "Wenatchee", "38": "Yakima",
+    "52": "Kennewick", "65": "Chetzemoka", "66": "Salish", "68": "Tokitae",
+    "69": "Samish", "74": "Chimacum", "75": "Suquamish"
+}
+
 def get_service_state() -> Dict[str, Any]:
     if os.path.exists(SERVICE_STATE_FILE):
         try:
@@ -300,13 +313,23 @@ class TransitServer:
 
                         final_display_time = base_time + offset_sec
 
+                        # For ferries, replace headsign with vessel name
+                        headsign = self.apply_abbreviations(str(arr.get("headsign") or arr.get("tripHeadsign") or "Transit"))
+                        vehicle_id_full = arr.get("vehicleId")
+                        # Check if route is a ferry route
+                        if vehicle_id_full and ("95_" in vehicle_id_full or "wsf" in full_route_id.lower()):
+                            vehicle_id_short = vehicle_id_full.split("_")[-1]
+                            vessel_name = WSF_VESSELS.get(vehicle_id_short)
+                            if vessel_name:
+                                headsign = vessel_name.upper()
+
                         all_trips.append({
                             "tripId": str(arr.get("tripId", "")),
                             "routeId": str(full_route_id),
                             "routeName": self.apply_abbreviations(str(arr.get("routeName") or arr.get("routeShortName") or "")),
                             "routeColor": str(arr.get("routeColor", "")) if arr.get("routeColor") else None,
                             "stopId": str(stop_id),
-                            "headsign": self.apply_abbreviations(str(arr.get("headsign") or arr.get("tripHeadsign") or "Transit")),
+                            "headsign": headsign,
                             "arrivalTime": int(final_display_time),
                             "departureTime": int((raw_dep or raw_arr) + offset_sec),
                             "isRealtime": bool(arr.get("isRealtime"))

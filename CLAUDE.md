@@ -60,15 +60,22 @@ transit-tracker service # start background service (WebSocket server + client)
 | `tui.py` | `rich`/`questionary` interactive configurator (1,019 lines) |
 | `simulator.py` | 64×32 LED matrix emulator with BDF fonts |
 | `cli.py` | Entry point; `manage_service()` uses `launchctl` for daemon lifecycle |
-| `gui.py` | macOS tray icon via `rumps` |
+| `gui.py` | macOS tray icon via `rumps`; text simulator in profile submenu; WS bootstrap on startup |
 
 ### Ferry support
 - Use `wsf:` prefix for stop/route IDs (e.g., `wsf:7` = Seattle terminal)
 - `WSF_VESSELS` dict in `websocket_server.py` maps `vehicleId` → vessel name (e.g., `"95_28"` → `"Sealth"`)
 - Vessel name replaces headsign only when `vehicleId` is present in OBA realtime data
+- OBA `arrivalEnabled`/`departureEnabled` per-trip flags determine whether to show arrival or departure time (origin docks show departure, destination docks show arrival)
 
 ### Rate limiting
-`TransitServer` tracks per-stop `rate_limit_until` timestamps. On 429: interval doubles (cap 600s). On recovery: interval reduces 20% per successful fetch.
+`TransitServer` tracks per-stop `rate_limit_until` timestamps. On 429: interval doubles (cap 600s). On recovery: interval reduces 20% per successful fetch. Throttle metrics (`throttle_total`, `api_calls_total`, `throttle_rate`) are synced to `service_state.json` and shown in the GUI dropdown. Per-event JSONL log at `~/.config/transit-tracker/throttle_log.jsonl`.
+
+### GUI text simulator
+The menu bar profile submenu shows live trip data as text lines: `ROUTE  Headsign  ◉ Xm` (◉ = realtime, ○ = scheduled). The `format_trip_line()` function in `gui.py` handles formatting. On startup, the GUI connects to `ws://localhost:8000` to fetch immediate data rather than waiting for state file polling.
+
+### GUI lifecycle
+The GUI tray icon is a subprocess of the service (`run_full_service()` in `cli.py`). When the service restarts, the GUI is killed and relaunched automatically. `service restart` uses `launchctl kickstart -k` for reliability.
 
 ### Config
 - Schema: `TransitConfig` (root) wraps `TransitTrackerSettings` (nested under `transit_tracker:`)

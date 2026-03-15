@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -7,6 +8,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 import rumps
+import websockets.sync.client
 
 from .cli import PLIST_NAME
 from .config import TransitConfig, list_profiles, set_last_config_path, get_last_config_path
@@ -16,6 +18,23 @@ from .network.websocket_server import (
     get_last_service_update,
 )
 from .transit_api import TransitAPI
+
+
+def format_trip_line(trip: dict, now: float) -> str:
+    """Format a single trip dict into a text display line.
+
+    Mirrors the LED simulator layout:
+        ROUTE  Headsign  ◉ Xm
+    """
+    route = trip.get("routeName", "?")
+    headsign = trip.get("headsign", "")
+    at = trip.get("arrivalTime", 0)
+    if at and at > 10**12:
+        at //= 1000
+    wait = int((at - now) / 60) if at else -1
+    time_str = "Now" if wait <= 0 else f"{wait}m"
+    rt = "◉" if trip.get("isRealtime") else "○"
+    return f"{route}  {headsign}  {rt} {time_str}"
 
 
 class TransitTrackerApp(rumps.App):
@@ -57,6 +76,7 @@ class TransitTrackerApp(rumps.App):
         
         self.api = TransitAPI()
         self.arrivals_cache = {} # stop_id -> list of arrivals
+        self.display_trips = []  # ordered trip rows as shown on the LED display
         self.cache_lock = threading.Lock()
         
         self.timer = rumps.Timer(self.update_state, 2)
@@ -72,36 +92,76 @@ class TransitTrackerApp(rumps.App):
         self.last_profiles = []
         self.last_update_ts = 0
 
-    def bg_fetch_loop(self):
-        """Periodically fetches arrivals for all stops in all profiles."""
-        import asyncio
-        
-        async def fetch():
-            while True:
-                profiles = list_profiles()
-                all_stops = set()
-                for p_path in profiles:
-                    try:
-                        cfg = TransitConfig.load(p_path)
-                        for sub in cfg.subscriptions:
-                            all_stops.add(sub.stop)
-                    except:
-                        pass
-                
-                for stop_id in all_stops:
-                    try:
-                        arrivals = await self.api.get_arrivals(stop_id)
-                        with self.cache_lock:
-                            self.arrivals_cache[stop_id] = arrivals
-                    except:
-                        pass
-                
-                # Refresh cache every 60 seconds
-                await asyncio.sleep(60)
+    def _update_trips(self, trips):
+        """Update arrivals cache and display trips from a trip list."""
+        if not trips:
+            return
+        by_stop = {}
+        for t in trips:
+            stop = t.get("stopId", "")
+            by_stop.setdefault(stop, []).append(t)
+        with self.cache_lock:
+            self.arrivals_cache.update(by_stop)
+            self.display_trips = trips
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(fetch())
+    def _fetch_from_proxy(self):
+        """Subscribe to the local proxy WebSocket and fetch one update."""
+        config_path = get_last_config_path()
+        if not config_path:
+            return
+        try:
+            cfg = TransitConfig.load(config_path)
+        except Exception:
+            return
+
+        pairs = []
+        for sub in cfg.subscriptions:
+            r_id = sub.route if ":" in sub.route else f"{sub.feed}:{sub.route}"
+            s_id = sub.stop if ":" in sub.stop else f"{sub.feed}:{sub.stop}"
+            off_sec = 0
+            try:
+                match = re.search(r"(-?\d+)", str(sub.time_offset))
+                if match:
+                    off_sec = int(match.group(1)) * 60
+            except Exception:
+                pass
+            pairs.append(f"{r_id},{s_id},{off_sec}")
+
+        sub_payload = {
+            "event": "schedule:subscribe",
+            "client_name": "BackgroundMonitor",
+            "data": {"routeStopPairs": ";".join(pairs), "limit": 6}
+        }
+
+        try:
+            with websockets.sync.client.connect("ws://localhost:8000", close_timeout=2) as ws:
+                ws.send(json.dumps(sub_payload))
+                msg = ws.recv(timeout=5)
+                data = json.loads(msg)
+                if data.get("event") == "schedule":
+                    self._update_trips(data.get("data", {}).get("trips", []))
+        except Exception:
+            pass
+
+    def bg_fetch_loop(self):
+        """Fetches trip data from the local proxy, then polls the state file.
+
+        On startup, subscribes to the local WebSocket proxy for an immediate
+        update. Then falls back to reading last_message from service_state.json.
+        """
+        # Initial fetch from local proxy for immediate data
+        self._fetch_from_proxy()
+
+        while True:
+            try:
+                if os.path.exists(SERVICE_STATE_FILE):
+                    with open(SERVICE_STATE_FILE, "r") as f:
+                        state = json.load(f)
+                    last_msg = state.get("last_message") or {}
+                    self._update_trips(last_msg.get("data", {}).get("trips", []))
+            except Exception:
+                pass
+            time.sleep(10)
 
     def update_state(self, _):
         try:
@@ -112,6 +172,7 @@ class TransitTrackerApp(rumps.App):
             client_details = []
             uptime_str = ""
             msg_count = 0
+            state = {}
             current_config_path = get_last_config_path()
             
             # 1. Service Status Check
@@ -186,26 +247,17 @@ class TransitTrackerApp(rumps.App):
                         profile_root.p_path = p_path
                         profile_root.state = 1 if is_active else 0
                         
-                        # Add Arrivals to the sub-menu of this profile
+                        # Add text simulator rows from last_message trips
                         try:
-                            cfg = TransitConfig.load(p_path)
                             with self.cache_lock:
+                                trips = list(self.display_trips) if is_active else []
+                            if trips:
+                                for t in trips:
+                                    profile_root.add(rumps.MenuItem(format_trip_line(t, now)))
+                            else:
+                                cfg = TransitConfig.load(p_path)
                                 for sub in cfg.subscriptions:
-                                    arrivals = self.arrivals_cache.get(sub.stop, [])
-                                    next_bus = "..."
-                                    
-                                    # Filter for route
-                                    route_arrs = [a for a in arrivals if a.get("routeId") == sub.route or a.get("routeName") == sub.route.split(":")[-1]]
-                                    if not route_arrs and arrivals: route_arrs = arrivals
-                                    
-                                    if route_arrs:
-                                        at = route_arrs[0].get("arrivalTime")
-                                        if at:
-                                            if at > 10**12: at //= 1000
-                                            wait = int((at - time.time()) / 60)
-                                            next_bus = f"{wait}m" if wait >= 0 else "Left"
-                                    
-                                    profile_root.add(rumps.MenuItem(f"{sub.label}: {next_bus}"))
+                                    profile_root.add(rumps.MenuItem(f"{sub.label}: ..."))
                         except:
                             profile_root.add(rumps.MenuItem("Error loading stops"))
                         
@@ -221,16 +273,19 @@ class TransitTrackerApp(rumps.App):
 
             # 5. Update the Clients Sub-menu and its Title
             self.clients_menu.title = f"🛜 Clients ({client_count})"
-            
-            # Update Rate Limit Status
-            if is_rate_limited != self.is_rate_limited:
-                self.is_rate_limited = is_rate_limited
-                self.title = "📵" if is_rate_limited else "🚉"
-                self.rate_limit_item.set_callback(None) # Make it look like a label
-                if is_rate_limited:
-                    self.rate_limit_item.title = "📵 OneBusAway Rate Limited!"
-                else:
-                    self.rate_limit_item.title = "✅ API Connection Healthy"
+
+            # Update Rate Limit Status — always sync from service state
+            self.is_rate_limited = is_rate_limited
+            throttle_total = state.get("throttle_total", 0) if os.path.exists(SERVICE_STATE_FILE) else 0
+            api_calls = state.get("api_calls_total", 0) if os.path.exists(SERVICE_STATE_FILE) else 0
+            throttle_rate = state.get("throttle_rate", 0) if os.path.exists(SERVICE_STATE_FILE) else 0
+
+            if is_rate_limited:
+                self.title = "📵"
+                self.rate_limit_item.title = f"📵 Rate Limited — {throttle_total}/{api_calls} throttled ({throttle_rate:.0%})"
+            else:
+                self.title = "🚉"
+                self.rate_limit_item.title = f"✅ Healthy — {throttle_total}/{api_calls} throttled ({throttle_rate:.0%})" if api_calls > 0 else "✅ API Connection Healthy"
             
             current_client_ids = ",".join(sorted([c.get("address", "") for c in client_details]))
             if current_client_ids != self.last_client_ids:

@@ -48,9 +48,28 @@ def manage_service(action: str):
             print("[red]Service management is only supported on macOS.[/red]")
             
     elif action == "restart":
-        manage_service("stop")
-        time.sleep(1)
-        manage_service("start")
+        if sys.platform == "darwin":
+            # Kill any GUI tied to the old service process
+            subprocess.run(["pkill", "-f", "transit-tracker gui"], capture_output=True)
+            # launchctl kickstart -k reliably restarts in one step,
+            # unlike unload/load which can fail with I/O errors.
+            uid = os.getuid()
+            result = subprocess.run(
+                ["launchctl", "kickstart", "-k", f"gui/{uid}/{label}"],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                print(f"Service {label} restarted.")
+            else:
+                # Fallback to stop/start
+                print(f"kickstart failed ({result.stderr.strip()}), falling back to stop/start...")
+                manage_service("stop")
+                time.sleep(1)
+                manage_service("start")
+        else:
+            manage_service("stop")
+            time.sleep(1)
+            manage_service("start")
         
     elif action == "status":
         if get_service_status():

@@ -331,21 +331,14 @@ async def test_non_ferry_route_headsign_unchanged(mock_config):
 
 
 @pytest.mark.asyncio
-async def test_ferry_uses_departure_time_not_arrival(ferry_config):
-    """Ferries must always display departure time (when vessel leaves the dock),
-    not arrival time (when it reaches the destination), regardless of time_display setting.
-
-    Real OBA data for ferries has different scheduledDepartureTime and scheduledArrivalTime
-    at the origin dock — departure is when the boat leaves, arrival is when it reaches the
-    other side. Users waiting at the dock need the departure time.
-    """
-    # time_display is "arrival" (the default), but ferries should still use departure
-    ferry_config.time_display = "arrival"
+async def test_departure_enabled_uses_departure_time(ferry_config):
+    """When OBA says departureEnabled=True (ferry leaving this dock), use departure time."""
+    ferry_config.time_display = "arrival"  # global mode irrelevant when flag is set
     server = TransitServer(ferry_config)
     now = int(time.time())
 
-    scheduled_departure = now + 600   # 10 min from now — ferry leaves the dock
-    scheduled_arrival = now + 2100    # 35 min from now — ferry arrives at destination
+    scheduled_departure = now + 600   # ferry leaves this dock in 10 min
+    scheduled_arrival = now + 2100    # ferry arrives at destination in 35 min
 
     server.cache["95_7"] = (time.time(), [
         {
@@ -361,6 +354,8 @@ async def test_ferry_uses_departure_time_not_arrival(ferry_config):
             "routeName": "Seattle - Bainbridge Island",
             "isRealtime": False,
             "vehicleId": None,
+            "departureEnabled": True,
+            "arrivalEnabled": False,
         }
     ])
 
@@ -370,52 +365,56 @@ async def test_ferry_uses_departure_time_not_arrival(ferry_config):
 
     trips = json.loads(ws.send.call_args[0][0])["data"]["trips"]
     assert len(trips) == 1
-    # Must show departure time (600s from now), NOT arrival time (2100s from now)
     assert trips[0]["arrivalTime"] == scheduled_departure
 
 
 @pytest.mark.asyncio
-async def test_ferry_uses_predicted_departure_when_realtime(ferry_config):
-    """When a ferry has realtime predicted departure, use that over scheduled."""
-    ferry_config.time_display = "arrival"
+async def test_arrival_enabled_uses_arrival_time(ferry_config):
+    """When OBA says arrivalEnabled=True (ferry approaching this dock), use arrival time.
+
+    Real scenario: stop 95_3 (Bainbridge), route 95_73 (SEA→BI).
+    predictedDepartureTime is in the distant past (when it left Seattle).
+    predictedArrivalTime is when it docks at Bainbridge (the useful time).
+    """
+    ferry_config.time_display = "departure"  # global mode irrelevant when flag is set
     server = TransitServer(ferry_config)
     now = int(time.time())
 
-    scheduled_departure = now + 600
-    predicted_departure = now + 720   # 2 min late
-    scheduled_arrival = now + 2100
-    predicted_arrival = now + 2220
+    predicted_arrival = now + 360     # docks at Bainbridge in 6 min
+    past_departure = now - 1500       # left Seattle 25 min ago
 
-    server.cache["95_7"] = (time.time(), [
+    server.cache["95_3"] = (time.time(), [
         {
-            "tripId": "95_73503142611",
+            "tripId": "95_73503142617",
             "routeId": "95_73",
-            "stopId": "95_7",
-            "scheduledArrivalTime": scheduled_arrival * 1000,
-            "scheduledDepartureTime": scheduled_departure * 1000,
+            "stopId": "95_3",
+            "scheduledArrivalTime": (now + 300) * 1000,
+            "scheduledDepartureTime": (now + 300) * 1000,
             "predictedArrivalTime": predicted_arrival * 1000,
-            "predictedDepartureTime": predicted_departure * 1000,
+            "predictedDepartureTime": past_departure * 1000,
             "tripHeadsign": "Bainbridge Island",
             "headsign": "Bainbridge Island",
             "routeName": "Seattle - Bainbridge Island",
             "isRealtime": True,
             "vehicleId": "95_25",
+            "arrivalEnabled": True,
+            "departureEnabled": False,
         }
     ])
 
     ws = AsyncMock()
-    server.subscriptions[ws] = [{"routeId": "95_73", "stopId": "95_7"}]
+    server.subscriptions[ws] = [{"routeId": "95_73", "stopId": "95_3"}]
     await server.send_update(ws)
 
     trips = json.loads(ws.send.call_args[0][0])["data"]["trips"]
     assert len(trips) == 1
-    # Must use predicted departure (720s), not predicted arrival (2220s)
-    assert trips[0]["arrivalTime"] == predicted_departure
+    # Must use predicted arrival (docking time), NOT past departure
+    assert trips[0]["arrivalTime"] == predicted_arrival
 
 
 @pytest.mark.asyncio
-async def test_bus_still_respects_arrival_display_mode(mock_config):
-    """Non-ferry routes must still respect the time_display setting (arrival mode)."""
+async def test_both_flags_true_falls_back_to_display_mode(mock_config):
+    """When both arrivalEnabled and departureEnabled are true (bus stops), use display_mode."""
     mock_config.time_display = "arrival"
     server = TransitServer(mock_config)
     now = int(time.time())
@@ -435,6 +434,8 @@ async def test_bus_still_respects_arrival_display_mode(mock_config):
             "headsign": "Downtown Seattle",
             "routeName": "40",
             "isRealtime": False,
+            "arrivalEnabled": True,
+            "departureEnabled": True,
         }
     ])
 
@@ -444,8 +445,66 @@ async def test_bus_still_respects_arrival_display_mode(mock_config):
 
     trips = json.loads(ws.send.call_args[0][0])["data"]["trips"]
     assert len(trips) == 1
-    # Bus should use arrival time per config setting
+    # Both flags true → falls back to display_mode ("arrival")
     assert trips[0]["arrivalTime"] == scheduled_arrival
+
+
+@pytest.mark.asyncio
+async def test_missing_flags_falls_back_to_display_mode(mock_config):
+    """When OBA flags are absent (older data or non-ferry), use global display_mode."""
+    mock_config.time_display = "arrival"
+    server = TransitServer(mock_config)
+    now = int(time.time())
+
+    scheduled_departure = now + 590
+    scheduled_arrival = now + 600
+
+    server.cache["1_8494"] = (time.time(), [
+        {
+            "tripId": "bus_trip_1",
+            "routeId": "st:40_100240",
+            "stopId": "st:1_8494",
+            "scheduledArrivalTime": scheduled_arrival * 1000,
+            "scheduledDepartureTime": scheduled_departure * 1000,
+            "predictedArrivalTime": None,
+            "predictedDepartureTime": None,
+            "headsign": "Downtown Seattle",
+            "routeName": "40",
+            "isRealtime": False,
+            # no arrivalEnabled / departureEnabled keys
+        }
+    ])
+
+    ws = AsyncMock()
+    server.subscriptions[ws] = [{"routeId": "st:40_100240", "stopId": "st:1_8494"}]
+    await server.send_update(ws)
+
+    trips = json.loads(ws.send.call_args[0][0])["data"]["trips"]
+    assert len(trips) == 1
+    assert trips[0]["arrivalTime"] == scheduled_arrival
+
+
+@pytest.mark.asyncio
+async def test_cache_respects_backoff_interval(mock_config):
+    """Cache freshness must use the backed-off interval, not the base interval.
+
+    Bug: base_interval=30s, but after backoff current_refresh_interval=600s.
+    Cache entry aged 60s was considered stale (60 > 28) and triggered a fresh
+    OBA call every cycle, defeating the backoff entirely.
+    """
+    server = TransitServer(mock_config)
+    server.api = AsyncMock()
+    server.api.get_arrivals.return_value = [{"tripId": "t1"}]
+
+    # Simulate backed-off state: interval is 120s, cache is 60s old (within 120s)
+    server.current_refresh_interval = 120
+    server.cache["stop1"] = (time.time() - 60, [{"tripId": "cached"}])
+
+    result = await server.get_arrivals_cached("stop1")
+
+    # Must return cached data without calling the API
+    server.api.get_arrivals.assert_not_called()
+    assert result == [{"tripId": "cached"}]
 
 
 @pytest.mark.asyncio

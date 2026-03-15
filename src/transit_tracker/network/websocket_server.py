@@ -103,8 +103,10 @@ class TransitServer:
                 "throttle_rate": round(self.throttle_total / max(1, self.api_calls_total), 3),
                 "uptime_hours": round((time.time() - self.start_time) / 3600, 2),
             }
-            if last_message:
-                state["last_message"] = last_message
+            if last_message is not None:
+                self._last_message = last_message
+            if hasattr(self, "_last_message"):
+                state["last_message"] = self._last_message
                 
             if self.config_path:
                 state["config_path"] = self.config_path

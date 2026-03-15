@@ -67,6 +67,12 @@ class TransitServer:
         self.start_time = time.time()
         self.last_broadcast_time = 0
 
+        # Throttle metrics
+        self.throttle_total = 0          # lifetime 429 count
+        self.throttle_session_start = time.time()
+        self.api_calls_total = 0         # lifetime OBA API calls
+        self.throttle_log_file = os.path.join(os.path.dirname(SERVICE_STATE_FILE), "throttle_log.jsonl")
+
     def sync_state(self, last_message=None):
         """Updates the shared state file for the GUI/TUI to consume."""
         try:
@@ -91,7 +97,11 @@ class TransitServer:
                 "clients": client_details,
                 "client_count": len(self.clients),
                 "is_rate_limited": len(self.rate_limited_stops) > 0,
-                "refresh_interval": int(self.current_refresh_interval)
+                "refresh_interval": int(self.current_refresh_interval),
+                "throttle_total": self.throttle_total,
+                "api_calls_total": self.api_calls_total,
+                "throttle_rate": round(self.throttle_total / max(1, self.api_calls_total), 3),
+                "uptime_hours": round((time.time() - self.start_time) / 3600, 2),
             }
             if last_message:
                 state["last_message"] = last_message
@@ -102,6 +112,22 @@ class TransitServer:
             os.makedirs(os.path.dirname(SERVICE_STATE_FILE), exist_ok=True)
             with open(SERVICE_STATE_FILE, "w") as f:
                 json.dump(state, f)
+        except Exception:
+            pass
+
+    def _log_throttle(self, stop_id: str):
+        """Append a throttle event to the persistent JSONL log."""
+        try:
+            entry = {
+                "ts": time.time(),
+                "stop": stop_id,
+                "interval": int(self.current_refresh_interval),
+                "total_429s": self.throttle_total,
+                "total_calls": self.api_calls_total,
+            }
+            os.makedirs(os.path.dirname(self.throttle_log_file), exist_ok=True)
+            with open(self.throttle_log_file, "a") as f:
+                f.write(json.dumps(entry) + "\n")
         except Exception:
             pass
 
@@ -126,6 +152,7 @@ class TransitServer:
 
         # Fetch fresh
         print(f"[SERVER] Making OBA API call for clean_stop_id={clean_stop_id}...", flush=True)
+        self.api_calls_total += 1
         try:
             arrivals = await self.api.get_arrivals(clean_stop_id)
             self.cache[clean_stop_id] = (now, arrivals)
@@ -134,6 +161,8 @@ class TransitServer:
             return arrivals
         except Exception as e:
             if "429" in str(e):
+                self.throttle_total += 1
+                self._log_throttle(clean_stop_id)
                 print(f"[SERVER] ⚠️ RATE LIMITED for {clean_stop_id}", flush=True)
                 self.rate_limited_stops.add(clean_stop_id)
                 self.rate_limit_until[clean_stop_id] = now + self.current_refresh_interval

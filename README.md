@@ -8,6 +8,8 @@ A lightweight, terminal-based transit data proxy for macOS. It monitors public t
 - **Location-based Routing:** Search for cross-streets (e.g., "Rainier Blvd & Charles St, Issaquah"), automatically reverse-geocode them via OpenStreetMap Nominatim, and find nearby transit routes.
 - **Background Daemon:** Runs silently in the background on your Mac using `launchd`.
 - **Reference Compatibility:** Provides the EXACT WebSocket payload expected by the reference ESP32 firmware.
+- **Web LED Simulator:** A browser-based HUB75 LED matrix emulator with live WebSocket data, pixel-perfect MicroFont rendering, and headsign scrolling.
+- **Walkshed Map:** Mapbox-powered isochrone map showing 5/10/15-minute walking distances from your stops, with route polylines and architectural styling.
 
 ## 🏗️ Architecture
 
@@ -62,13 +64,34 @@ The system automatically maps full route names to official WSDOT abbreviations t
 | Anacortes / San Juan Islands | **ANA-SJ** |
 | Port Townsend / Coupeville | **PT-KEY** |
 
-### Departure vs. Arrival Mode
-For ferry terminals, it is often more useful to know when the boat is **leaving** the dock. You can toggle this globally or per-profile in your configuration:
+### Smart Arrival vs. Departure Time
+
+The proxy automatically shows the right time for each stop using OBA's per-trip `arrivalEnabled` and `departureEnabled` flags:
+
+| Your terminal | What you see | Why |
+| :--- | :--- | :--- |
+| **Seattle** (origin dock) | Departure time | `departureEnabled: true` — when the ferry leaves |
+| **Bainbridge** (destination dock) | Arrival time | `arrivalEnabled: true` — when the ferry docks |
+
+This is fully automatic — no configuration needed. For non-ferry routes (buses, light rail), the global `time_display` setting applies:
 
 ```yaml
-# Show when the ferry is leaving the dock
-time_display: departure 
+time_display: arrival   # default — show when vehicle arrives at your stop
+time_display: departure # show when vehicle departs your stop
 ```
+
+### Vessel Names
+
+When a ferry has live tracking data (realtime `vehicleId` from OBA), the headsign is replaced with the vessel name (e.g., "Puyallup", "Sealth"). When no realtime data is available (scheduled trips), the destination name is shown instead. Vessel names are never cached across trips — different runs are served by different vessels.
+
+### Rate Limiting & Backoff
+
+The local proxy includes exponential backoff to handle OBA API rate limits (HTTP 429):
+
+- On a 429 response, the refresh interval doubles (up to a max of 10 minutes).
+- Per-stop cooldown timestamps prevent retrying rate-limited stops before their cooldown expires.
+- On successful fetches, the interval gradually recovers (20% reduction per cycle) back to the configured `check_interval_seconds`.
+- The cache respects the backed-off interval — during backoff, cached data is reused for the full backoff period rather than triggering fresh API calls.
 
 ## 📦 Installation
 

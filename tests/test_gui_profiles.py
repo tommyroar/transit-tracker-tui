@@ -95,6 +95,53 @@ def test_gui_profile_menu_building(test_app):
         assert any("554" in t and "Downtown Seattle" in t and "◉" in t for t in titles)
         assert any("File: /path/to/home.yaml" in t for t in titles)
 
+def test_format_trip_line_realtime():
+    """Realtime trip shows filled circle and minutes countdown."""
+    from transit_tracker.gui import format_trip_line
+    now = 1700000000.0
+    trip = {"routeName": "554", "headsign": "Downtown Seattle", "arrivalTime": 1700000600, "isRealtime": True}
+    line = format_trip_line(trip, now)
+    assert line == "554  Downtown Seattle  ◉ 10m"
+
+def test_format_trip_line_scheduled():
+    """Scheduled (non-realtime) trip shows empty circle."""
+    from transit_tracker.gui import format_trip_line
+    now = 1700000000.0
+    trip = {"routeName": "14", "headsign": "Summit", "arrivalTime": 1700001800, "isRealtime": False}
+    line = format_trip_line(trip, now)
+    assert line == "14  Summit  ○ 30m"
+
+def test_format_trip_line_now():
+    """Trip arriving now or in the past shows 'Now'."""
+    from transit_tracker.gui import format_trip_line
+    now = 1700000000.0
+    trip = {"routeName": "E", "headsign": "Aurora Village", "arrivalTime": 1699999990, "isRealtime": True}
+    line = format_trip_line(trip, now)
+    assert line == "E  Aurora Village  ◉ Now"
+
+def test_format_trip_line_millis():
+    """Arrival time in milliseconds is handled correctly."""
+    from transit_tracker.gui import format_trip_line
+    now = 1700000000.0
+    trip = {"routeName": "554", "headsign": "Bellevue", "arrivalTime": 1700000300000, "isRealtime": True}
+    line = format_trip_line(trip, now)
+    assert line == "554  Bellevue  ◉ 5m"
+
+def test_format_trip_line_ferry_vessel():
+    """Ferry trip with vessel name headsign formats correctly."""
+    from transit_tracker.gui import format_trip_line
+    now = 1700000000.0
+    trip = {"routeName": "SEA-BI", "headsign": "Puyallup", "arrivalTime": 1700000360, "isRealtime": True}
+    line = format_trip_line(trip, now)
+    assert line == "SEA-BI  Puyallup  ◉ 6m"
+
+def test_format_trip_line_missing_fields():
+    """Missing fields produce sensible defaults."""
+    from transit_tracker.gui import format_trip_line
+    now = 1700000000.0
+    line = format_trip_line({}, now)
+    assert line == "?    ○ Now"
+
 def test_switch_profile_callback(test_app):
     sender = MagicMock()
     sender.p_path = "/path/to/new.yaml"

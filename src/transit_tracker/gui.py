@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -7,6 +8,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 import rumps
+import websockets.sync.client
 
 from .cli import PLIST_NAME
 from .config import TransitConfig, list_profiles, set_last_config_path, get_last_config_path
@@ -16,6 +18,23 @@ from .network.websocket_server import (
     get_last_service_update,
 )
 from .transit_api import TransitAPI
+
+
+def format_trip_line(trip: dict, now: float) -> str:
+    """Format a single trip dict into a text display line.
+
+    Mirrors the LED simulator layout:
+        ROUTE  Headsign  ◉ Xm
+    """
+    route = trip.get("routeName", "?")
+    headsign = trip.get("headsign", "")
+    at = trip.get("arrivalTime", 0)
+    if at and at > 10**12:
+        at //= 1000
+    wait = int((at - now) / 60) if at else -1
+    time_str = "Now" if wait <= 0 else f"{wait}m"
+    rt = "◉" if trip.get("isRealtime") else "○"
+    return f"{route}  {headsign}  {rt} {time_str}"
 
 
 class TransitTrackerApp(rumps.App):
@@ -73,30 +92,73 @@ class TransitTrackerApp(rumps.App):
         self.last_profiles = []
         self.last_update_ts = 0
 
-    def bg_fetch_loop(self):
-        """Reads arrivals from the proxy's cache via the service state file.
+    def _update_trips(self, trips):
+        """Update arrivals cache and display trips from a trip list."""
+        if not trips:
+            return
+        by_stop = {}
+        for t in trips:
+            stop = t.get("stopId", "")
+            by_stop.setdefault(stop, []).append(t)
+        with self.cache_lock:
+            self.arrivals_cache.update(by_stop)
+            self.display_trips = trips
 
-        Previously this made independent OBA API calls for every stop across
-        all profiles, bypassing the proxy's rate-limit backoff entirely and
-        causing perpetual 429s.  Now it piggybacks on the proxy's cached data
-        via the last_message field in service_state.json.
+    def _fetch_from_proxy(self):
+        """Subscribe to the local proxy WebSocket and fetch one update."""
+        config_path = get_last_config_path()
+        if not config_path:
+            return
+        try:
+            cfg = TransitConfig.load(config_path)
+        except Exception:
+            return
+
+        pairs = []
+        for sub in cfg.subscriptions:
+            r_id = sub.route if ":" in sub.route else f"{sub.feed}:{sub.route}"
+            s_id = sub.stop if ":" in sub.stop else f"{sub.feed}:{sub.stop}"
+            off_sec = 0
+            try:
+                match = re.search(r"(-?\d+)", str(sub.time_offset))
+                if match:
+                    off_sec = int(match.group(1)) * 60
+            except Exception:
+                pass
+            pairs.append(f"{r_id},{s_id},{off_sec}")
+
+        sub_payload = {
+            "event": "schedule:subscribe",
+            "client_name": "BackgroundMonitor",
+            "data": {"routeStopPairs": ";".join(pairs), "limit": 6}
+        }
+
+        try:
+            with websockets.sync.client.connect("ws://localhost:8000", close_timeout=2) as ws:
+                ws.send(json.dumps(sub_payload))
+                msg = ws.recv(timeout=5)
+                data = json.loads(msg)
+                if data.get("event") == "schedule":
+                    self._update_trips(data.get("data", {}).get("trips", []))
+        except Exception:
+            pass
+
+    def bg_fetch_loop(self):
+        """Fetches trip data from the local proxy, then polls the state file.
+
+        On startup, subscribes to the local WebSocket proxy for an immediate
+        update. Then falls back to reading last_message from service_state.json.
         """
+        # Initial fetch from local proxy for immediate data
+        self._fetch_from_proxy()
+
         while True:
             try:
                 if os.path.exists(SERVICE_STATE_FILE):
                     with open(SERVICE_STATE_FILE, "r") as f:
                         state = json.load(f)
-                    last_msg = state.get("last_message", {})
-                    trips = last_msg.get("data", {}).get("trips", [])
-                    if trips:
-                        # Group trips by stopId for the arrivals cache
-                        by_stop = {}
-                        for t in trips:
-                            stop = t.get("stopId", "")
-                            by_stop.setdefault(stop, []).append(t)
-                        with self.cache_lock:
-                            self.arrivals_cache.update(by_stop)
-                            self.display_trips = trips
+                    last_msg = state.get("last_message") or {}
+                    self._update_trips(last_msg.get("data", {}).get("trips", []))
             except Exception:
                 pass
             time.sleep(10)
@@ -191,15 +253,7 @@ class TransitTrackerApp(rumps.App):
                                 trips = list(self.display_trips) if is_active else []
                             if trips:
                                 for t in trips:
-                                    route = t.get("routeName", "?")
-                                    headsign = t.get("headsign", "")
-                                    at = t.get("arrivalTime", 0)
-                                    if at > 10**12:
-                                        at //= 1000
-                                    wait = int((at - time.time()) / 60) if at else -1
-                                    time_str = "Now" if wait <= 0 else f"{wait}m"
-                                    rt = "◉" if t.get("isRealtime") else "○"
-                                    profile_root.add(rumps.MenuItem(f"{route}  {headsign}  {rt} {time_str}"))
+                                    profile_root.add(rumps.MenuItem(format_trip_line(t, now)))
                             else:
                                 cfg = TransitConfig.load(p_path)
                                 for sub in cfg.subscriptions:

@@ -108,6 +108,7 @@ class TransitTrackerSettings(BaseModel):
     show_units: str = Field(default="short")
     list_mode: str = Field(default="sequential")
     scroll_headsigns: bool = Field(default=False)
+    display_format: str = Field(default="{ROUTE}  {HEADSIGN}  {LIVE} {TIME}")
     num_panels: int = Field(default=2)
     panel_width: int = Field(default=64)
     panel_height: int = Field(default=32)

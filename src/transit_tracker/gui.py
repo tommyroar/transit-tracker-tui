@@ -17,24 +17,8 @@ from .network.websocket_server import (
     get_service_state,
     get_last_service_update,
 )
+from .display import format_trip_line  # noqa: F401 — re-exported for backwards compat
 from .transit_api import TransitAPI
-
-
-def format_trip_line(trip: dict, now: float) -> str:
-    """Format a single trip dict into a text display line.
-
-    Mirrors the LED simulator layout:
-        ROUTE  Headsign  ◉ Xm
-    """
-    route = trip.get("routeName", "?")
-    headsign = trip.get("headsign", "")
-    at = trip.get("arrivalTime", 0)
-    if at and at > 10**12:
-        at //= 1000
-    wait = int((at - now) / 60) if at else -1
-    time_str = "Now" if wait <= 0 else f"{wait}m"
-    rt = "◉" if trip.get("isRealtime") else "○"
-    return f"{route}  {headsign}  {rt} {time_str}"
 
 
 class TransitTrackerApp(rumps.App):
@@ -77,6 +61,7 @@ class TransitTrackerApp(rumps.App):
         self.api = TransitAPI()
         self.arrivals_cache = {} # stop_id -> list of arrivals
         self.display_trips = []  # ordered trip rows as shown on the LED display
+        self.display_format = None  # loaded from config on first update
         self.cache_lock = threading.Lock()
         
         self.timer = rumps.Timer(self.update_state, 2)
@@ -114,6 +99,7 @@ class TransitTrackerApp(rumps.App):
         except Exception:
             return
 
+        self.display_format = cfg.transit_tracker.display_format
         pairs = []
         for sub in cfg.subscriptions:
             r_id = sub.route if ":" in sub.route else f"{sub.feed}:{sub.route}"
@@ -253,7 +239,7 @@ class TransitTrackerApp(rumps.App):
                                 trips = list(self.display_trips) if is_active else []
                             if trips:
                                 for t in trips:
-                                    profile_root.add(rumps.MenuItem(format_trip_line(t, now)))
+                                    profile_root.add(rumps.MenuItem(format_trip_line(t, now, fmt=self.display_format)))
                             else:
                                 cfg = TransitConfig.load(p_path)
                                 for sub in cfg.subscriptions:
@@ -308,6 +294,11 @@ class TransitTrackerApp(rumps.App):
         if not p_path: return
         print(f"[GUI] Switching to profile: {p_path}")
         set_last_config_path(p_path)
+        try:
+            cfg = TransitConfig.load(p_path)
+            self.display_format = cfg.transit_tracker.display_format
+        except Exception:
+            pass
         rumps.notification("Transit Tracker", "Profile Switched", f"Active: {os.path.basename(p_path)}")
 
     def restart_service(self, _):

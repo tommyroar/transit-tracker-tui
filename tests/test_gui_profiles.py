@@ -18,6 +18,7 @@ class MockApp:
         
         self.api = MagicMock()
         self.arrivals_cache = {}
+        self.display_trips = []
         self.cache_lock = MagicMock() # Simplified for test
         self.startup_time = time.time()
         self.last_client_ids = None
@@ -53,6 +54,9 @@ def test_gui_profile_menu_building(test_app):
     test_app.arrivals_cache = {
         "1_123": [{"arrivalTime": (time.time() + 600) * 1000, "routeId": "1_100"}]
     }
+    test_app.display_trips = [
+        {"routeName": "554", "headsign": "Downtown Seattle", "arrivalTime": int(time.time()) + 600, "isRealtime": True},
+    ]
     
     def create_menu_item(title, **kwargs):
         m = MagicMock()
@@ -87,7 +91,8 @@ def test_gui_profile_menu_building(test_app):
             if hasattr(item, 'title') and isinstance(item.title, str):
                 titles.append(item.title)
         
-        assert any("Work:" in t for t in titles)
+        # Active profile shows simulator-style rows: "route  headsign  ◉ Xm"
+        assert any("554" in t and "Downtown Seattle" in t and "◉" in t for t in titles)
         assert any("File: /path/to/home.yaml" in t for t in titles)
 
 def test_switch_profile_callback(test_app):

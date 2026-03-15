@@ -57,6 +57,7 @@ class TransitTrackerApp(rumps.App):
         
         self.api = TransitAPI()
         self.arrivals_cache = {} # stop_id -> list of arrivals
+        self.display_trips = []  # ordered trip rows as shown on the LED display
         self.cache_lock = threading.Lock()
         
         self.timer = rumps.Timer(self.update_state, 2)
@@ -95,6 +96,7 @@ class TransitTrackerApp(rumps.App):
                             by_stop.setdefault(stop, []).append(t)
                         with self.cache_lock:
                             self.arrivals_cache.update(by_stop)
+                            self.display_trips = trips
             except Exception:
                 pass
             time.sleep(10)
@@ -183,26 +185,25 @@ class TransitTrackerApp(rumps.App):
                         profile_root.p_path = p_path
                         profile_root.state = 1 if is_active else 0
                         
-                        # Add Arrivals to the sub-menu of this profile
+                        # Add text simulator rows from last_message trips
                         try:
-                            cfg = TransitConfig.load(p_path)
                             with self.cache_lock:
+                                trips = list(self.display_trips) if is_active else []
+                            if trips:
+                                for t in trips:
+                                    route = t.get("routeName", "?")
+                                    headsign = t.get("headsign", "")
+                                    at = t.get("arrivalTime", 0)
+                                    if at > 10**12:
+                                        at //= 1000
+                                    wait = int((at - time.time()) / 60) if at else -1
+                                    time_str = "Now" if wait <= 0 else f"{wait}m"
+                                    rt = "◉" if t.get("isRealtime") else "○"
+                                    profile_root.add(rumps.MenuItem(f"{route}  {headsign}  {rt} {time_str}"))
+                            else:
+                                cfg = TransitConfig.load(p_path)
                                 for sub in cfg.subscriptions:
-                                    arrivals = self.arrivals_cache.get(sub.stop, [])
-                                    next_bus = "..."
-                                    
-                                    # Filter for route
-                                    route_arrs = [a for a in arrivals if a.get("routeId") == sub.route or a.get("routeName") == sub.route.split(":")[-1]]
-                                    if not route_arrs and arrivals: route_arrs = arrivals
-                                    
-                                    if route_arrs:
-                                        at = route_arrs[0].get("arrivalTime")
-                                        if at:
-                                            if at > 10**12: at //= 1000
-                                            wait = int((at - time.time()) / 60)
-                                            next_bus = f"{wait}m" if wait >= 0 else "Left"
-                                    
-                                    profile_root.add(rumps.MenuItem(f"{sub.label}: {next_bus}"))
+                                    profile_root.add(rumps.MenuItem(f"{sub.label}: ..."))
                         except:
                             profile_root.add(rumps.MenuItem("Error loading stops"))
                         

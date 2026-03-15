@@ -314,10 +314,19 @@ class TransitServer:
                         # (OBA sometimes has stale values for one but not the other), fall back.
                         now_minus_buffer = now_ts - 60 # 1 minute ago
 
-                        # Ferries always use departure time — users at the dock need to
-                        # know when the vessel leaves, not when it arrives at the destination.
-                        is_ferry = full_route_id.startswith("95_") or "wsf" in full_route_id.lower()
-                        effective_mode = "departure" if is_ferry else display_mode
+                        # OBA provides per-trip flags indicating whether this stop is an
+                        # arrival or departure point. Use them to pick the right time:
+                        #   departureEnabled=True  → ferry leaving this dock (use departure)
+                        #   arrivalEnabled=True    → ferry approaching this dock (use arrival)
+                        # Falls back to the global display_mode for non-ferry / missing flags.
+                        dep_enabled = arr.get("departureEnabled")
+                        arr_enabled = arr.get("arrivalEnabled")
+                        if dep_enabled is True and not arr_enabled:
+                            effective_mode = "departure"
+                        elif arr_enabled is True and not dep_enabled:
+                            effective_mode = "arrival"
+                        else:
+                            effective_mode = display_mode
 
                         if effective_mode == "departure":
                             base_time = raw_dep if (raw_dep and raw_dep > now_minus_buffer) else raw_arr

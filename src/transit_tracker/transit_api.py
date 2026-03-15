@@ -242,6 +242,8 @@ class TransitAPI:
                             "isRealtime": is_realtime,
                             "routeColor": route_info.get("color"),
                             "vehicleId": arr.get("vehicleId"),
+                            "arrivalEnabled": arr.get("arrivalEnabled", True),
+                            "departureEnabled": arr.get("departureEnabled", True),
                         }
                     )
                 return results

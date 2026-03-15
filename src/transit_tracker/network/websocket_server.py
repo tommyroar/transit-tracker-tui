@@ -267,7 +267,11 @@ class TransitServer:
         print(f"[SERVER] Refreshing data for {len(unique_stops)} unique stops...", flush=True)
         
         any_429 = False
-        for clean_id in unique_stops:
+        spacing_sec = self.config.transit_tracker.request_spacing_ms / 1000.0
+        stops_list = sorted(unique_stops)
+        for i, clean_id in enumerate(stops_list):
+            if i > 0 and spacing_sec > 0:
+                await asyncio.sleep(spacing_sec)
             try:
                 await self.get_arrivals_cached(clean_id)
             except Exception as e:

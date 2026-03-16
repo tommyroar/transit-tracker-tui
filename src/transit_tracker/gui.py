@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 import rumps
 import websockets.sync.client
 
-from .cli import PLIST_NAME
+from .cli import PLIST_NAME, get_service_status
 from .config import TransitConfig, list_profiles, set_last_config_path, get_last_config_path
 from .network.websocket_server import (
     SERVICE_STATE_FILE,
@@ -62,15 +62,16 @@ class TransitTrackerApp(rumps.App):
         self.arrivals_cache = {} # stop_id -> list of arrivals
         self.display_trips = []  # ordered trip rows as shown on the LED display
         self.display_format = None  # loaded from config on first update
+        self.profile_previews: Dict[str, List[dict]] = {}  # path -> trips (one-shot)
         self.cache_lock = threading.Lock()
-        
+
         self.timer = rumps.Timer(self.update_state, 2)
         self.timer.start()
-        
+
         # Background thread for arrivals fetching (so we don't block the UI)
         self.bg_thread = threading.Thread(target=self.bg_fetch_loop, daemon=True)
         self.bg_thread.start()
-        
+
         self.startup_time = time.time()
         self.last_client_ids = None
         self.is_rate_limited = False
@@ -129,14 +130,68 @@ class TransitTrackerApp(rumps.App):
         except Exception:
             pass
 
+    def _fetch_profile_preview(self, p_path: str):
+        """Fetch a one-shot preview for an inactive profile via the public endpoint."""
+        try:
+            cfg = TransitConfig.load(p_path)
+        except Exception:
+            return
+        if not cfg.subscriptions:
+            return
+
+        pairs = []
+        for sub in cfg.subscriptions:
+            r_id = sub.route if ":" in sub.route else f"{sub.feed}:{sub.route}"
+            s_id = sub.stop if ":" in sub.stop else f"{sub.feed}:{sub.stop}"
+            off_sec = 0
+            try:
+                match = re.search(r"(-?\d+)", str(sub.time_offset))
+                if match:
+                    off_sec = int(match.group(1)) * 60
+            except Exception:
+                pass
+            pairs.append(f"{r_id},{s_id},{off_sec}")
+
+        sub_payload = {
+            "event": "schedule:subscribe",
+            "client_name": "ProfilePreview",
+            "data": {"routeStopPairs": ";".join(pairs), "limit": 6},
+        }
+
+        endpoint = cfg.transit_tracker.base_url
+        try:
+            with websockets.sync.client.connect(
+                endpoint, close_timeout=3
+            ) as ws:
+                ws.send(json.dumps(sub_payload))
+                msg = ws.recv(timeout=5)
+                data = json.loads(msg)
+                if data.get("event") == "schedule":
+                    trips = data.get("data", {}).get("trips", [])
+                    if trips:
+                        with self.cache_lock:
+                            self.profile_previews[p_path] = trips
+        except Exception:
+            pass
+
     def bg_fetch_loop(self):
         """Fetches trip data from the local proxy, then polls the state file.
 
         On startup, subscribes to the local WebSocket proxy for an immediate
-        update. Then falls back to reading last_message from service_state.json.
+        update, then fetches one-shot previews for inactive profiles.
+        Falls back to reading last_message from service_state.json.
         """
         # Initial fetch from local proxy for immediate data
         self._fetch_from_proxy()
+
+        # Fetch one-shot previews for inactive profiles
+        try:
+            active = get_last_config_path()
+            for p_path in list_profiles():
+                if p_path != active:
+                    self._fetch_profile_preview(p_path)
+        except Exception:
+            pass
 
         while True:
             try:
@@ -162,9 +217,7 @@ class TransitTrackerApp(rumps.App):
             current_config_path = get_last_config_path()
             
             # 1. Service Status Check
-            label = PLIST_NAME.replace(".plist", "")
-            res = subprocess.run(["launchctl", "list", label], capture_output=True, text=True)
-            if res.returncode == 0:
+            if get_service_status():
                 is_running = True
             
             if os.path.exists(SERVICE_STATE_FILE):
@@ -233,18 +286,22 @@ class TransitTrackerApp(rumps.App):
                         profile_root.p_path = p_path
                         profile_root.state = 1 if is_active else 0
                         
-                        # Add text simulator rows from last_message trips
+                        # Add text simulator rows from live or preview trips
                         try:
                             with self.cache_lock:
-                                trips = list(self.display_trips) if is_active else []
+                                if is_active:
+                                    trips = list(self.display_trips)
+                                else:
+                                    trips = list(self.profile_previews.get(p_path, []))
                             if trips:
+                                fmt = self.display_format if is_active else None
                                 for t in trips:
-                                    profile_root.add(rumps.MenuItem(format_trip_line(t, now, fmt=self.display_format)))
+                                    profile_root.add(rumps.MenuItem(format_trip_line(t, now, fmt=fmt)))
                             else:
                                 cfg = TransitConfig.load(p_path)
                                 for sub in cfg.subscriptions:
                                     profile_root.add(rumps.MenuItem(f"{sub.label}: ..."))
-                        except:
+                        except Exception:
                             profile_root.add(rumps.MenuItem("Error loading stops"))
                         
                         # Add metadata info

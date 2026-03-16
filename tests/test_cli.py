@@ -53,36 +53,38 @@ def test_cli_main_gui_command_direct_launch():
 
 def test_service_start_idempotency():
     """Verifies that 'service start' does nothing if the service is already running."""
-    with patch("transit_tracker.cli.get_service_status") as mock_status, \
+    with patch("transit_tracker.cli._nomad_available", return_value=False), \
+         patch("transit_tracker.cli.get_service_status") as mock_status, \
          patch("os.system") as mock_os_system, \
          patch("subprocess.Popen") as mock_popen, \
          patch("argparse.ArgumentParser.parse_args") as mock_args:
-        
+
         mock_args.return_value = MagicMock()
         mock_args.return_value.command = ["service", "start"]
-        
+
         # 1. CASE: SERVICE RUNNING
         mock_status.return_value = True
         main()
-        
+
         # Should not attempt to start via launchctl or Popen
         mock_os_system.assert_not_called()
         mock_popen.assert_not_called()
 
 def test_service_stop_cleanup():
     """Verifies that 'service stop' unloads launchctl and pkills gui."""
-    with patch("transit_tracker.cli.get_service_status") as mock_status, \
+    with patch("transit_tracker.cli._nomad_available", return_value=False), \
+         patch("transit_tracker.cli.get_service_status") as mock_status, \
          patch("os.system") as mock_os_system, \
          patch("subprocess.run") as mock_run, \
          patch("argparse.ArgumentParser.parse_args") as mock_args:
-        
+
         mock_args.return_value = MagicMock()
         mock_args.return_value.command = ["service", "stop"]
-        
+
         # 1. CASE: SERVICE RUNNING
         mock_status.return_value = True
         main()
-        
+
         # Should attempt to unload and pkill
         mock_os_system.assert_called_with(ANY)
         # Verify pkill was called for gui

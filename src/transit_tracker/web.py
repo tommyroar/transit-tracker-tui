@@ -267,6 +267,200 @@ def generate_api_spec(config: TransitConfig) -> str:
     return json.dumps(spec, indent=2)
 
 
+def generate_spec_html(spec_json: str) -> str:
+    """Generate a styled HTML documentation page from the API spec JSON."""
+    spec = json.loads(spec_json)
+    info = spec["info"]
+    config = spec["config"]
+    messages = spec["messages"]
+    types = spec["types"]
+    ferry = spec.get("ferry", {})
+    rate = spec.get("rate_limiting", {})
+    prefixes = spec.get("id_prefixes", {})
+
+    def json_block(obj: Any) -> str:
+        return json.dumps(obj, indent=2)
+
+    # Build subscription rows
+    sub_rows = ""
+    for s in config["subscriptions"]:
+        sub_rows += (
+            f"<tr><td><code>{s['feed']}</code></td>"
+            f"<td><code>{s['route']}</code></td>"
+            f"<td><code>{s['stop']}</code></td>"
+            f"<td>{s['label']}</td>"
+            f"<td>{s['time_offset']}</td></tr>\n"
+        )
+
+    # Build Trip type rows
+    trip_rows = ""
+    for field, meta in types.get("Trip", {}).items():
+        trip_rows += (
+            f"<tr><td><code>{field}</code></td>"
+            f"<td><code>{meta['type']}</code></td>"
+            f"<td>{meta['description']}</td></tr>\n"
+        )
+
+    # Build prefix rows
+    prefix_rows = ""
+    for prefix, desc in prefixes.items():
+        prefix_rows += f"<tr><td><code>{prefix}</code></td><td>{desc}</td></tr>\n"
+
+    # Build abbreviation rows
+    abbr_rows = ""
+    for a in ferry.get("abbreviations", []):
+        abbr_rows += (
+            f"<tr><td>{a['original']}</td><td><code>{a['short']}</code></td></tr>\n"
+        )
+
+    # Client message
+    sub_msg = messages["client_to_server"]["schedule:subscribe"]
+    sub_fields_rows = ""
+    for fname, fmeta in sub_msg["fields"].items():
+        opt = " <em>(optional)</em>" if fmeta.get("optional") else ""
+        default = f" default: <code>{fmeta['default']}</code>" if "default" in fmeta else ""
+        desc = fmeta.get("description", fmeta.get("value", ""))
+        sub_fields_rows += (
+            f"<tr><td><code>{fname}</code></td>"
+            f"<td><code>{fmeta['type']}</code>{opt}{default}</td>"
+            f"<td>{desc}</td></tr>\n"
+        )
+
+    # Server messages
+    sched_msg = messages["server_to_client"]["schedule"]
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{info['title']}</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    max-width: 900px; margin: 0 auto; padding: 40px 20px 80px;
+    color: #1a202c; line-height: 1.6; background: #fafafa;
+  }}
+  h1 {{ font-size: 28px; margin-bottom: 4px; }}
+  h2 {{ font-size: 20px; margin: 36px 0 12px; padding-bottom: 6px;
+        border-bottom: 2px solid #f58220; color: #333; }}
+  h3 {{ font-size: 16px; margin: 20px 0 8px; color: #555; }}
+  p {{ margin-bottom: 12px; color: #444; }}
+  .subtitle {{ color: #888; font-size: 14px; margin-bottom: 24px; }}
+  .badge {{ display: inline-block; background: #f58220; color: #fff;
+            padding: 2px 8px; border-radius: 4px; font-size: 12px;
+            font-weight: 600; margin-right: 6px; }}
+  .badge.ws {{ background: #2563eb; }}
+  .badge.http {{ background: #059669; }}
+  a {{ color: #f58220; }}
+  table {{ width: 100%; border-collapse: collapse; margin: 12px 0 20px;
+           font-size: 14px; }}
+  th, td {{ text-align: left; padding: 8px 12px; border: 1px solid #e2e8f0; }}
+  th {{ background: #f1f5f9; font-weight: 600; color: #333; }}
+  tr:nth-child(even) {{ background: #f8fafc; }}
+  code {{ background: #f1f5f9; padding: 1px 5px; border-radius: 3px;
+          font-size: 13px; }}
+  pre {{ background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 8px;
+         overflow-x: auto; font-size: 13px; line-height: 1.5; margin: 12px 0 20px; }}
+  pre code {{ background: none; padding: 0; color: inherit; }}
+  .config-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px;
+                   margin: 12px 0 20px; }}
+  .config-item {{ font-size: 14px; }}
+  .config-item .label {{ color: #888; }}
+  .config-item .value {{ font-weight: 600; }}
+  .raw-link {{ float: right; font-size: 13px; color: #888; }}
+  .raw-link:hover {{ color: #f58220; }}
+  .nav {{ display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0 8px; }}
+  .nav a {{ font-size: 13px; color: #666; text-decoration: none;
+            padding: 4px 10px; border-radius: 4px; background: #e2e8f0; }}
+  .nav a:hover {{ background: #f58220; color: #fff; }}
+</style>
+</head>
+<body>
+
+<a href="/api/spec" class="raw-link">Raw JSON &rarr;</a>
+<h1>{info['title']}</h1>
+<p class="subtitle">
+  <span class="badge ws">WebSocket</span>
+  <code>{info['websocket_url']}</code>
+  &nbsp;&middot;&nbsp; v{info['version']}
+</p>
+<p>{info['description']}</p>
+
+<div class="nav">
+  <a href="#config">Config</a>
+  <a href="#subscribe">Subscribe</a>
+  <a href="#schedule">Schedule</a>
+  <a href="#trip">Trip Type</a>
+  <a href="#ferry">Ferry</a>
+  <a href="#rate-limiting">Rate Limiting</a>
+</div>
+
+<h2 id="config">Current Configuration</h2>
+<div class="config-grid">
+  <div class="config-item"><span class="label">Check interval:</span>
+    <span class="value">{config['check_interval_seconds']}s</span></div>
+  <div class="config-item"><span class="label">Arrival threshold:</span>
+    <span class="value">{config['arrival_threshold_minutes']} min</span></div>
+  <div class="config-item"><span class="label">Time display:</span>
+    <span class="value">{config['time_display']}</span></div>
+  <div class="config-item"><span class="label">Panels:</span>
+    <span class="value">{config['num_panels']} &times; {config['panel_size']}</span></div>
+  <div class="config-item"><span class="label">Scroll headsigns:</span>
+    <span class="value">{config['scroll_headsigns']}</span></div>
+</div>
+
+<h3>Subscriptions</h3>
+<table>
+<tr><th>Feed</th><th>Route</th><th>Stop</th><th>Label</th><th>Offset</th></tr>
+{sub_rows}</table>
+
+<h2 id="subscribe">Client &rarr; Server: <code>schedule:subscribe</code></h2>
+<p>{sub_msg['description']}</p>
+<table>
+<tr><th>Field</th><th>Type</th><th>Description</th></tr>
+{sub_fields_rows}</table>
+
+<h3>Example</h3>
+<pre><code>{json_block(sub_msg['example'])}</code></pre>
+
+<h2 id="schedule">Server &rarr; Client: <code>schedule</code></h2>
+<p>{sched_msg['description']}</p>
+
+<h3>Bus Example</h3>
+<pre><code>{json_block(sched_msg['examples']['bus'])}</code></pre>
+
+<h3>Ferry Example</h3>
+<pre><code>{json_block(sched_msg['examples']['ferry'])}</code></pre>
+
+<h3>Heartbeat</h3>
+<pre><code>{json_block(messages['server_to_client']['heartbeat']['example'])}</code></pre>
+
+<h2 id="trip">Trip Type</h2>
+<table>
+<tr><th>Field</th><th>Type</th><th>Description</th></tr>
+{trip_rows}</table>
+
+<h2>ID Prefixes</h2>
+<table>
+<tr><th>Prefix</th><th>Description</th></tr>
+{prefix_rows}</table>
+
+<h2 id="ferry">Ferry Support</h2>
+<p><strong>Vessel mapping:</strong> {ferry.get('vessel_mapping', 'N/A')}</p>
+<p><strong>Arrival vs departure:</strong> {ferry.get('arrival_vs_departure', 'N/A')}</p>
+
+{"<h3>Route Abbreviations</h3><table><tr><th>Original</th><th>Short</th></tr>" + abbr_rows + "</table>" if abbr_rows else ""}
+
+<h2 id="rate-limiting">Rate Limiting</h2>
+<p><strong>Backoff:</strong> {rate.get('backoff', 'N/A')}</p>
+<p><strong>Per-stop cooldown:</strong> {rate.get('per_stop_cooldown', 'N/A')}</p>
+
+</body>
+</html>"""
+
+
 def generate_index_html(pages: List[Dict[str, str]]) -> str:
     """Generate an index page listing available web pages."""
     links = "".join(
@@ -339,12 +533,18 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
 
     stops_json = json.dumps(stops, indent=2)
     spec_json = generate_api_spec(config)
+    spec_html = generate_spec_html(spec_json)
 
     pages = [
         {
+            "path": "/spec",
+            "name": "API Docs",
+            "description": "Interactive WebSocket API documentation",
+        },
+        {
             "path": "/api/spec",
-            "name": "API Spec",
-            "description": "Full WebSocket API specification with example payloads",
+            "name": "API Spec (JSON)",
+            "description": "Raw JSON specification with example payloads",
         },
         {
             "path": "/api/stops",
@@ -356,13 +556,15 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
 
     TransitWebHandler.routes = {
         "/": index_html,
+        "/spec": spec_html,
         "/api/spec": spec_json,
         "/api/stops": stops_json,
     }
 
     server = HTTPServer((host, port), TransitWebHandler)
     print(f"[WEB] Transit Tracker web server at http://{host}:{port}")
-    print("[WEB]   /api/spec   — WebSocket API specification")
+    print("[WEB]   /spec       — API documentation page")
+    print("[WEB]   /api/spec   — Raw JSON specification")
     print("[WEB]   /api/stops  — Stop coordinates JSON")
     print("[WEB] Press Ctrl+C to stop")
 

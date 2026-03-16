@@ -1,19 +1,15 @@
 """
-Comprehensive test suite for the Transit Tracker web module.
+Test suite for the Transit Tracker web module.
 
 Tests cover:
-- Mapbox token resolution (env, config, missing)
 - Stop coordinate resolution with mock API
-- Route polyline resolution and deduplication
-- Walkshed HTML generation (structure, data injection, Mapbox integration)
-- Simulator HTML generation (MicroFont port, WebSocket config, Canvas setup)
+- API spec generation (structure, config-derived examples, ferry/bus split)
 - Index page generation
 - HTTP handler routing (200s, 404s, content types)
 - Polyline decoding contract (Google encoded polylines)
-- Simulator-web equivalence (JS glyph data matches Python source)
 """
 
-import os
+import json
 from io import BytesIO
 from unittest.mock import AsyncMock, patch
 
@@ -23,11 +19,8 @@ from transit_tracker.config import TransitConfig
 from transit_tracker.transit_api import TransitAPI
 from transit_tracker.web import (
     TransitWebHandler,
+    generate_api_spec,
     generate_index_html,
-    generate_simulator_html,
-    generate_walkshed_html,
-    get_mapbox_token,
-    resolve_route_polylines,
     resolve_stop_coordinates,
 )
 
@@ -40,7 +33,6 @@ def mock_config():
     return TransitConfig(
         transit_tracker={
             "base_url": "wss://tt.horner.tj/",
-            "mapbox_access_token": "pk.test_token_from_config",
             "stops": [
                 {
                     "stop_id": "st:1_8494",
@@ -60,12 +52,24 @@ def mock_config():
 
 
 @pytest.fixture
-def mock_config_no_token():
-    """Config with no mapbox token."""
+def mock_config_with_ferry():
+    """Config with bus and ferry stops."""
     return TransitConfig(
         transit_tracker={
+            "base_url": "wss://tt.horner.tj/",
             "stops": [
-                {"stop_id": "st:1_8494", "routes": ["st:40_100240"]},
+                {
+                    "stop_id": "st:1_8494",
+                    "label": "554 - Issaquah TC",
+                    "time_offset": "-7min",
+                    "routes": ["st:40_100240"],
+                },
+                {
+                    "stop_id": "wsf:7",
+                    "label": "SEA-BI - Seattle Terminal",
+                    "time_offset": "0min",
+                    "routes": ["wsf:73"],
+                },
             ],
         }
     )
@@ -90,47 +94,6 @@ def sample_stops():
             "label": "Mercer Island",
         },
     ]
-
-
-@pytest.fixture
-def sample_routes():
-    """Resolved route polyline data."""
-    return [
-        {
-            "route_id": "st:40_100240",
-            "name": "554",
-            "color": "2B376E",
-            "polylines": [[[-122.03, 47.53], [-122.10, 47.55], [-122.22, 47.57]]],
-        }
-    ]
-
-
-# --- Token Resolution ---
-
-
-def test_mapbox_token_from_env(mock_config):
-    """Token from env var takes priority over config."""
-    with patch.dict(os.environ, {"MAPBOX_ACCESS_TOKEN": "pk.env_token"}):
-        assert get_mapbox_token(mock_config) == "pk.env_token"
-
-
-def test_mapbox_token_from_config(mock_config):
-    """Falls back to config when env var is not set."""
-    with patch.dict(os.environ, {}, clear=True):
-        env = os.environ.copy()
-        env.pop("MAPBOX_ACCESS_TOKEN", None)
-        with patch.dict(os.environ, env, clear=True):
-            assert get_mapbox_token(mock_config) == "pk.test_token_from_config"
-
-
-def test_mapbox_token_missing(mock_config_no_token):
-    """Raises RuntimeError with clear message when no token available."""
-    with patch.dict(os.environ, {}, clear=True):
-        env = os.environ.copy()
-        env.pop("MAPBOX_ACCESS_TOKEN", None)
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(RuntimeError, match="Mapbox access token not found"):
-                get_mapbox_token(mock_config_no_token)
 
 
 # --- Stop Coordinate Resolution ---
@@ -202,80 +165,22 @@ async def test_resolve_stop_coordinates_handles_not_found(mock_config):
     assert len(stops) == 0
 
 
-# --- Route Polyline Resolution ---
-
-
-@pytest.mark.asyncio
-async def test_resolve_route_polylines_deduplicates(mock_config):
-    """Routes shared across stops are only fetched once."""
-    mock_api = AsyncMock(spec=TransitAPI)
-    mock_api.get_route_polylines = AsyncMock(
-        return_value={
-            "route_id": "st:40_100240",
-            "name": "554",
-            "color": "2B376E",
-            "polylines": [[[-122.03, 47.53]]],
-        }
-    )
-    mock_api.close = AsyncMock()
-
-    with patch("transit_tracker.web.TransitAPI", return_value=mock_api):
-        routes = await resolve_route_polylines(mock_config)
-
-    # st:40_100240 appears in both stops but should only be fetched
-    # once (2 unique routes total: st:40_100240 and st:1_100039)
-    assert mock_api.get_route_polylines.call_count == 2
-    # But only the one with polylines should be in results
-    assert len(routes) >= 1
-
-
-@pytest.mark.asyncio
-async def test_resolve_route_polylines_skips_empty():
-    """Routes with no polyline data are excluded."""
-    config = TransitConfig(
-        transit_tracker={
-            "stops": [
-                {"stop_id": "st:1_1", "routes": ["st:empty_route"]},
-            ]
-        }
-    )
-    mock_api = AsyncMock(spec=TransitAPI)
-    mock_api.get_route_polylines = AsyncMock(
-        return_value={
-            "route_id": "st:empty_route",
-            "name": "",
-            "color": "",
-            "polylines": [],
-        }
-    )
-    mock_api.close = AsyncMock()
-
-    with patch("transit_tracker.web.TransitAPI", return_value=mock_api):
-        routes = await resolve_route_polylines(config)
-
-    assert len(routes) == 0
-
-
 # --- Polyline Decoding Contract ---
 
 
 def test_polyline_decode_basic():
     """Google polyline encoding contract: known encoded string -> known coords."""
-    # "_p~iF~ps|U" encodes to (38.5, -120.2) in the standard format
     result = TransitAPI._decode_polyline("_p~iF~ps|U")
     assert len(result) == 1
-    assert abs(result[0][1] - 38.5) < 0.001  # lat
-    assert abs(result[0][0] - (-120.2)) < 0.001  # lng
+    assert abs(result[0][1] - 38.5) < 0.001
+    assert abs(result[0][0] - (-120.2)) < 0.001
 
 
 def test_polyline_decode_multi_point():
     """Multi-point polyline decodes to sequential coordinates."""
-    # "_p~iF~ps|U_ulLnnqC_mqNvxq`@" encodes 3 points
     result = TransitAPI._decode_polyline("_p~iF~ps|U_ulLnnqC_mqNvxq`@")
     assert len(result) == 3
-    # First point: (38.5, -120.2)
     assert abs(result[0][1] - 38.5) < 0.001
-    # Points should be different (delta encoding)
     assert result[0] != result[1]
 
 
@@ -284,210 +189,91 @@ def test_polyline_decode_empty():
     assert TransitAPI._decode_polyline("") == []
 
 
-# --- Walkshed HTML Generation ---
+# --- API Spec Generation ---
 
 
-def test_walkshed_html_embeds_stops(sample_stops):
-    """Stop data is properly embedded as JSON in the HTML."""
-    html = generate_walkshed_html(sample_stops, "pk.test")
-    # Verify stops JSON is embedded
-    assert '"stop_id": "st:1_8494"' in html
-    assert '"stop_id": "st:1_1920"' in html
-    assert '"lat": 47.5301' in html
-    assert '"lon": -122.0326' in html
+def test_api_spec_is_valid_json(mock_config):
+    """generate_api_spec returns valid JSON."""
+    spec_str = generate_api_spec(mock_config)
+    spec = json.loads(spec_str)
+    assert isinstance(spec, dict)
 
 
-def test_walkshed_html_embeds_token(sample_stops):
-    """Mapbox token is properly embedded in the HTML."""
-    html = generate_walkshed_html(sample_stops, "pk.my_secret_token")
-    assert "pk.my_secret_token" in html
+def test_api_spec_has_info(mock_config):
+    """Spec includes info section with title and version."""
+    spec = json.loads(generate_api_spec(mock_config))
+    assert spec["info"]["title"] == "Transit Tracker WebSocket API"
+    assert spec["info"]["version"] == "1.0.0"
+    assert "websocket_url" in spec["info"]
 
 
-def test_walkshed_html_includes_mapbox_gl(sample_stops):
-    """Mapbox GL JS library is loaded from CDN."""
-    html = generate_walkshed_html(sample_stops, "pk.test")
-    assert "api.mapbox.com/mapbox-gl-js" in html
-    assert "mapbox-gl.css" in html
+def test_api_spec_has_config(mock_config):
+    """Spec includes config section derived from live config."""
+    spec = json.loads(generate_api_spec(mock_config))
+    assert "subscriptions" in spec["config"]
+    assert len(spec["config"]["subscriptions"]) > 0
+    sub = spec["config"]["subscriptions"][0]
+    assert "route" in sub
+    assert "stop" in sub
 
 
-def test_walkshed_html_uses_light_style(sample_stops):
-    """Uses the light-v11 base style for architectural look (Issue #16)."""
-    html = generate_walkshed_html(sample_stops, "pk.test")
-    assert "light-v11" in html
+def test_api_spec_has_messages(mock_config):
+    """Spec documents client_to_server and server_to_client messages."""
+    spec = json.loads(generate_api_spec(mock_config))
+    assert "schedule:subscribe" in spec["messages"]["client_to_server"]
+    assert "schedule" in spec["messages"]["server_to_client"]
+    assert "heartbeat" in spec["messages"]["server_to_client"]
 
 
-def test_walkshed_html_has_isochrone_api(sample_stops):
-    """Client-side JS calls Mapbox Isochrone API."""
-    html = generate_walkshed_html(sample_stops, "pk.test")
-    assert "isochrone/v1/mapbox/walking" in html
-    assert "contours_minutes=5,10,15" in html
+def test_api_spec_has_subscribe_example(mock_config):
+    """Subscribe message includes a working example with routeStopPairs."""
+    spec = json.loads(generate_api_spec(mock_config))
+    example = spec["messages"]["client_to_server"]["schedule:subscribe"]["example"]
+    assert example["event"] == "schedule:subscribe"
+    assert "routeStopPairs" in example["data"]
+    # Pairs should contain route,stop format
+    pairs = example["data"]["routeStopPairs"]
+    assert "," in pairs
 
 
-def test_walkshed_html_architectural_styling(sample_stops):
-    """Issue #16: Architectural styling is applied."""
-    html = generate_walkshed_html(sample_stops, "pk.test")
-    # Building styling
-    assert "applyArchitecturalStyle" in html
-    # Color palette
-    assert "#d1d5db" in html  # buildings
-    assert "#9ca3af" in html  # building outline
-    assert "#f58220" in html  # highlight orange
+def test_api_spec_has_trip_type(mock_config):
+    """Spec documents Trip type with all fields."""
+    spec = json.loads(generate_api_spec(mock_config))
+    trip_type = spec["types"]["Trip"]
+    for field in [
+        "tripId",
+        "routeId",
+        "routeName",
+        "routeColor",
+        "stopId",
+        "headsign",
+        "arrivalTime",
+        "departureTime",
+        "isRealtime",
+    ]:
+        assert field in trip_type
 
 
-def test_walkshed_html_pill_labels(sample_stops):
-    """Issue #16: Stop markers use pill-style labels."""
-    html = generate_walkshed_html(sample_stops, "pk.test")
-    assert "stop-pill" in html
+def test_api_spec_ferry_bus_examples(mock_config_with_ferry):
+    """Spec generates separate bus and ferry examples from config."""
+    spec = json.loads(generate_api_spec(mock_config_with_ferry))
+    schedule = spec["messages"]["server_to_client"]["schedule"]
+    assert "bus" in schedule["examples"]
+    assert "ferry" in schedule["examples"]
 
 
-def test_walkshed_html_includes_route_lines(sample_stops, sample_routes):
-    """Issue #14: Route polylines are rendered on the map."""
-    html = generate_walkshed_html(sample_stops, "pk.test", routes=sample_routes)
-    assert "ROUTES" in html
-    assert '"name": "554"' in html
-    assert "LineString" in html
+def test_api_spec_has_id_prefixes(mock_config):
+    """Spec documents st: and wsf: ID prefixes."""
+    spec = json.loads(generate_api_spec(mock_config))
+    assert "st:" in spec["id_prefixes"]
+    assert "wsf:" in spec["id_prefixes"]
 
 
-def test_walkshed_html_no_routes(sample_stops):
-    """Walkshed page works without route data."""
-    html = generate_walkshed_html(sample_stops, "pk.test", routes=None)
-    assert "ROUTES = []" in html
-
-
-def test_walkshed_html_legend(sample_stops):
-    """Walk time legend is present."""
-    html = generate_walkshed_html(sample_stops, "pk.test")
-    assert "5 minutes" in html
-    assert "10 minutes" in html
-    assert "15 minutes" in html
-
-
-# --- Simulator HTML Generation ---
-
-
-def test_simulator_html_embeds_ws_config(mock_config):
-    """WebSocket URL and subscription pairs are embedded."""
-    html = generate_simulator_html(mock_config)
-    assert "wss://tt.horner.tj/" in html or "apiUrl" in html
-    # Should contain route-stop pair strings
-    assert "pairsStr" in html
-
-
-def test_simulator_html_has_glyphs(mock_config):
-    """MicroFont GLYPHS dict is ported to JavaScript."""
-    html = generate_simulator_html(mock_config)
-    # Check several glyph entries match Python source
-    assert "0x0E,0x11,0x11,0x11,0x11,0x11,0x0E" in html  # '0'
-    assert "0x04,0x0C,0x04,0x04,0x04,0x04,0x0E" in html  # '1'
-    assert "0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F" in html  # 'E'
-
-
-def test_simulator_html_has_realtime_icon(mock_config):
-    """REALTIME_ICON animation data is present."""
-    html = generate_simulator_html(mock_config)
-    assert "REALTIME_ICON" in html
-    # Check the icon pattern
-    assert "[0,0,0,3,3,3]" in html
-    assert "[3,0,2,0,1,1]" in html
-
-
-def test_simulator_html_has_canvas(mock_config):
-    """HTML5 Canvas element is set up for LED rendering."""
-    html = generate_simulator_html(mock_config)
-    assert '<canvas id="led"' in html
-    assert "getContext" in html
-
-
-def test_simulator_html_has_websocket_client(mock_config):
-    """WebSocket client with schedule:subscribe protocol."""
-    html = generate_simulator_html(mock_config)
-    assert "new WebSocket" in html
-    assert "schedule:subscribe" in html
-    assert "Web Simulator" in html  # client_name
-
-
-def test_simulator_html_has_animation_loop(mock_config):
-    """RequestAnimationFrame loop for LED rendering."""
-    html = generate_simulator_html(mock_config)
-    assert "requestAnimationFrame" in html
-
-
-def test_simulator_html_has_scrolling(mock_config):
-    """Headsign scrolling logic is present."""
-    html = generate_simulator_html(mock_config)
-    assert "scrollOff" in html or "scrollOffset" in html
-
-
-def test_simulator_html_has_diversity_capping(mock_config):
-    """Fair diversity capping logic is ported."""
-    html = generate_simulator_html(mock_config)
-    assert "seenStops" in html
-    assert "limit" in html
-
-
-def test_simulator_html_has_color_mapping(mock_config):
-    """Color name to hex mapping matches Python simulator."""
-    html = generate_simulator_html(mock_config)
-    assert "yellow" in html
-    assert "hot_pink" in html
-    assert "bright_blue" in html
-    assert "#FFD700" in html  # yellow hex
-
-
-def test_simulator_html_connection_status(mock_config):
-    """Connection status indicator is present."""
-    html = generate_simulator_html(mock_config)
-    assert "statusDot" in html or "connected" in html
-    assert "disconnected" in html
-    assert "connecting" in html
-
-
-def test_simulator_html_display_dimensions(mock_config):
-    """Canvas dimensions match config panel settings."""
-    html = generate_simulator_html(mock_config)
-    # Default: 2 panels * 64 = 128 width
-    assert "displayWidth: 128" in html
-
-
-# --- Simulator-Python Equivalence ---
-
-
-def test_simulator_glyph_equivalence():
-    """JS glyph data in HTML matches Python MicroFont.GLYPHS exactly."""
-    from transit_tracker.simulator import MicroFont
-
-    config = TransitConfig(
-        transit_tracker={"stops": [{"stop_id": "st:1_1", "routes": ["st:1_1"]}]}
-    )
-    html = generate_simulator_html(config)
-
-    # Verify every Python glyph appears in JS
-    for char, glyph_data in MicroFont.GLYPHS.items():
-        hex_str = ",".join(f"0x{b:02X}" for b in glyph_data)
-        assert hex_str in html, f"Glyph '{char}' ({hex_str}) missing"
-
-
-def test_simulator_realtime_icon_equivalence():
-    """JS REALTIME_ICON matches Python MicroFont.REALTIME_ICON exactly."""
-    from transit_tracker.simulator import MicroFont
-
-    config = TransitConfig(
-        transit_tracker={"stops": [{"stop_id": "st:1_1", "routes": ["st:1_1"]}]}
-    )
-    html = generate_simulator_html(config)
-
-    for row in MicroFont.REALTIME_ICON:
-        row_str = "[" + ",".join(str(v) for v in row) + "]"
-        assert row_str in html, f"REALTIME_ICON row {row_str} missing"
-
-
-def test_simulator_subscription_pairs(mock_config):
-    """Subscription pairs string matches expected format from config."""
-    html = generate_simulator_html(mock_config)
-    # Config has 3 subscriptions after flattening (2 stops, one with 2 routes)
-    # Verify the pairs string contains route,stop,offset format
-    assert "st:40_100240" in html
-    assert "st:1_8494" in html
+def test_api_spec_has_rate_limiting(mock_config):
+    """Spec documents rate limiting behavior."""
+    spec = json.loads(generate_api_spec(mock_config))
+    assert "backoff" in spec["rate_limiting"]
+    assert "per_stop_cooldown" in spec["rate_limiting"]
 
 
 # --- Index Page ---
@@ -496,14 +282,14 @@ def test_simulator_subscription_pairs(mock_config):
 def test_index_html_lists_pages():
     """Index page contains links to all registered pages."""
     pages = [
-        {"path": "/walkshed", "name": "Walksheds", "description": "Walk map"},
-        {"path": "/simulator", "name": "LED Simulator", "description": "LED sim"},
+        {"path": "/api/spec", "name": "API Spec", "description": "API docs"},
+        {"path": "/api/stops", "name": "Stops", "description": "Stop data"},
     ]
     html = generate_index_html(pages)
-    assert "/walkshed" in html
-    assert "Walksheds" in html
-    assert "/simulator" in html
-    assert "LED Simulator" in html
+    assert "/api/spec" in html
+    assert "API Spec" in html
+    assert "/api/stops" in html
+    assert "Stops" in html
 
 
 def test_index_html_has_transit_tracker_title():
@@ -519,13 +305,13 @@ def test_handler_serves_registered_routes():
     """Handler returns 200 for registered routes."""
     TransitWebHandler.routes = {
         "/": "<html>index</html>",
-        "/walkshed": "<html>walkshed</html>",
+        "/api/spec": '{"info": {}}',
         "/api/stops": "[]",
     }
 
-    handler = _make_handler("GET", "/walkshed")
+    handler = _make_handler("GET", "/api/spec")
     assert handler._status_code == 200
-    assert b"walkshed" in handler._body
+    assert b'{"info": {}}' in handler._body
 
 
 def test_handler_returns_404_for_unknown():
@@ -547,26 +333,26 @@ def test_handler_json_content_type_for_api():
 
 def test_handler_html_content_type_for_pages():
     """Page routes get text/html content type."""
-    TransitWebHandler.routes = {"/walkshed": "<html></html>"}
+    TransitWebHandler.routes = {"/": "<html></html>"}
 
-    handler = _make_handler("GET", "/walkshed")
+    handler = _make_handler("GET", "/")
     assert handler._status_code == 200
     assert "text/html" in handler._content_type
 
 
 def test_handler_strips_trailing_slash():
     """Trailing slashes are normalized."""
-    TransitWebHandler.routes = {"/walkshed": "<html>ok</html>"}
+    TransitWebHandler.routes = {"/api/spec": "{}"}
 
-    handler = _make_handler("GET", "/walkshed/")
+    handler = _make_handler("GET", "/api/spec/")
     assert handler._status_code == 200
 
 
 def test_handler_strips_query_string():
     """Query strings are stripped from path matching."""
-    TransitWebHandler.routes = {"/walkshed": "<html>ok</html>"}
+    TransitWebHandler.routes = {"/api/spec": "{}"}
 
-    handler = _make_handler("GET", "/walkshed?token=abc")
+    handler = _make_handler("GET", "/api/spec?format=pretty")
     assert handler._status_code == 200
 
 

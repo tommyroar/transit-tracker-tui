@@ -368,11 +368,22 @@ class TransitServer:
                         else:
                             effective_mode = display_mode
 
+                        is_ferry = full_route_id.startswith("95_") or "wsf" in full_route_id.lower()
+
+                        # For ferries, skip trips whose OBA flags explicitly indicate the
+                        # wrong direction. e.g. at Seattle Terminal (display_mode="departure"),
+                        # a BI→SEA arrival (arrivalEnabled=True, departureEnabled=False) is skipped.
+                        if is_ferry:
+                            if display_mode == "departure" and arr_enabled is True and not dep_enabled:
+                                continue
+                            if display_mode == "arrival" and dep_enabled is True and not arr_enabled:
+                                continue
+
                         if effective_mode == "departure":
-                            base_time = raw_dep if (raw_dep and raw_dep > now_minus_buffer) else raw_arr
+                            base_time = raw_dep if (raw_dep and raw_dep > now_minus_buffer) else (None if is_ferry else raw_arr)
                         else:
-                            base_time = raw_arr if (raw_arr and raw_arr > now_minus_buffer) else raw_dep
-                        
+                            base_time = raw_arr if (raw_arr and raw_arr > now_minus_buffer) else (None if is_ferry else raw_dep)
+
                         if not base_time or base_time < now_minus_buffer:
                             continue
 
@@ -384,7 +395,7 @@ class TransitServer:
                         # last-seen vessel would show the wrong name for upcoming trips.
                         headsign = self.apply_abbreviations(str(arr.get("headsign") or arr.get("tripHeadsign") or "Transit"))
                         route_name = self.apply_abbreviations(str(arr.get("routeName") or arr.get("routeShortName") or ""))
-                        if full_route_id.startswith("95_") or "wsf" in full_route_id.lower():
+                        if is_ferry:
                             vehicle_id_full = arr.get("vehicleId") or (arr.get("tripStatus") or {}).get("vehicleId")
                             if vehicle_id_full:
                                 vehicle_id_short = vehicle_id_full.split("_")[-1]
@@ -401,7 +412,7 @@ class TransitServer:
                             "headsign": headsign,
                             "arrivalTime": int(final_display_time),
                             "departureTime": int((raw_dep or raw_arr) + offset_sec),
-                            "isRealtime": bool(arr.get("isRealtime"))
+                            "isRealtime": bool(arr.get("vehicleId")) if is_ferry else bool(arr.get("isRealtime"))
                         })
             except Exception as e:
                 import traceback

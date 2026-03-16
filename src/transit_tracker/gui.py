@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 import rumps
 import websockets.sync.client
 
-from .cli import PLIST_NAME
+from .cli import PLIST_NAME, get_service_status
 from .config import TransitConfig, list_profiles, set_last_config_path, get_last_config_path
 from .network.websocket_server import (
     SERVICE_STATE_FILE,
@@ -217,9 +217,7 @@ class TransitTrackerApp(rumps.App):
             current_config_path = get_last_config_path()
             
             # 1. Service Status Check
-            label = PLIST_NAME.replace(".plist", "")
-            res = subprocess.run(["launchctl", "list", label], capture_output=True, text=True)
-            if res.returncode == 0:
+            if get_service_status():
                 is_running = True
             
             if os.path.exists(SERVICE_STATE_FILE):

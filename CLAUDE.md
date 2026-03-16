@@ -88,11 +88,12 @@ The GUI tray icon is a subprocess of the service (`run_full_service()` in `cli.p
 
 ## Service management
 
-The daemon runs under launchd. Use `launchctl kickstart` to restart — do not use `pkill` or background processes directly.
+The service runs as a Nomad job (`transit-tracker`). See `~/dev/NOMAD.md` for full Nomad context.
 
 ```bash
-transit-tracker service start
-transit-tracker service stop
-transit-tracker service restart   # uses launchctl kickstart -k internally
-transit-tracker service status
+nomad job run transit-tracker.nomad.hcl   # start/update
+nomad job status transit-tracker          # check status
+nomad alloc logs <alloc-id>               # view logs
+nomad job stop transit-tracker            # stop (keeps job registered)
+nomad job stop -purge transit-tracker     # stop and remove
 ```

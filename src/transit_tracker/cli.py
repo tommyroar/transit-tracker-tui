@@ -89,22 +89,27 @@ def _manage_service_nomad(action: str):
         if not os.path.exists(job_file):
             print(f"[red]Error: {job_file} not found.[/red]")
             return
-        # Nomad `job run` on an existing job restarts it
         print(f"Restarting {NOMAD_JOB} via Nomad...")
-        # Stop first, then start to get a clean restart
-        subprocess.run(
-            ["nomad", "job", "stop", NOMAD_JOB],
-            capture_output=True, text=True,
-        )
-        time.sleep(1)
+        # Re-run the job file to trigger a restart; if the job is running
+        # Nomad performs a rolling update. If stopped, it starts fresh.
         result = subprocess.run(
             ["nomad", "job", "run", job_file],
             capture_output=True, text=True,
         )
-        if result.returncode == 0:
-            print(f"Job {NOMAD_JOB} restarted.")
-        else:
+        if result.returncode != 0:
             print(f"[red]Failed to restart: {result.stderr.strip()}[/red]")
+            return
+        # Restart all allocations to force a clean process restart
+        alloc_result = subprocess.run(
+            ["nomad", "job", "allocs", "-t", "{{range .}}{{.ID}} {{end}}", NOMAD_JOB],
+            capture_output=True, text=True,
+        )
+        for alloc_id in alloc_result.stdout.strip().split():
+            subprocess.run(
+                ["nomad", "alloc", "restart", alloc_id],
+                capture_output=True, text=True,
+            )
+        print(f"Job {NOMAD_JOB} restarted.")
 
     elif action == "status":
         result = subprocess.run(

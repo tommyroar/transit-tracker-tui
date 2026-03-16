@@ -253,6 +253,18 @@ def generate_api_spec(config: TransitConfig) -> str:
                 "Determined per-trip by OBA arrivalEnabled/departureEnabled flags. "
                 "Origin docks show departure time; destination docks show arrival time."
             ),
+            "direction_filtering": (
+                "Ferry trips are filtered by direction at the terminal. "
+                "At a departure terminal (display_mode='departure'), inbound arrivals "
+                "(arrivalEnabled=True, departureEnabled=False) are skipped, and vice versa. "
+                "Unlike buses, ferries with an expired preferred time are dropped entirely "
+                "rather than falling back to the alternate time."
+            ),
+            "realtime_detection": (
+                "Ferry isRealtime is based on vehicleId presence in OBA data, "
+                "not the predicted flag used for buses. A ferry trip is realtime "
+                "only when a vessel is actively tracked."
+            ),
             "abbreviations": [
                 {"original": a.original, "short": a.short}
                 for a in config.transit_tracker.abbreviations
@@ -450,6 +462,8 @@ def generate_spec_html(spec_json: str) -> str:
 <h2 id="ferry">Ferry Support</h2>
 <p><strong>Vessel mapping:</strong> {ferry.get('vessel_mapping', 'N/A')}</p>
 <p><strong>Arrival vs departure:</strong> {ferry.get('arrival_vs_departure', 'N/A')}</p>
+<p><strong>Direction filtering:</strong> {ferry.get('direction_filtering', 'N/A')}</p>
+<p><strong>Realtime detection:</strong> {ferry.get('realtime_detection', 'N/A')}</p>
 
 {"<h3>Route Abbreviations</h3><table><tr><th>Original</th><th>Short</th></tr>" + abbr_rows + "</table>" if abbr_rows else ""}
 

@@ -1,0 +1,27 @@
+use_local_api: true
+
+transit_tracker:
+  oba_api_key: TEST
+  check_interval_seconds: 60
+  arrival_threshold_minutes: 5
+  stops:
+    # Bus: Sound Transit 554 at Bellevue Transit Center
+    - stop_id: "1_8494"
+      routes:
+        - route_id: "40_100240"
+          time_offset_seconds: 0
+    # Bus: Metro 14 at 3rd & Pike
+    - stop_id: "1_11920"
+      routes:
+        - route_id: "1_100039"
+          time_offset_seconds: 0
+    # Ferry: Seattle terminal (Colman Dock)
+    - stop_id: "wsf:7"
+      routes:
+        - route_id: "wsf:73"
+          time_offset_seconds: 0
+    # Ferry: Bainbridge Island terminal
+    - stop_id: "wsf:3"
+      routes:
+        - route_id: "wsf:73"
+          time_offset_seconds: 0

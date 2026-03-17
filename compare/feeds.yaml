@@ -1,0 +1,7 @@
+feeds:
+  puget_sound:
+    name: Puget Sound
+    description: Puget Sound OneBusAway
+    onebusaway:
+      baseUrl: https://api.pugetsound.onebusaway.org
+      apiKey: TEST

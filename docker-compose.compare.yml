@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: transit
+      POSTGRES_PASSWORD: transit
+      POSTGRES_DB: transit
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U transit"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:6
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  reference:
+    image: ghcr.io/tjhorner/transit-tracker-api:main
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./compare/feeds.yaml:/app/feeds.yaml
+    environment:
+      DATABASE_URL: postgres://transit:transit@postgres:5432/transit
+      REDIS_URL: redis://redis:6379
+
+  proxy:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./compare/proxy_config.yaml:/config/config.yaml

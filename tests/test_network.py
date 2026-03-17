@@ -336,7 +336,7 @@ async def test_non_ferry_route_headsign_unchanged(mock_config):
 @pytest.mark.asyncio
 async def test_departure_enabled_uses_departure_time(ferry_config):
     """When OBA says departureEnabled=True (ferry leaving this dock), use departure time."""
-    ferry_config.time_display = "arrival"  # global mode irrelevant when flag is set
+    ferry_config.time_display = "departure"
     server = TransitServer(ferry_config)
     now = int(time.time())
 
@@ -379,7 +379,7 @@ async def test_arrival_enabled_uses_arrival_time(ferry_config):
     predictedDepartureTime is in the distant past (when it left Seattle).
     predictedArrivalTime is when it docks at Bainbridge (the useful time).
     """
-    ferry_config.time_display = "departure"  # global mode irrelevant when flag is set
+    ferry_config.time_display = "arrival"
     server = TransitServer(ferry_config)
     now = int(time.time())
 
@@ -485,6 +485,110 @@ async def test_missing_flags_falls_back_to_display_mode(mock_config):
     trips = json.loads(ws.send.call_args[0][0])["data"]["trips"]
     assert len(trips) == 1
     assert trips[0]["arrivalTime"] == scheduled_arrival
+
+
+@pytest.mark.asyncio
+async def test_departed_ferry_skipped_at_origin(ferry_config):
+    """A ferry that already departed should not appear with destination arrival time."""
+    server = TransitServer(ferry_config)
+    now = int(time.time())
+
+    server.cache["95_7"] = (time.time(), [
+        {
+            "tripId": "95_73503142611",
+            "routeId": "95_73",
+            "stopId": "95_7",
+            "scheduledArrivalTime": (now + 720) * 1000,
+            "scheduledDepartureTime": (now - 1500) * 1000,
+            "predictedArrivalTime": (now + 720) * 1000,
+            "predictedDepartureTime": (now - 1500) * 1000,
+            "tripHeadsign": "Bainbridge Island",
+            "headsign": "Bainbridge Island",
+            "routeName": "Seattle - Bainbridge Island",
+            "isRealtime": True,
+            "vehicleId": "95_28",
+            "departureEnabled": True,
+            "arrivalEnabled": False,
+        }
+    ])
+
+    ws = AsyncMock()
+    server.subscriptions[ws] = [{"routeId": "95_73", "stopId": "95_7"}]
+    await server.send_update(ws)
+
+    # Departed ferry must be skipped — 0 trips in response
+    trips = json.loads(ws.send.call_args[0][0])["data"]["trips"]
+    assert len(trips) == 0
+
+
+@pytest.mark.asyncio
+async def test_ferry_wrong_direction_filtered(ferry_config):
+    """BI→SEA arrival at Seattle Terminal should be filtered when display_mode=departure."""
+    ferry_config.time_display = "departure"
+    server = TransitServer(ferry_config)
+    now = int(time.time())
+
+    server.cache["95_7"] = (time.time(), [
+        {
+            "tripId": "95_73503152616",
+            "routeId": "95_73",
+            "stopId": "95_7",
+            "scheduledArrivalTime": (now + 600) * 1000,
+            "scheduledDepartureTime": (now + 86340) * 1000,  # bogus far-future
+            "predictedArrivalTime": (now + 600) * 1000,
+            "predictedDepartureTime": None,
+            "tripHeadsign": "Seattle",
+            "headsign": "Seattle",
+            "routeName": "Bainbridge Island - Seattle",
+            "isRealtime": True,
+            "vehicleId": "95_37",
+            "arrivalEnabled": True,
+            "departureEnabled": False,
+        }
+    ])
+
+    ws = AsyncMock()
+    server.subscriptions[ws] = [{"routeId": "95_73", "stopId": "95_7"}]
+    await server.send_update(ws)
+
+    # BI→SEA arrival must be filtered at departure-configured stop
+    trips = json.loads(ws.send.call_args[0][0])["data"]["trips"]
+    assert len(trips) == 0
+
+
+@pytest.mark.asyncio
+async def test_ferry_scheduled_not_realtime(ferry_config):
+    """Ferry with no vehicleId should show isRealtime=False even if predictedTimes exist."""
+    ferry_config.time_display = "departure"
+    server = TransitServer(ferry_config)
+    now = int(time.time())
+
+    server.cache["95_7"] = (time.time(), [
+        {
+            "tripId": "95_73503142611",
+            "routeId": "95_73",
+            "stopId": "95_7",
+            "scheduledArrivalTime": (now + 2100) * 1000,
+            "scheduledDepartureTime": (now + 600) * 1000,
+            "predictedArrivalTime": (now + 2100) * 1000,
+            "predictedDepartureTime": (now + 600) * 1000,
+            "tripHeadsign": "Bainbridge Island",
+            "headsign": "Bainbridge Island",
+            "routeName": "Seattle - Bainbridge Island",
+            "isRealtime": True,  # transit_api says True based on predicted times
+            "vehicleId": None,   # but no vessel assigned
+            "departureEnabled": True,
+            "arrivalEnabled": False,
+        }
+    ])
+
+    ws = AsyncMock()
+    server.subscriptions[ws] = [{"routeId": "95_73", "stopId": "95_7"}]
+    await server.send_update(ws)
+
+    trips = json.loads(ws.send.call_args[0][0])["data"]["trips"]
+    assert len(trips) == 1
+    assert trips[0]["isRealtime"] is False
 
 
 @pytest.mark.asyncio

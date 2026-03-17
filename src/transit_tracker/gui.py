@@ -65,6 +65,31 @@ class TransitTrackerApp(rumps.App):
         self.profile_previews: Dict[str, List[dict]] = {}  # path -> trips (one-shot)
         self.cache_lock = threading.Lock()
 
+        # Populate profiles menu immediately so it's not "Loading..." on first open
+        try:
+            profiles = list_profiles()
+            active = get_last_config_path()
+            if profiles:
+                self.profiles_menu.clear()
+                for p_path in profiles:
+                    filename = os.path.basename(p_path)
+                    is_active = p_path == active
+                    prefix = "● " if is_active else "  "
+                    item = rumps.MenuItem(f"{prefix}{filename}")
+                    item.set_callback(self.switch_profile)
+                    item.p_path = p_path
+                    item.state = 1 if is_active else 0
+                    try:
+                        cfg = TransitConfig.load(p_path)
+                        for sub in cfg.subscriptions:
+                            item.add(rumps.MenuItem(f"{sub.label}: ..."))
+                    except Exception:
+                        item.add(rumps.MenuItem("Loading trips..."))
+                    self.profiles_menu.add(item)
+                self.last_profiles = profiles
+        except Exception:
+            pass
+
         self.timer = rumps.Timer(self.update_state, 2)
         self.timer.start()
 

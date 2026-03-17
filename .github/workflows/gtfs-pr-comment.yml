@@ -1,0 +1,36 @@
+name: Post GTFS setup comment
+
+on:
+  push:
+    branches: ["claude/add-gtfs-schedule-data-1NMdE"]
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post GTFS download instructions to PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 38,
+              body: `@tommyroar — \`data/gtfs_index.sqlite\` is excluded from the repo (see \`.gitignore\`). After cloning, build it locally with:
+
+            \`\`\`bash
+            # Downloads GTFS feeds (~200–400 MB total) and builds the SQLite index
+            uv run python scripts/download_gtfs.py
+            \`\`\`
+
+            This fetches public GTFS data from three agencies:
+
+            | Agency | Feed URL |
+            |--------|----------|
+            King County Metro | https://metro.kingcounty.gov/GTFS/google_transit.zip |
+            Sound Transit Rail | https://www.soundtransit.org/GTFS/ST_google_transit.zip |
+            Washington State Ferries | https://data.wsdot.wa.gov/GTFS/WSFferry_GTFS.zip |
+
+            Output: \`data/gtfs_index.sqlite\` (~150–300 MB). Once present, \`TransitServer\` serves scheduled trips immediately on client connect before the OBA cache warms up. The file size exceeds GitHub's 100 MB per-file limit, so it must be generated locally — no LFS needed.`
+            });
+            console.log('Comment posted to PR #38');

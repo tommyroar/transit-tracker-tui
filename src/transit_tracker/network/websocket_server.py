@@ -10,6 +10,7 @@ import websockets
 
 from ..config import TransitConfig, get_last_config_path
 from ..display import format_trip_line
+from ..gtfs_schedule import GTFSSchedule
 from ..transit_api import TransitAPI
 
 SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "service_state.json")
@@ -74,6 +75,9 @@ class TransitServer:
         self.throttle_session_start = time.time()
         self.api_calls_total = 0         # lifetime OBA API calls
         self.throttle_log_file = os.path.join(os.path.dirname(SERVICE_STATE_FILE), "throttle_log.jsonl")
+
+        # GTFS static schedule fallback (None if DB not built yet)
+        self.gtfs = GTFSSchedule()
 
     def sync_state(self, last_message=None):
         """Updates the shared state file for the GUI/TUI to consume."""
@@ -312,6 +316,23 @@ class TransitServer:
                 # Note: We use a non-raising version for broadcast so it doesn't fail the loop
                 if clean_stop_id in self.cache:
                     arrivals = self.cache[clean_stop_id][1]
+                elif self.gtfs is not None and self.gtfs.is_available():
+                    # Cache miss — use GTFS static schedule as immediate fallback
+                    route_ids = {self.normalize_id(s.get("routeId", "")) for s in stop_subs}
+                    arrivals = self.gtfs.get_next_departures(
+                        stop_id=clean_stop_id,
+                        route_ids=route_ids,
+                        now=time.time(),
+                        count=10,
+                    )
+                    # GTFS returns bare (un-prefixed) route IDs; restore the agency prefix
+                    # from the stop_id so the route is_match check below works correctly.
+                    agency_pfx = clean_stop_id.split("_", 1)[0] if "_" in clean_stop_id and clean_stop_id.split("_", 1)[0].isdigit() else ""
+                    if agency_pfx:
+                        for arr in arrivals:
+                            r = arr.get("routeId", "")
+                            if r and "_" not in r:
+                                arr["routeId"] = f"{agency_pfx}_{r}"
                 else:
                     # Cache miss — data_refresh_loop will populate shortly; skip for now
                     arrivals = []

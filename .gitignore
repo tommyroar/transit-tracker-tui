@@ -22,3 +22,7 @@ wheels/
 
 # Local configuration
 .local/
+
+# GTFS static data (large files, built by scripts/download_gtfs.py)
+data/gtfs/
+data/gtfs_index.sqlite

@@ -27,6 +27,14 @@ uv run ruff format .
 ./scripts/ci_local.sh   # sync deps → test → verify launch → build
 ```
 
+### GTFS static schedule (optional, enables offline/wake-up fallback)
+```bash
+uv run python scripts/download_gtfs.py   # downloads ~200-400 MB; run once after cloning
+```
+Downloads GTFS feeds for King County Metro, Sound Transit Rail, and Washington State Ferries,
+then builds `data/gtfs_index.sqlite`. When the DB exists, `TransitServer` serves scheduled
+trips immediately on client connect (before the OBA cache is warm).
+
 ### Install / run
 ```bash
 uv tool install .       # installs `transit-tracker` CLI to PATH

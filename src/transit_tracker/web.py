@@ -387,6 +387,12 @@ def generate_spec_html(spec_json: str) -> str:
   .nav a {{ font-size: 13px; color: #666; text-decoration: none;
             padding: 4px 10px; border-radius: 4px; background: #e2e8f0; }}
   .nav a:hover {{ background: #f58220; color: #fff; }}
+  .seq {{ margin: 20px 0; overflow-x: auto; }}
+  .seq pre {{ background: #1e293b; color: #e2e8f0; padding: 24px; border-radius: 8px;
+              font-size: 13px; line-height: 1.6; white-space: pre; }}
+  .seq .actor {{ color: #f58220; font-weight: 600; }}
+  .seq .msg {{ color: #7dd3fc; }}
+  .seq .note {{ color: #94a3b8; font-style: italic; }}
 </style>
 </head>
 <body>
@@ -401,6 +407,7 @@ def generate_spec_html(spec_json: str) -> str:
 <p>{info['description']}</p>
 
 <div class="nav">
+  <a href="#sequence">Sequence</a>
   <a href="#config">Config</a>
   <a href="#subscribe">Subscribe</a>
   <a href="#schedule">Schedule</a>
@@ -408,6 +415,41 @@ def generate_spec_html(spec_json: str) -> str:
   <a href="#ferry">Ferry</a>
   <a href="#rate-limiting">Rate Limiting</a>
 </div>
+
+<h2 id="sequence">Protocol Sequence</h2>
+<div class="seq"><pre>
+<span class="actor">ESP32</span>                      <span class="actor">Transit Server (:8000)</span>              <span class="actor">OneBusAway API</span>
+  │                              │                                  │
+  │──── WebSocket connect ──────▶│                                  │
+  │                              │                                  │
+  │──── <span class="msg">schedule:subscribe</span> ────▶│                                  │
+  │     routeStopPairs=          │                                  │
+  │     "40_100240,1_8494,0;     │                                  │
+  │      95_73,95_3,0"           │                                  │
+  │                              │                                  │
+  │                              │──── GET /arrivals-for-stop ─────▶│
+  │                              │                                  │
+  │                              │◀─── arrivals JSON ──────────────│
+  │                              │                                  │
+  │                              │  <span class="note">┌─────────────────────────────┐</span>
+  │                              │  <span class="note">│ Apply ferry direction filter │</span>
+  │                              │  <span class="note">│ Map vessel names (vehicleId) │</span>
+  │                              │  <span class="note">│ Apply route abbreviations    │</span>
+  │                              │  <span class="note">│ Apply time offsets            │</span>
+  │                              │  <span class="note">│ Sort by arrivalTime           │</span>
+  │                              │  <span class="note">└─────────────────────────────┘</span>
+  │                              │                                  │
+  │◀──── <span class="msg">schedule</span> ──────────────│                                  │
+  │      trips: [...]            │                                  │
+  │                              │                                  │
+  │  <span class="note">display_mins =</span>              │        <span class="note">every {config['check_interval_seconds']}s</span>
+  │  <span class="note">(arrivalTime - now) / 60</span>     │──── GET /arrivals-for-stop ─────▶│
+  │                              │◀─── arrivals JSON ──────────────│
+  │◀──── <span class="msg">schedule</span> ──────────────│                                  │
+  │                              │                                  │
+  │◀──── <span class="msg">heartbeat</span> ─────────────│        <span class="note">every 10s</span>
+  │                              │                                  │
+</pre></div>
 
 <h2 id="config">Current Configuration</h2>
 <div class="config-grid">

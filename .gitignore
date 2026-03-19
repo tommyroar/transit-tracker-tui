@@ -26,3 +26,4 @@ wheels/
 # GTFS static data (large files, built by scripts/download_gtfs.py)
 data/gtfs/
 data/gtfs_index.sqlite
+data/route_map.html

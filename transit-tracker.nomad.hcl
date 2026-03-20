@@ -21,46 +21,36 @@ job "transit-tracker" {
       mode     = "delay"
     }
 
-    task "websocket-server" {
+    task "transit-tracker" {
       driver = "raw_exec"
 
       env {
-        PATH = "/Users/tommydoerr/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        PATH          = "/Users/tommydoerr/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        DOCKER_HOST   = "unix:///Users/tommydoerr/.orbstack/run/docker.sock"
       }
 
       config {
         command = "/bin/bash"
         args = [
           "-c",
-          "cd /Users/tommydoerr/dev/transit_tracker && exec uv run transit-tracker service",
+          <<-EOF
+          # Stop and remove any existing container
+          docker rm -f transit-tracker 2>/dev/null || true
+
+          # Run the container in foreground (Nomad manages lifecycle)
+          exec docker run --rm \
+            --name transit-tracker \
+            -p 8000:8000 \
+            -p 8081:8080 \
+            -v /Users/tommydoerr/dev/transit_tracker/.local/home.yaml:/config/config.yaml:ro \
+            transit-tracker:latest
+          EOF
         ]
       }
 
       resources {
-        cpu    = 200
-        memory = 256
-      }
-    }
-
-    task "web-server" {
-      driver = "raw_exec"
-
-      env {
-        PATH = "/Users/tommydoerr/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-        PORT = "8081"
-      }
-
-      config {
-        command = "/bin/bash"
-        args = [
-          "-c",
-          "cd /Users/tommydoerr/dev/transit_tracker && exec uv run transit-tracker web",
-        ]
-      }
-
-      resources {
-        cpu    = 100
-        memory = 128
+        cpu    = 300
+        memory = 384
       }
     }
   }

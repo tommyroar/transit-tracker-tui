@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Transit Tracker Web",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "transit_tracker.cli",
+      "args": ["web"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "console": "internalConsole"
+    }
+  ]
+}

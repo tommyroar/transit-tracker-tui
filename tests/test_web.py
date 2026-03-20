@@ -279,17 +279,11 @@ def test_api_spec_has_rate_limiting(mock_config):
 # --- Index Page ---
 
 
-def test_index_html_lists_pages():
-    """Index page contains links to all registered pages."""
-    pages = [
-        {"path": "/api/spec", "name": "API Spec", "description": "API docs"},
-        {"path": "/api/stops", "name": "Stops", "description": "Stop data"},
-    ]
-    html = generate_index_html(pages)
-    assert "/api/spec" in html
-    assert "API Spec" in html
-    assert "/api/stops" in html
-    assert "Stops" in html
+def test_index_html_has_leaflet_map():
+    """Index page renders a full-screen Leaflet map."""
+    html = generate_index_html([])
+    assert "leaflet" in html.lower()
+    assert 'id="map"' in html
 
 
 def test_index_html_has_transit_tracker_title():

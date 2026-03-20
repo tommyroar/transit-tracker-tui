@@ -526,34 +526,163 @@ def generate_spec_html(spec_json: str) -> str:
 </html>"""
 
 
-def generate_index_html(pages: List[Dict[str, str]]) -> str:
-    """Generate an index page listing available web pages."""
-    links = "".join(
-        f'<li><a href="{p["path"]}">{p["name"]}</a> — {p["description"]}</li>'
-        for p in pages
-    )
+def generate_index_html(pages: List[Dict[str, str]], stops: List[Dict[str, Any]] = None) -> str:
+    """Generate a full-screen Leaflet index map bounded to the WSDOT service area.
+
+    WSF terminals are embedded as JSON. Light rail stations are fetched from
+    /stations.geojson at runtime and show a walkshed popover on click.
+    """
+    wsf_stops_json = json.dumps(stops or [])
+    bounds_js = "[[47.0, -124.0], [49.0, -121.5]]"
+
     return f"""<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Transit Tracker</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
-  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-         max-width: 600px; margin: 60px auto; padding: 0 20px; color: #1a202c; }}
-  h1 {{ margin-bottom: 8px; }}
-  p {{ color: #666; margin-bottom: 24px; }}
-  ul {{ list-style: none; padding: 0; }}
-  li {{ margin-bottom: 12px; }}
-  a {{ color: #f58220; text-decoration: none; font-weight: 600; font-size: 18px; }}
-  a:hover {{ text-decoration: underline; }}
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  html, body, #map {{ height: 100%; width: 100%; }}
+  #modal-overlay {{
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.5); z-index: 1000;
+    align-items: center; justify-content: center;
+  }}
+  #modal-overlay.open {{ display: flex; }}
+  #modal {{
+    background: #fff; border-radius: 10px;
+    width: min(480px, 92vw); height: min(480px, 80vh);
+    overflow: hidden; position: relative;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  }}
+  #modal-title {{
+    position: absolute; top: 12px; left: 14px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px; font-weight: 600; color: #1a202c;
+    background: rgba(255,255,255,0.9); padding: 4px 8px;
+    border-radius: 4px; z-index: 10;
+  }}
+  #modal-close {{
+    position: absolute; top: 10px; right: 10px;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: rgba(255,255,255,0.9); border: none;
+    font-size: 16px; cursor: pointer; z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+  }}
+  #modal-map {{ width: 100%; height: 100%; }}
 </style>
 </head>
 <body>
-  <h1>Transit Tracker</h1>
-  <p>Available pages:</p>
-  <ul>{links}</ul>
+<div id="map"></div>
+<div id="modal-overlay">
+  <div id="modal">
+    <div id="modal-title"></div>
+    <button id="modal-close" aria-label="Close">✕</button>
+    <div id="modal-map"></div>
+  </div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const WSF_STOPS = {wsf_stops_json};
+const HIGHLIGHT = '#f58220';
+const RAIL_COLOR = '#28813F';
+
+const map = L.map('map');
+L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  maxZoom: 19,
+}}).addTo(map);
+map.fitBounds({bounds_js});
+
+WSF_STOPS.forEach(stop => {{
+  L.circleMarker([stop.lat, stop.lon], {{
+    radius: 6, color: HIGHLIGHT, fillColor: HIGHLIGHT,
+    fillOpacity: 0.8, weight: 1.5,
+  }}).bindTooltip(stop.name).addTo(map);
+}});
+
+// Fetch static GeoJSON and plot rail stations
+fetch('/stations.geojson')
+  .then(r => r.json())
+  .then(geojson => {{
+    geojson.features.forEach(feature => {{
+      const [lon, lat] = feature.geometry.coordinates;
+      const props = feature.properties;
+      L.circleMarker([lat, lon], {{
+        radius: 6, color: RAIL_COLOR, fillColor: RAIL_COLOR,
+        fillOpacity: 0.85, weight: 1.5,
+      }}).bindTooltip(props.name).addTo(map)
+        .on('click', () => openWalkshed(props, lat, lon));
+    }});
+  }});
+
+// --- Walkshed modal ---
+let modalMap = null;
+
+function openWalkshed(props, lat, lon) {{
+  document.getElementById('modal-title').textContent = props.name;
+  document.getElementById('modal-overlay').classList.add('open');
+
+  if (!modalMap) {{
+    modalMap = L.map('modal-map');
+    L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      maxZoom: 19,
+    }}).addTo(modalMap);
+  }}
+
+  modalMap.eachLayer(layer => {{
+    if (!(layer instanceof L.TileLayer)) modalMap.removeLayer(layer);
+  }});
+
+  // Draw walkshed polygon from pre-calculated GeoJSON geometry
+  L.geoJSON(props.walkshed, {{
+    style: {{ color: RAIL_COLOR, fillColor: RAIL_COLOR, weight: 1.5, opacity: 0.6, fillOpacity: 0.15 }},
+  }}).addTo(modalMap);
+
+  L.circleMarker([lat, lon], {{
+    radius: 7, color: RAIL_COLOR, fillColor: RAIL_COLOR, fillOpacity: 1, weight: 2,
+  }}).bindTooltip(props.name, {{ permanent: true, direction: 'top' }}).addTo(modalMap);
+
+  modalMap.setView([lat, lon], 15);
+  setTimeout(() => modalMap.invalidateSize(), 50);
+}}
+
+document.getElementById('modal-close').addEventListener('click', () => {{
+  document.getElementById('modal-overlay').classList.remove('open');
+}});
+document.getElementById('modal-overlay').addEventListener('click', e => {{
+  if (e.target === document.getElementById('modal-overlay'))
+    document.getElementById('modal-overlay').classList.remove('open');
+}});
+</script>
 </body>
 </html>"""
+
+
+
+def build_stations_geojson() -> str:
+    """Load pre-built stations GeoJSON from data/stations.geojson.
+
+    Generate it first with: uv run python scripts/build_stations_geojson.py
+    """
+    path = _PROJECT_ROOT / "data" / "stations.geojson"
+    if not path.exists():
+        print("[WEB] WARNING: data/stations.geojson not found — run scripts/build_stations_geojson.py")
+        return json.dumps({"type": "FeatureCollection", "features": []})
+    return path.read_text()
+
+
+
+
+
+
+
+
+
+
 
 def resolve_route_polylines(config: TransitConfig) -> List[Dict[str, Any]]:
     """Return route polylines from local GTFS shapes for configured subscriptions.
@@ -647,13 +776,16 @@ def generate_walkshed_html(
     stops: List[Dict[str, Any]],
     routes: List[Dict[str, Any]] = None,
 ) -> str:
-    """Generate a self-contained HTML walkshed map using Leaflet + OpenRouteService isochrones.
+    """Generate a self-contained HTML walkshed map using Leaflet.
 
-    No API token required. Isochrones are fetched from the free ORS public API.
+    Draws a single circle per stop representing the worst-case 10-minute
+    walk radius (480m = 10min × 60s × 0.8 m/s slow pedestrian speed).
     Route polylines come from local GTFS shapes data.
     """
     stops_json = json.dumps(stops)
     routes_json = json.dumps(routes or [])
+    # 10 min × 60s × 0.8 m/s (slow pedestrian worst-case)
+    walk_radius_m = 10 * 60 * 0.8
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -672,68 +804,60 @@ def generate_walkshed_html(
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   }}
   .legend b {{ display: block; margin-bottom: 4px; color: #fff; }}
-  .swatch {{
-    display: inline-block; width: 16px; height: 10px;
-    border-radius: 2px; margin-right: 6px; vertical-align: middle;
-  }}
   .route-swatch {{
     display: inline-block; width: 16px; height: 3px;
     border-radius: 1px; margin-right: 6px; vertical-align: middle;
-  }}
-  #loading {{
-    position: fixed; top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    background: rgba(20,20,30,0.9); color: #fff;
-    padding: 20px 30px; border-radius: 8px;
-    font-size: 16px; z-index: 9999;
   }}
 </style>
 </head>
 <body>
 <div id="map"></div>
-<div id="loading">Loading walksheds...</div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const STOPS = {stops_json};
 const ROUTES = {routes_json};
 const HIGHLIGHT = '#f58220';
+const WALK_RADIUS_M = {walk_radius_m};  // 10 min worst-case walk
 
-const center = STOPS.length
-  ? [STOPS[0].lat, STOPS[0].lon]
-  : [47.6062, -122.3321];
-
+const center = STOPS.length ? [STOPS[0].lat, STOPS[0].lon] : [47.6062, -122.3321];
 const map = L.map('map').setView(center, 14);
 L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
   attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   maxZoom: 19,
 }}).addTo(map);
 
-// Fit to all stops
 if (STOPS.length > 1) {{
-  const bounds = L.latLngBounds(STOPS.map(s => [s.lat, s.lon]));
-  map.fitBounds(bounds, {{ padding: [60, 60] }});
+  map.fitBounds(L.latLngBounds(STOPS.map(s => [s.lat, s.lon])), {{ padding: [60, 60] }});
 }}
 
-// Draw route polylines from GTFS
 ROUTES.forEach(route => {{
   route.polylines.forEach(coords => {{
-    L.polyline(coords, {{
-      color: route.color || '#888',
-      weight: 3,
-      opacity: 0.7,
-    }}).addTo(map);
+    L.polyline(coords, {{ color: route.color || '#888', weight: 3, opacity: 0.7 }}).addTo(map);
   }});
 }});
 
-// Legend
+STOPS.forEach(stop => {{
+  L.circle([stop.lat, stop.lon], {{
+    radius: WALK_RADIUS_M,
+    color: HIGHLIGHT,
+    fillColor: HIGHLIGHT,
+    weight: 1.5,
+    opacity: 0.6,
+    fillOpacity: 0.15,
+  }}).addTo(map);
+
+  L.marker([stop.lat, stop.lon])
+    .bindPopup(`<b>${{stop.label}}</b><br>ID: ${{stop.stop_id}}`)
+    .addTo(map);
+}});
+
 const legend = L.control({{ position: 'bottomright' }});
 legend.onAdd = () => {{
   const div = L.DomUtil.create('div', 'legend');
-  div.innerHTML =
-    '<b>Walk Time</b>' +
-    `<div><span class="swatch" style="background:rgba(245,130,32,0.5)"></span>5 min</div>` +
-    `<div><span class="swatch" style="background:rgba(245,130,32,0.3)"></span>10 min</div>` +
-    `<div><span class="swatch" style="background:rgba(245,130,32,0.15)"></span>15 min</div>`;
+  div.innerHTML = `<b>10-min walk</b><div style="display:flex;align-items:center;gap:8px">` +
+    `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;` +
+    `background:rgba(245,130,32,0.15);border:1.5px solid rgba(245,130,32,0.6)"></span>` +
+    `<span>480m radius</span></div>`;
   if (ROUTES.length) {{
     div.innerHTML += '<b style="margin-top:8px;display:block">Routes</b>';
     ROUTES.forEach(r => {{
@@ -743,77 +867,10 @@ legend.onAdd = () => {{
   return div;
 }};
 legend.addTo(map);
-
-// Fetch isochrones from OpenRouteService (free, no token)
-const CONTOURS = [
-  {{ minutes: 15, fillOpacity: 0.15 }},
-  {{ minutes: 10, fillOpacity: 0.30 }},
-  {{ minutes: 5,  fillOpacity: 0.50 }},
-];
-
-async function loadWalkshed(stop, i) {{
-  if (i > 0) await new Promise(r => setTimeout(r, 300));
-  try {{
-    const resp = await fetch(
-      `https://api.openrouteservice.org/v2/isochrones/foot-walking`,
-      {{
-        method: 'POST',
-        headers: {{ 'Content-Type': 'application/json', 'Accept': 'application/json, application/geo+json' }},
-        body: JSON.stringify({{
-          locations: [[stop.lon, stop.lat]],
-          range: [900, 600, 300],  // 15, 10, 5 min in seconds
-          range_type: 'time',
-        }}),
-      }}
-    );
-    if (!resp.ok) throw new Error(`ORS ${{resp.status}}`);
-    const data = await resp.json();
-
-    data.features.forEach((feature, fi) => {{
-      const contour = CONTOURS[fi];
-      if (!contour) return;
-      // GeoJSON coords are [lon, lat], Leaflet wants [lat, lon]
-      const latlngs = feature.geometry.coordinates[0].map(([lon, lat]) => [lat, lon]);
-      L.polygon(latlngs, {{
-        color: HIGHLIGHT,
-        fillColor: HIGHLIGHT,
-        weight: 1.5,
-        opacity: 0.6,
-        fillOpacity: contour.fillOpacity,
-      }}).addTo(map);
-    }});
-  }} catch (err) {{
-    console.warn(`Walkshed failed for ${{stop.name}}:`, err);
-    // Fallback: draw approximate circles (400m ≈ 5min walk)
-    [900, 600, 300].forEach((secs, fi) => {{
-      L.circle([stop.lat, stop.lon], {{
-        radius: secs * 1.2,  // ~1.2 m/s walking
-        color: HIGHLIGHT,
-        fillColor: HIGHLIGHT,
-        weight: 1,
-        opacity: 0.4,
-        fillOpacity: CONTOURS[fi].fillOpacity * 0.6,
-      }}).addTo(map);
-    }});
-  }}
-
-  L.marker([stop.lat, stop.lon])
-    .bindPopup(`<b>${{stop.label}}</b><br>ID: ${{stop.stop_id}}`)
-    .addTo(map);
-
-  document.getElementById('loading').textContent =
-    `Loading walksheds... (${{i + 1}}/${{STOPS.length}})`;
-}}
-
-(async () => {{
-  for (let i = 0; i < STOPS.length; i++) {{
-    await loadWalkshed(STOPS[i], i);
-  }}
-  document.getElementById('loading').style.display = 'none';
-}})();
 </script>
 </body>
 </html>"""
+
 
 
 def generate_simulator_html(config: TransitConfig) -> str:
@@ -912,7 +969,9 @@ class TransitWebHandler(BaseHTTPRequestHandler):
         content = self.routes.get(path)
         if content is not None:
             content_type = (
-                "application/json" if path.startswith("/api/") else "text/html"
+                "application/geo+json" if path.endswith(".geojson")
+                else "application/json" if path.startswith("/api/")
+                else "text/html"
             )
             self.send_response(200)
             self.send_header("Content-Type", f"{content_type}; charset=utf-8")
@@ -945,6 +1004,24 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
     routes = resolve_route_polylines(config)
     print(f"[WEB] Loaded {len(routes)} route shapes")
 
+    # Load WSF terminal locations from GTFS for the index map
+    wsf_stops: List[Dict[str, Any]] = []
+    wsf_stops_path = _GTFS_DIR / "95" / "stops.txt"
+    if wsf_stops_path.exists():
+        with open(wsf_stops_path) as f:
+            for row in csv.DictReader(f):
+                wsf_stops.append({
+                    "name": row["stop_name"],
+                    "lat": float(row["stop_lat"]),
+                    "lon": float(row["stop_lon"]),
+                })
+
+    print("[WEB] Loading stations GeoJSON...")
+    stations_geojson = build_stations_geojson()
+    stations_path = _PROJECT_ROOT / "data" / "stations.geojson"
+    stations_path.write_text(stations_geojson)
+    print(f"[WEB] Written {stations_path}")
+
     spec_json = generate_api_spec(config)
     spec_html = generate_spec_html(spec_json)
     simulator_html = generate_simulator_html(config)
@@ -958,7 +1035,7 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
         {"path": "/api/spec", "name": "API Spec (JSON)", "description": "Raw JSON specification with example payloads"},
         {"path": "/api/stops", "name": "Stops", "description": "Configured stop coordinates as JSON"},
     ]
-    index_html = generate_index_html(pages)
+    index_html = generate_index_html(pages, wsf_stops)
 
     TransitWebHandler.routes = {
         "/": index_html,
@@ -967,6 +1044,7 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
         "/spec": spec_html,
         "/api/spec": spec_json,
         "/api/stops": stops_json,
+        "/stations.geojson": stations_geojson,
     }
 
     server = HTTPServer((host, port), TransitWebHandler)

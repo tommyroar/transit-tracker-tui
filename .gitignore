@@ -27,3 +27,4 @@ wheels/
 data/gtfs/
 data/gtfs_index.sqlite
 data/route_map.html
+data/stations.geojson

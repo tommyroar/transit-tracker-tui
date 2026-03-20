@@ -551,9 +551,17 @@ class TransitWebHandler(BaseHTTPRequestHandler):
     """HTTP request handler with a routes dict for extensibility."""
 
     routes: Dict[str, str] = {}
+    dynamic_routes: set = set()
 
     def do_GET(self):
         path = self.path.split("?")[0].rstrip("/") or "/"
+
+        # Dynamic routes (read fresh on each request)
+        if path in self.dynamic_routes:
+            if path == "/api/status":
+                self._serve_status()
+                return
+
         content = self.routes.get(path)
         if content is not None:
             content_type = (
@@ -572,6 +580,27 @@ class TransitWebHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         print(f"[WEB] {args[0]}")
+
+    def _serve_status(self):
+        """Serve live service state from the shared state file."""
+        from .network.websocket_server import SERVICE_STATE_FILE
+        try:
+            if os.path.exists(SERVICE_STATE_FILE):
+                with open(SERVICE_STATE_FILE, "r") as f:
+                    state = json.load(f)
+                # Strip last_message to keep the response lean
+                state.pop("last_message", None)
+                body = json.dumps(state)
+            else:
+                body = json.dumps({"status": "unavailable"})
+        except Exception:
+            body = json.dumps({"status": "error"})
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body.encode("utf-8"))
 
 
 async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None):
@@ -607,6 +636,11 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
             "name": "Stops",
             "description": "Configured stop coordinates as JSON",
         },
+        {
+            "path": "/api/status",
+            "name": "Status",
+            "description": "Live service state (clients, rate limits, uptime)",
+        },
     ]
     index_html = generate_index_html(pages)
 
@@ -616,6 +650,8 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
         "/api/spec": spec_json,
         "/api/stops": stops_json,
     }
+    # /api/status is dynamic — served from the state file on each request
+    TransitWebHandler.dynamic_routes = {"/api/status"}
 
     server = HTTPServer((host, port), TransitWebHandler)
     print(f"[WEB] Transit Tracker web server at http://{host}:{port}")

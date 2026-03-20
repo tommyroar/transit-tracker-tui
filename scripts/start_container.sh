@@ -59,9 +59,10 @@ fi
 
 # ---- Run container ----
 if [ "$DETACH" = true ]; then
-    echo "Starting container '$CONTAINER_NAME' (detached)..."
+    echo "Starting container '$CONTAINER_NAME' (detached, restart=always)..."
     docker run -d \
         --name "$CONTAINER_NAME" \
+        --restart=always \
         -p "$WS_PORT:$WS_PORT" \
         -p "$HTTP_PORT:$HTTP_PORT" \
         -v "$CONFIG_PATH:/config/config.yaml:ro" \

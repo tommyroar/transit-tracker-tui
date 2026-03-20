@@ -4,6 +4,7 @@ import re
 import subprocess
 import threading
 import time
+import urllib.request
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -19,6 +20,32 @@ from .network.websocket_server import (
 )
 from .display import format_trip_line  # noqa: F401 — re-exported for backwards compat
 from .transit_api import TransitAPI
+
+# Container status endpoint (Nomad maps container 8080 → host 8081)
+CONTAINER_STATUS_URL = "http://localhost:8081/api/status"
+CONTAINER_NAME = "transit-tracker"
+
+
+def _fetch_container_status() -> Optional[dict]:
+    """Poll the container's /api/status endpoint. Returns state dict or None."""
+    try:
+        req = urllib.request.Request(CONTAINER_STATUS_URL, method="GET")
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            data = json.loads(resp.read())
+            if data.get("status") != "unavailable":
+                return data
+    except Exception:
+        pass
+    return None
+
+
+def _is_container_running() -> bool:
+    """Check if the transit-tracker Docker container is running."""
+    res = subprocess.run(
+        ["docker", "inspect", "-f", "{{.State.Running}}", CONTAINER_NAME],
+        capture_output=True, text=True,
+    )
+    return res.returncode == 0 and "true" in res.stdout.lower()
 
 
 class TransitTrackerApp(rumps.App):
@@ -44,6 +71,12 @@ class TransitTrackerApp(rumps.App):
         self.restart_item = rumps.MenuItem("Restart Transit Tracker Proxy", callback=self.restart_service)
         self.shutdown_item = rumps.MenuItem("Shutdown Transit Tracker Proxy", callback=self.quit_app)
         
+        # Container monitoring
+        self.container_menu = rumps.MenuItem("🐳 Container: Checking...")
+        self.container_menu.add(rumps.MenuItem("Checking..."))
+        self.container_restart_item = rumps.MenuItem("Restart Container", callback=self.restart_container)
+        self.container_stop_item = rumps.MenuItem("Stop Container", callback=self.stop_container)
+        
         # 2. Set the initial menu structure
         self.menu = [
             self.status_item,
@@ -53,6 +86,10 @@ class TransitTrackerApp(rumps.App):
             rumps.separator,
             self.profiles_menu,
             self.clients_menu,
+            rumps.separator,
+            self.container_menu,
+            self.container_restart_item,
+            self.container_stop_item,
             rumps.separator,
             self.restart_item,
             self.shutdown_item
@@ -102,6 +139,8 @@ class TransitTrackerApp(rumps.App):
         self.is_rate_limited = False
         self.last_profiles = []
         self.last_update_ts = 0
+        self.container_state: Optional[dict] = None
+        self.last_container_client_ids = None
 
     def _update_trips(self, trips):
         """Update arrivals cache and display trips from a trip list."""
@@ -368,8 +407,84 @@ class TransitTrackerApp(rumps.App):
                 
                 self.last_client_ids = current_client_ids
 
+            # 6. Update Container Status
+            self._update_container_menu()
+
         except Exception:
             pass
+
+    def _update_container_menu(self):
+        """Poll the container's HTTP status endpoint and update the menu."""
+        cstate = _fetch_container_status()
+        self.container_state = cstate
+
+        if cstate is None:
+            self.container_menu.title = "🐳 Container: Stopped"
+            self.container_menu.clear()
+            self.container_menu.add(rumps.MenuItem("Not running"))
+            self.container_restart_item.title = "Start Container"
+            self.container_stop_item.title = "Stop Container"
+            return
+
+        # Container is alive — build submenu from its state
+        c_clients = cstate.get("client_count", 0)
+        c_uptime = cstate.get("uptime_hours", 0)
+        c_msgs = cstate.get("messages_processed", 0)
+        c_rate_limited = cstate.get("is_rate_limited", False)
+        c_throttle = cstate.get("throttle_total", 0)
+        c_api_calls = cstate.get("api_calls_total", 0)
+        c_throttle_rate = cstate.get("throttle_rate", 0)
+        c_interval = cstate.get("refresh_interval", 0)
+
+        icon = "📵" if c_rate_limited else "🐳"
+        self.container_menu.title = f"{icon} Container: Running ({c_clients} clients)"
+
+        self.container_menu.clear()
+
+        if c_uptime >= 1:
+            self.container_menu.add(rumps.MenuItem(f"Uptime: {c_uptime:.1f}h"))
+        else:
+            up_min = int(c_uptime * 60)
+            self.container_menu.add(rumps.MenuItem(f"Uptime: {up_min}m" if up_min >= 1 else "Uptime: <1m"))
+
+        self.container_menu.add(rumps.MenuItem(f"Messages: {c_msgs}"))
+        self.container_menu.add(rumps.MenuItem(f"Refresh Interval: {c_interval}s"))
+
+        if c_rate_limited:
+            self.container_menu.add(rumps.MenuItem(f"📵 Rate Limited — {c_throttle}/{c_api_calls} ({c_throttle_rate:.0%})"))
+        elif c_api_calls > 0:
+            self.container_menu.add(rumps.MenuItem(f"✅ Healthy — {c_throttle}/{c_api_calls} ({c_throttle_rate:.0%})"))
+        else:
+            self.container_menu.add(rumps.MenuItem("✅ API Healthy"))
+
+        # Container client list
+        c_client_details = cstate.get("clients", [])
+        if c_client_details:
+            self.container_menu.add(rumps.MenuItem("─────────────"))
+            for c in c_client_details:
+                name = c.get("name", "Unknown")
+                addr = c.get("address", "0.0.0.0").split(":")[0]
+                subs = c.get("subscriptions", 0)
+                self.container_menu.add(rumps.MenuItem(f"{name} ({addr}) [{subs} subs]"))
+
+        self.container_restart_item.title = "Restart Container"
+        self.container_stop_item.title = "Stop Container"
+
+    def restart_container(self, _):
+        """Restart the Docker container."""
+        rumps.notification("Transit Tracker", "Container", "Restarting container...")
+        threading.Thread(target=self._do_restart_container, daemon=True).start()
+
+    def _do_restart_container(self):
+        subprocess.run(["docker", "restart", CONTAINER_NAME], capture_output=True)
+
+    def stop_container(self, _):
+        """Stop the Docker container."""
+        rumps.notification("Transit Tracker", "Container", "Stopping container...")
+        threading.Thread(target=self._do_stop_container, daemon=True).start()
+
+    def _do_stop_container(self):
+        subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
 
     def switch_profile(self, sender):
         p_path = getattr(sender, "p_path", None)
@@ -384,37 +499,41 @@ class TransitTrackerApp(rumps.App):
         rumps.notification("Transit Tracker", "Profile Switched", f"Active: {os.path.basename(p_path)}")
 
     def restart_service(self, _):
-        """Restarts the background service via launchctl."""
-        label = PLIST_NAME.replace(".plist", "")
-        plist_path = os.path.expanduser(f"~/Library/LaunchAgents/{PLIST_NAME}")
-        
+        """Restarts the background service (container or launchctl)."""
         rumps.notification("Transit Tracker", "Service Restart", "Restarting background proxy...")
-        
-        if os.path.exists(plist_path):
-            subprocess.run(["launchctl", "unload", plist_path], capture_output=True)
-            time.sleep(1)
-            subprocess.run(["launchctl", "load", plist_path], capture_output=True)
+
+        if _is_container_running():
+            threading.Thread(target=lambda: subprocess.run(
+                ["docker", "restart", CONTAINER_NAME], capture_output=True
+            ), daemon=True).start()
         else:
-            # Fallback for manual restart if plist is missing
-            subprocess.run(["pkill", "-f", "transit-tracker service"], capture_output=True)
-            time.sleep(1)
-            subprocess.Popen([sys.executable, "-m", "transit_tracker.cli", "service"])
+            label = PLIST_NAME.replace(".plist", "")
+            plist_path = os.path.expanduser(f"~/Library/LaunchAgents/{PLIST_NAME}")
+            if os.path.exists(plist_path):
+                subprocess.run(["launchctl", "unload", plist_path], capture_output=True)
+                time.sleep(1)
+                subprocess.run(["launchctl", "load", plist_path], capture_output=True)
 
     def quit_app(self, _):
-        label = PLIST_NAME.replace(".plist", "")
-        plist_path = os.path.expanduser(f"~/Library/LaunchAgents/{PLIST_NAME}")
-        if os.path.exists(plist_path):
-            subprocess.run(["launchctl", "unload", plist_path], capture_output=True)
-        
-        if os.path.exists(SERVICE_STATE_FILE):
-            try:
-                with open(SERVICE_STATE_FILE, "r") as f:
-                    state = json.load(f)
-                pid = state.get("pid")
-                if pid:
-                    os.kill(pid, 15)
-            except Exception:
-                pass
+        if _is_container_running():
+            threading.Thread(target=lambda: subprocess.run(
+                ["docker", "stop", CONTAINER_NAME], capture_output=True
+            ), daemon=True).start()
+        else:
+            label = PLIST_NAME.replace(".plist", "")
+            plist_path = os.path.expanduser(f"~/Library/LaunchAgents/{PLIST_NAME}")
+            if os.path.exists(plist_path):
+                subprocess.run(["launchctl", "unload", plist_path], capture_output=True)
+
+            if os.path.exists(SERVICE_STATE_FILE):
+                try:
+                    with open(SERVICE_STATE_FILE, "r") as f:
+                        state = json.load(f)
+                    pid = state.get("pid")
+                    if pid:
+                        os.kill(pid, 15)
+                except Exception:
+                    pass
         rumps.quit_application()
 
 def main():

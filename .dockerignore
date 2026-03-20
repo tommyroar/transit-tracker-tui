@@ -1,0 +1,49 @@
+# Version control
+.git
+.gitignore
+
+# Tests and scripts
+tests/
+scripts/
+
+# Large GTFS data (downloaded at runtime or mounted)
+data/gtfs/
+data/gtfs_index.sqlite
+data/route_map.html
+data/stations.geojson
+
+# Virtual environments and caches
+.venv
+__pycache__/
+*.py[oc]
+.ruff_cache/
+.pytest_cache/
+.coverage
+
+# Build artifacts
+dist/
+build/
+*.egg-info
+
+# Dev config and local files
+.local/
+.kiro/
+.claude/
+.vscode/
+.github/
+.worktrees/
+.playwright-mcp/
+
+# Misc
+*.log
+.DS_Store
+.geminiignore
+CLAUDE.md
+GEMINI.md
+PLAN.md
+TESTING.md
+powers/
+docs/
+ferry_raw.json
+hardware_capture.json
+manual_service.log

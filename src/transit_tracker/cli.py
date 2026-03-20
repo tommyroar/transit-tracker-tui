@@ -12,117 +12,94 @@ from .tui import run_cli
 
 PLIST_NAME = "org.eastsideurbanism.transit-tracker.plist"
 PLIST_PATH = os.path.expanduser(f"~/Library/LaunchAgents/{PLIST_NAME}")
-NOMAD_JOB = "transit-tracker"
-NOMAD_JOB_FILE = os.path.expanduser(
-    "~/dev/transit_tracker/transit-tracker.nomad.hcl"
-)
+CONTAINER_NAME = "transit-tracker"
 
 
-def _nomad_available() -> bool:
-    """Check if Nomad agent is reachable."""
+def _container_running() -> bool:
+    """Check if the transit-tracker Docker container is running."""
     res = subprocess.run(
-        ["nomad", "status"], capture_output=True, text=True
-    )
-    return res.returncode == 0
-
-
-def _nomad_job_running() -> bool:
-    """Check if the transit-tracker Nomad job is running."""
-    res = subprocess.run(
-        ["nomad", "job", "status", "-short", NOMAD_JOB],
+        ["docker", "inspect", "-f", "{{.State.Running}}", CONTAINER_NAME],
         capture_output=True, text=True,
     )
-    return res.returncode == 0 and "running" in res.stdout.lower()
+    return res.returncode == 0 and "true" in res.stdout.lower()
 
 
 def get_service_status():
-    """Returns True if the service is running."""
-    if _nomad_available():
-        return _nomad_job_running()
-    # Fallback to launchctl
+    """Returns True if the service is running (container or launchctl)."""
+    if _container_running():
+        return True
     label = PLIST_NAME.replace(".plist", "")
     res = subprocess.run(["launchctl", "list", label], capture_output=True, text=True)
     return res.returncode == 0
 
 
 def manage_service(action: str):
-    if _nomad_available():
-        _manage_service_nomad(action)
+    """Manage the transit-tracker service.
+
+    Prefers Docker container management. Falls back to launchctl for
+    legacy non-containerised setups.
+    """
+    # If a container exists (running or stopped), manage via Docker
+    res = subprocess.run(
+        ["docker", "inspect", CONTAINER_NAME],
+        capture_output=True, text=True,
+    )
+    if res.returncode == 0:
+        _manage_service_docker(action)
     else:
         _manage_service_launchctl(action)
 
 
-def _manage_service_nomad(action: str):
+def _manage_service_docker(action: str):
     if action == "start":
-        if _nomad_job_running():
-            print(f"[yellow]Job {NOMAD_JOB} is already running.[/yellow]")
+        if _container_running():
+            print(f"[yellow]Container {CONTAINER_NAME} is already running.[/yellow]")
             return
-        job_file = os.path.normpath(NOMAD_JOB_FILE)
-        if not os.path.exists(job_file):
-            print(f"[red]Error: {job_file} not found.[/red]")
-            return
-        print(f"Starting {NOMAD_JOB} via Nomad...")
+        print(f"Starting container {CONTAINER_NAME}...")
         result = subprocess.run(
-            ["nomad", "job", "run", job_file],
+            ["docker", "start", CONTAINER_NAME],
             capture_output=True, text=True,
         )
         if result.returncode == 0:
-            print(f"[green]Job {NOMAD_JOB} started.[/green]")
+            print(f"[green]Container {CONTAINER_NAME} started.[/green]")
         else:
             print(f"[red]Failed to start: {result.stderr.strip()}[/red]")
 
     elif action == "stop":
-        print(f"Stopping {NOMAD_JOB} via Nomad...")
+        print(f"Stopping container {CONTAINER_NAME}...")
         subprocess.run(["pkill", "-f", "transit-tracker gui"], capture_output=True)
         result = subprocess.run(
-            ["nomad", "job", "stop", NOMAD_JOB],
+            ["docker", "stop", CONTAINER_NAME],
             capture_output=True, text=True,
         )
         if result.returncode == 0:
-            print(f"[green]Job {NOMAD_JOB} stopped.[/green]")
+            print(f"[green]Container {CONTAINER_NAME} stopped.[/green]")
         else:
             print(f"[red]Failed to stop: {result.stderr.strip()}[/red]")
 
     elif action == "restart":
         subprocess.run(["pkill", "-f", "transit-tracker gui"], capture_output=True)
-        job_file = os.path.normpath(NOMAD_JOB_FILE)
-        if not os.path.exists(job_file):
-            print(f"[red]Error: {job_file} not found.[/red]")
-            return
-        print(f"Restarting {NOMAD_JOB} via Nomad...")
-        # Re-run the job file to trigger a restart; if the job is running
-        # Nomad performs a rolling update. If stopped, it starts fresh.
+        print(f"Restarting container {CONTAINER_NAME}...")
         result = subprocess.run(
-            ["nomad", "job", "run", job_file],
+            ["docker", "restart", CONTAINER_NAME],
             capture_output=True, text=True,
         )
-        if result.returncode != 0:
+        if result.returncode == 0:
+            print(f"[green]Container {CONTAINER_NAME} restarted.[/green]")
+        else:
             print(f"[red]Failed to restart: {result.stderr.strip()}[/red]")
-            return
-        # Restart all allocations to force a clean process restart
-        alloc_result = subprocess.run(
-            ["nomad", "job", "allocs", "-t", "{{range .}}{{.ID}} {{end}}", NOMAD_JOB],
-            capture_output=True, text=True,
-        )
-        for alloc_id in alloc_result.stdout.strip().split():
-            subprocess.run(
-                ["nomad", "alloc", "restart", alloc_id],
-                capture_output=True, text=True,
-            )
-        print(f"Job {NOMAD_JOB} restarted.")
 
     elif action == "status":
-        result = subprocess.run(
-            ["nomad", "job", "status", NOMAD_JOB],
-            capture_output=True, text=True,
-        )
-        if result.returncode == 0 and "running" in result.stdout.lower():
-            print(f"● {NOMAD_JOB} is [bold green]running[/bold green]")
-            # Show allocation summary
-            for line in result.stdout.strip().split("\n")[-5:]:
-                print(f"  {line}")
+        if _container_running():
+            # Get uptime from container inspect
+            res = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.StartedAt}}", CONTAINER_NAME],
+                capture_output=True, text=True,
+            )
+            started = res.stdout.strip() if res.returncode == 0 else "unknown"
+            print(f"● {CONTAINER_NAME} is [bold green]running[/bold green] (since {started})")
         else:
-            print(f"○ {NOMAD_JOB} is [red]stopped[/red]")
+            print(f"○ {CONTAINER_NAME} is [red]stopped[/red]")
 
 
 def _manage_service_launchctl(action: str):

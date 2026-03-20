@@ -196,6 +196,18 @@ uv run transit-tracker-capture [path_to_image.jpg]
 - It performs a multi-scale search to find that exact pixel pattern in your photo.
 - It saves the result to `captures/capture_YYYYMMDD_HHMMSS.jpg`.
 
+## 🗺️ Route Map
+
+The project includes a script to generate an interactive route map from the GTFS static schedule data, covering all three agencies (King County Metro, Sound Transit, Washington State Ferries).
+
+```bash
+uv run python scripts/download_gtfs.py   # download & index GTFS data first
+uv run python scripts/build_route_map.py # generate the map
+open data/route_map.html
+```
+
+The output is a self-contained HTML file that renders 188 routes as color-coded polylines using [Leaflet.js](https://leafletjs.com/) — loaded from CDN at runtime, with no Python mapping library required. Each route is hoverable with its name and agency. The generated file is gitignored since it's a build artifact derived from the GTFS data.
+
 ## 🛠️ Development
 
 If you are developing or modifying the codebase, you can run the full test suite using:

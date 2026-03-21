@@ -69,6 +69,7 @@ if [ "$DETACH" = true ]; then
         -v "$CONFIG_PATH:/config/config.yaml:ro" \
         -v "$SERVICE_YAML:/config/service.yaml" \
         -e SERVICE_SETTINGS_PATH=/config/service.yaml \
+        -e TZ=America/Los_Angeles \
         "$IMAGE_NAME"
 
     # Wait for WebSocket port to accept connections (up to 60s)
@@ -97,5 +98,6 @@ else
         -v "$CONFIG_PATH:/config/config.yaml:ro" \
         -v "$SERVICE_YAML:/config/service.yaml" \
         -e SERVICE_SETTINGS_PATH=/config/service.yaml \
+        -e TZ=America/Los_Angeles \
         "$IMAGE_NAME"
 fi

@@ -3,15 +3,19 @@ import json
 import os
 import random
 import time
-from typing import Any, Dict, List, Set, Tuple
 from collections import defaultdict
+from typing import Any, Dict
 
 import websockets
 
 from ..config import TransitConfig, get_last_config_path
 from ..display import format_trip_line
 from ..gtfs_schedule import GTFSSchedule
+from ..logging import get_logger, is_message_logging_enabled
+from ..metrics import metrics
 from ..transit_api import TransitAPI
+
+log = get_logger("transit_tracker.server")
 
 SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "service_state.json")
 
@@ -54,18 +58,18 @@ class TransitServer:
         self.subscriptions = {} # ws -> List[Dict] (pairs)
         self.client_names = {} # ws -> str
         self.client_limits = {} # ws -> int
-        
+
         # Centralized cache for arrivals
         # stop_id -> (timestamp, List[arrivals])
         self.cache = {}
         self.rate_limited_stops = set() # Stops currently hitting 429
         self.rate_limit_until = {} # stop_id -> timestamp when retry is allowed
-        
+
         # Exponential Backoff State
         self.base_interval = self.config.check_interval_seconds
         self.current_refresh_interval = self.base_interval
         self.max_refresh_interval = 600 # 10 minutes max backoff
-        
+
         self.messages_processed = 0
         self.start_time = time.time()
         self.last_broadcast_time = 0
@@ -78,6 +82,20 @@ class TransitServer:
 
         # GTFS static schedule fallback (None if DB not built yet)
         self.gtfs = GTFSSchedule()
+
+        # Sync initial gauge values
+        metrics.refresh_interval.set(self.current_refresh_interval)
+
+    def _record_metrics_snapshot(self):
+        """Push current gauge values into the time-series ring buffers."""
+        now = time.time()
+        metrics.active_clients.set(len(self.clients))
+        metrics.active_clients_ts.record(len(self.clients), now)
+        metrics.refresh_interval.set(self.current_refresh_interval)
+        metrics.refresh_interval_ts.record(self.current_refresh_interval, now)
+        metrics.cache_size.set(len(self.cache))
+        rate = self.throttle_total / max(1, self.api_calls_total)
+        metrics.throttle_rate_ts.record(rate * 100, now)
 
     def sync_state(self, last_message=None):
         """Updates the shared state file for the GUI/TUI to consume."""
@@ -113,7 +131,7 @@ class TransitServer:
                 self._last_message = last_message
             if hasattr(self, "_last_message"):
                 state["last_message"] = self._last_message
-                
+
             if self.config_path:
                 state["config_path"] = self.config_path
 
@@ -121,7 +139,9 @@ class TransitServer:
             with open(SERVICE_STATE_FILE, "w") as f:
                 json.dump(state, f)
         except Exception:
-            pass
+            log.debug("Failed to write service state file", exc_info=True)
+
+        self._record_metrics_snapshot()
 
     def _log_throttle(self, stop_id: str):
         """Append a throttle event to the persistent JSONL log."""
@@ -137,7 +157,7 @@ class TransitServer:
             with open(self.throttle_log_file, "a") as f:
                 f.write(json.dumps(entry) + "\n")
         except Exception:
-            pass
+            log.debug("Failed to write throttle log", exc_info=True)
 
     async def get_arrivals_cached(self, clean_stop_id: str):
         """Returns arrivals for a stop, fetching from OBA only if not recently cached."""
@@ -159,24 +179,32 @@ class TransitServer:
                 return data
 
         # Fetch fresh
-        print(f"[SERVER] Making OBA API call for clean_stop_id={clean_stop_id}...", flush=True)
+        log.info("OBA API call for %s", clean_stop_id, extra={"component": "server", "stop_id": clean_stop_id})
         self.api_calls_total += 1
+        metrics.api_calls.inc()
+        t0 = time.time()
         try:
             arrivals = await self.api.get_arrivals(clean_stop_id)
+            latency_ms = (time.time() - t0) * 1000
+            metrics.api_latency.record(latency_ms)
             self.cache[clean_stop_id] = (now, arrivals)
             self.rate_limited_stops.discard(clean_stop_id)
             self.rate_limit_until.pop(clean_stop_id, None)
             return arrivals
         except Exception as e:
+            latency_ms = (time.time() - t0) * 1000
+            metrics.api_latency.record(latency_ms)
+            metrics.api_errors.inc()
             if "429" in str(e):
                 self.throttle_total += 1
+                metrics.throttle_events.inc()
                 self._log_throttle(clean_stop_id)
-                print(f"[SERVER] ⚠️ RATE LIMITED for {clean_stop_id}", flush=True)
+                log.warning("Rate limited (429) for %s", clean_stop_id, extra={"component": "server", "stop_id": clean_stop_id})
                 self.rate_limited_stops.add(clean_stop_id)
                 self.rate_limit_until[clean_stop_id] = now + self.current_refresh_interval
                 raise e
             else:
-                print(f"[SERVER] OBA Error for {clean_stop_id}: {e}", flush=True)
+                log.error("OBA error for %s: %s", clean_stop_id, e, extra={"component": "server", "stop_id": clean_stop_id})
             return self.cache.get(clean_stop_id, (0, []))[1] # Fallback to stale cache if any
 
     def normalize_id(self, item_id):
@@ -184,7 +212,7 @@ class TransitServer:
         s_id = str(item_id)
         if s_id.startswith("wsf:"):
             return s_id.replace("wsf:", "95_")
-            
+
         if ":" in s_id and "_" in s_id:
             c_idx = s_id.find(":")
             u_idx = s_id.find("_")
@@ -196,10 +224,10 @@ class TransitServer:
         """Applies route name abbreviation rules and fixes arrow characters."""
         if not name:
             return name
-        
+
         # Replace arrow symbols with ">" for better display compatibility
         name = name.replace("->", ">").replace("\u2192", ">")
-        
+
         for abbr in self.config.transit_tracker.abbreviations:
             if abbr.original.lower() == name.lower():
                 return abbr.short
@@ -208,18 +236,22 @@ class TransitServer:
     async def register(self, ws):
         self.clients.add(ws)
         addr = ws.remote_address
-        print(f"[SERVER] Client connected: {addr}")
+        metrics.ws_connections.inc()
+        log.info("Client connected: %s", addr, extra={"component": "server", "client": f"{addr[0]}:{addr[1]}"})
         self.sync_state()
         try:
             async for message in ws:
+                metrics.messages_received.inc()
+                if is_message_logging_enabled():
+                    log.debug("WS RECV from %s: %s", addr, message, extra={"component": "server", "direction": "recv"})
                 payload = json.loads(message)
                 event = payload.get("event")
-                
+
                 if event == "schedule:subscribe":
                     data = payload.get("data", {})
                     pairs_str = data.get("routeStopPairs", "")
                     self.client_names[ws] = payload.get("client_name") or data.get("client_name") or "Hardware Controller"
-                    
+
                     pairs = []
                     if pairs_str:
                         # Format: routeId,stopId[,offset];...
@@ -230,7 +262,7 @@ class TransitServer:
                                 offset = int(parts[2]) if len(parts) > 2 else 0
                                 pairs.append({"routeId": r_id, "stopId": s_id, "offset": offset})
                     elif pairs_str == "":
-                        print("[SERVER] Client sent empty routeStopPairs, using server defaults.")
+                        log.info("Client sent empty routeStopPairs, using server defaults", extra={"component": "server"})
                         for sub in self.config.subscriptions:
                             off_sec = 0
                             try:
@@ -245,9 +277,10 @@ class TransitServer:
                         limit = payload.get("limit")
                         if limit:
                             self.client_limits[ws] = int(limit)
-                        
+
                         self.sync_state()
-                        print(f"[SERVER] Client {ws.remote_address} subscribed to {len(pairs)} pairs")
+                        log.info("Client %s subscribed to %d pairs", ws.remote_address, len(pairs),
+                                 extra={"component": "server", "pairs": len(pairs)})
                         # Send immediate update from cache (or fetch if new)
                         await self.send_update(ws)
         except websockets.exceptions.ConnectionClosed:
@@ -257,8 +290,9 @@ class TransitServer:
             self.subscriptions.pop(ws, None)
             self.client_names.pop(ws, None)
             self.client_limits.pop(ws, None)
+            metrics.ws_disconnections.inc()
             self.sync_state()
-            print(f"[SERVER] Client disconnected: {addr}")
+            log.info("Client disconnected: %s", addr, extra={"component": "server", "client": f"{addr[0]}:{addr[1]}"})
 
     async def refresh_all_data(self):
         """Refreshes OBA data for every unique stop currently in use by any client."""
@@ -266,12 +300,13 @@ class TransitServer:
         for subs in self.subscriptions.values():
             for s in subs:
                 unique_stops.add(self.normalize_id(s["stopId"]))
-        
+
         if not unique_stops:
             return
 
-        print(f"[SERVER] Refreshing data for {len(unique_stops)} unique stops...", flush=True)
-        
+        log.info("Refreshing data for %d unique stops", len(unique_stops), extra={"component": "server"})
+        metrics.api_calls_ts.record(len(unique_stops))
+
         any_429 = False
         spacing_sec = self.config.transit_tracker.request_spacing_ms / 1000.0
         stops_list = sorted(unique_stops)
@@ -290,7 +325,8 @@ class TransitServer:
         if any_429:
             # Double the interval on any rate limit
             self.current_refresh_interval = min(self.max_refresh_interval, self.current_refresh_interval * 2)
-            print(f"[SERVER] 🚨 Backing off! Next refresh in {int(self.current_refresh_interval)}s", flush=True)
+            log.warning("Backing off — next refresh in %ds", int(self.current_refresh_interval),
+                        extra={"component": "server", "interval": int(self.current_refresh_interval)})
         else:
             # Gradually decrease interval on success (recovery)
             if self.current_refresh_interval > self.base_interval:
@@ -298,7 +334,8 @@ class TransitServer:
                 new_interval = max(self.base_interval, self.current_refresh_interval * 0.8)
                 if new_interval != self.current_refresh_interval:
                     self.current_refresh_interval = new_interval
-                    print(f"[SERVER] ✅ Recovery: refresh interval reduced to {int(self.current_refresh_interval)}s", flush=True)
+                    log.info("Recovery — refresh interval reduced to %ds", int(self.current_refresh_interval),
+                             extra={"component": "server", "interval": int(self.current_refresh_interval)})
 
     async def send_update(self, ws: websockets.WebSocketServerProtocol):
         subs = self.subscriptions.get(ws, [])
@@ -336,17 +373,17 @@ class TransitServer:
                 else:
                     # Cache miss — data_refresh_loop will populate shortly; skip for now
                     arrivals = []
-                
+
                 route_to_sub = {self.normalize_id(s.get("routeId")): s for s in stop_subs}
                 relevant_routes = set(route_to_sub.keys())
-                
+
                 now_ts = int(time.time())
                 display_mode = getattr(self.config, "time_display", "arrival")
-                
+
                 for arr in arrivals:
                     full_route_id = arr.get("routeId", "")
                     normalized_route_id = self.normalize_id(full_route_id)
-                    
+
                     is_match = not relevant_routes or "" in relevant_routes or normalized_route_id in relevant_routes
                     if is_match:
                         # Use predicted if available, fallback to scheduled
@@ -354,23 +391,23 @@ class TransitServer:
                         sched_arr = arr.get("scheduledArrivalTime")
                         pred_dep = arr.get("predictedDepartureTime")
                         sched_dep = arr.get("scheduledDepartureTime")
-                        
+
                         raw_arr = pred_arr if (pred_arr and pred_arr > 0) else sched_arr
                         raw_dep = pred_dep if (pred_dep and pred_dep > 0) else sched_dep
-                        
+
                         if not raw_arr and not raw_dep:
                             # Try the single 'arrivalTime' field from our own TransitAPI results
                             raw_arr = arr.get("arrivalTime")
                             raw_dep = arr.get("departureTime") or raw_arr
-                        
+
                         if not raw_arr: continue
-                        
+
                         if raw_arr > 10**12: raw_arr //= 1000
                         if raw_dep and raw_dep > 10**12: raw_dep //= 1000
-                        
+
                         sub = route_to_sub.get(normalized_route_id) or stop_subs[0]
                         offset_sec = sub.get("offset", 0)
-                        
+
                         # robustness: if the preferred time is missing or in the distant past
                         # (OBA sometimes has stale values for one but not the other), fall back.
                         now_minus_buffer = now_ts - 60 # 1 minute ago
@@ -436,16 +473,14 @@ class TransitServer:
                             "isRealtime": bool(arr.get("vehicleId")) if is_ferry else bool(arr.get("isRealtime"))
                         })
             except Exception as e:
-                import traceback
-                traceback.print_exc()
-                print(f"[SERVER ERROR] Exception in send_update: {e}", flush=True)
+                log.error("Exception in send_update: %s", e, exc_info=True, extra={"component": "server"})
                 # 429s during send_update are ignored (we use last cache)
                 pass
 
         all_trips.sort(key=lambda x: x.get("arrivalTime", 0))
         limit = self.client_limits.get(ws, 3)
         final_trips = all_trips[:limit]
-        
+
         # TJ Horner protocol uses 'data' key, not 'payload'
         response = {
             "event": "schedule",
@@ -458,11 +493,18 @@ class TransitServer:
             msg_json = json.dumps(response)
             await ws.send(msg_json)
             self.messages_processed += 1
-            addr = getattr(ws, "remote_address", (None,))
-            if addr[0] and addr[0] != "127.0.0.1":
-                fmt = self.config.transit_tracker.display_format if self.config else None
-                lines = [format_trip_line(t, time.time(), fmt=fmt) for t in final_trips]
-                print(f"[SERVER] Push to {addr[0]}: {' | '.join(lines) or '0 trips'}", flush=True)
+            metrics.messages_sent.inc()
+            metrics.messages_rate_ts.record(1)
+
+            if is_message_logging_enabled():
+                addr = getattr(ws, "remote_address", (None,))
+                log.debug("WS SEND to %s: %s", addr, msg_json, extra={"component": "server", "direction": "send"})
+            else:
+                addr = getattr(ws, "remote_address", (None,))
+                if addr[0] and addr[0] != "127.0.0.1":
+                    fmt = self.config.transit_tracker.display_format if self.config else None
+                    lines = [format_trip_line(t, time.time(), fmt=fmt) for t in final_trips]
+                    log.info("Push to %s: %s", addr[0], " | ".join(lines) or "0 trips", extra={"component": "server"})
             self.sync_state(last_message=response)
         except Exception:
             pass
@@ -474,15 +516,15 @@ class TransitServer:
                 # Hot-reload check
                 current_path = get_last_config_path()
                 if current_path and current_path != self.config_path:
-                    print(f"[SERVER] Config path changed: {current_path}. Reloading...")
+                    log.info("Config path changed: %s — reloading", current_path, extra={"component": "server"})
                     self.config = TransitConfig.load(current_path)
                     self.config_path = current_path
                     self.cache.clear() # Clear cache on config change to avoid stale data for new stops
-                    
+
                 await self.refresh_all_data()
             except Exception as e:
-                print(f"[SERVER] Refresh Loop Exception: {e}")
-            
+                log.error("Refresh loop exception: %s", e, exc_info=True, extra={"component": "server"})
+
             # Wait for the current (possibly backed-off) interval
             await asyncio.sleep(self.current_refresh_interval)
 
@@ -492,17 +534,18 @@ class TransitServer:
         while True:
             now = time.time()
             send_heartbeat = (now - last_heartbeat >= 10)
-            
+
             for ws in list(self.clients):
                 if send_heartbeat:
                     try: await ws.send(json.dumps({"event": "heartbeat", "data": None}))
                     except: pass
-                
+
                 if ws in self.subscriptions:
                     try: await self.send_update(ws)
                     except websockets.exceptions.ConnectionClosed: pass
-                    except Exception as e: print(f"[SERVER] Broadcast Error: {e}")
-            
+                    except Exception as e:
+                        log.error("Broadcast error: %s", e, extra={"component": "server"})
+
             if send_heartbeat: last_heartbeat = now
             self.sync_state()
             # Broadcast loop remains consistent to keep hardware alive
@@ -511,8 +554,8 @@ class TransitServer:
 async def run_server(host: str = "0.0.0.0", port: int = 8000, config: TransitConfig = None):
     if config is None: config = TransitConfig.load()
     server = TransitServer(config)
-    print(f"[SERVER] Starting Transit Tracker API on {host}:{port}")
-    
+    log.info("Starting Transit Tracker API on %s:%d", host, port, extra={"component": "server"})
+
     async with websockets.serve(server.register, host, port):
         # Run both the refresh and broadcast loops concurrently
         await asyncio.gather(

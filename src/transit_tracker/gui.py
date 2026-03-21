@@ -12,14 +12,22 @@ import rumps
 import websockets.sync.client
 
 from .cli import PLIST_NAME, get_service_status
-from .config import TransitConfig, list_profiles, set_last_config_path, get_last_config_path
-from .network.websocket_server import (
-    SERVICE_STATE_FILE,
-    get_service_state,
-    get_last_service_update,
+from .config import (
+    TransitConfig,
+    get_last_config_path,
+    list_profiles,
+    set_last_config_path,
 )
 from .display import format_trip_line  # noqa: F401 — re-exported for backwards compat
+from .logging import get_logger
+from .network.websocket_server import (
+    SERVICE_STATE_FILE,
+    get_last_service_update,
+    get_service_state,
+)
 from .transit_api import TransitAPI
+
+log = get_logger("transit_tracker.gui")
 
 # Container status endpoint (container 8080 → host 8081)
 CONTAINER_STATUS_URL = "http://localhost:8081/api/status"
@@ -489,7 +497,7 @@ class TransitTrackerApp(rumps.App):
     def switch_profile(self, sender):
         p_path = getattr(sender, "p_path", None)
         if not p_path: return
-        print(f"[GUI] Switching to profile: {p_path}")
+        log.info("Switching to profile: %s", p_path, extra={"component": "gui"})
         set_last_config_path(p_path)
         try:
             cfg = TransitConfig.load(p_path)
@@ -537,7 +545,7 @@ class TransitTrackerApp(rumps.App):
         rumps.quit_application()
 
 def main():
-    print("[GUI] Starting singleton check...")
+    log.info("Starting singleton check...", extra={"component": "gui"})
     import tempfile
     pid_file = os.path.join(tempfile.gettempdir(), "transit_tracker_gui.pid")
     
@@ -545,26 +553,26 @@ def main():
         try:
             with open(pid_file, "r") as f:
                 old_pid = int(f.read().strip())
-            print(f"[GUI] Found existing PID file with PID {old_pid}")
+            log.info("Found existing PID file with PID %d", old_pid, extra={"component": "gui"})
             os.kill(old_pid, 0)
-            print("[GUI] Existing process is alive. Exiting.")
+            log.info("Existing process is alive — exiting", extra={"component": "gui"})
             return 
         except (OSError, ValueError, ProcessLookupError):
-            print("[GUI] Existing process is dead or invalid PID. Continuing.")
+            log.debug("Existing process dead or invalid PID — continuing", extra={"component": "gui"})
             pass 
             
     with open(pid_file, "w") as f:
         f.write(str(os.getpid()))
-    print(f"[GUI] Created PID file at {pid_file} with PID {os.getpid()}")
+    log.info("Created PID file at %s (PID %d)", pid_file, os.getpid(), extra={"component": "gui"})
         
     try:
-        print("[GUI] Launching TransitTrackerApp...")
+        log.info("Launching TransitTrackerApp", extra={"component": "gui"})
         app = TransitTrackerApp()
         app.run()
     except Exception as e:
-        print(f"[GUI] Error launching app: {e}")
+        log.error("Error launching app: %s", e, exc_info=True, extra={"component": "gui"})
     finally:
-        print("[GUI] Cleaning up PID file...")
+        log.info("Cleaning up PID file", extra={"component": "gui"})
         if os.path.exists(pid_file):
             os.remove(pid_file)
 

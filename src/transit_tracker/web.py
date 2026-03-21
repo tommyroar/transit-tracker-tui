@@ -4,9 +4,14 @@ import os
 import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Dict, List
+from urllib.parse import parse_qs, urlparse
 
 from .config import TransitConfig
+from .logging import get_logger
+from .metrics import metrics
 from .transit_api import TransitAPI
+
+log = get_logger("transit_tracker.web")
 
 
 async def resolve_stop_coordinates(config: TransitConfig) -> List[Dict[str, Any]]:
@@ -19,12 +24,10 @@ async def resolve_stop_coordinates(config: TransitConfig) -> List[Dict[str, Any]
         stops = []
         for stop_cfg, result in zip(config.transit_tracker.stops, results, strict=True):
             if isinstance(result, Exception):
-                print(
-                    f"[WEB] Warning: could not fetch stop {stop_cfg.stop_id}: {result}"
-                )
+                log.warning("Could not fetch stop %s: %s", stop_cfg.stop_id, result, extra={"component": "web"})
                 continue
             if result is None:
-                print(f"[WEB] Warning: stop {stop_cfg.stop_id} not found")
+                log.warning("Stop %s not found", stop_cfg.stop_id, extra={"component": "web"})
                 continue
             stops.append(
                 {
@@ -554,12 +557,26 @@ class TransitWebHandler(BaseHTTPRequestHandler):
     dynamic_routes: set = set()
 
     def do_GET(self):
-        path = self.path.split("?")[0].rstrip("/") or "/"
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+        query = parse_qs(parsed.query)
 
         # Dynamic routes (read fresh on each request)
         if path in self.dynamic_routes:
             if path == "/api/status":
-                self._serve_status()
+                self._serve_status(query)
+                return
+            if path == "/api/metrics":
+                self._serve_metrics(query)
+                return
+            if path == "/api/logs":
+                self._serve_logs(query)
+                return
+            if path == "/dashboard":
+                self._serve_dashboard()
+                return
+            if path == "/monitor":
+                self._serve_monitor()
                 return
 
         content = self.routes.get(path)
@@ -579,28 +596,64 @@ class TransitWebHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"<h1>404 Not Found</h1>")
 
     def log_message(self, format, *args):
-        print(f"[WEB] {args[0]}")
+        log.debug("%s", args[0], extra={"component": "web"})
 
-    def _serve_status(self):
-        """Serve live service state from the shared state file."""
-        from .network.websocket_server import SERVICE_STATE_FILE
-        try:
-            if os.path.exists(SERVICE_STATE_FILE):
-                with open(SERVICE_STATE_FILE, "r") as f:
-                    state = json.load(f)
-                # Strip last_message to keep the response lean
-                state.pop("last_message", None)
-                body = json.dumps(state)
-            else:
-                body = json.dumps({"status": "unavailable"})
-        except Exception:
-            body = json.dumps({"status": "error"})
-
+    def _json_response(self, body: str):
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body.encode("utf-8"))
+
+    def _serve_status(self, query: dict = None):
+        """Serve live service state from the shared state file."""
+        from .network.websocket_server import SERVICE_STATE_FILE
+        query = query or {}
+        include_full = query.get("full", ["0"])[0] == "1"
+        try:
+            if os.path.exists(SERVICE_STATE_FILE):
+                with open(SERVICE_STATE_FILE, "r") as f:
+                    state = json.load(f)
+                if not include_full:
+                    # Strip last_message to keep the response lean
+                    state.pop("last_message", None)
+                body = json.dumps(state)
+            else:
+                body = json.dumps({"status": "unavailable"})
+        except Exception:
+            body = json.dumps({"status": "error"})
+        self._json_response(body)
+
+    def _serve_metrics(self, query: dict):
+        """Serve metrics snapshot with optional time-series windowing."""
+        since = float(query.get("since", [0])[0])
+        body = json.dumps(metrics.snapshot(series_since=since))
+        self._json_response(body)
+
+    def _serve_logs(self, query: dict):
+        """Serve recent log entries from the in-memory ring buffer."""
+        since = float(query.get("since", [0])[0])
+        limit = int(query.get("limit", [200])[0])
+        entries = metrics.logs.snapshot(since=since, limit=limit)
+        self._json_response(json.dumps({"logs": entries}))
+
+    def _serve_dashboard(self):
+        """Serve the observability dashboard HTML."""
+        html = generate_dashboard_html()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(html.encode("utf-8"))
+
+    def _serve_monitor(self):
+        """Serve the live network topology monitor HTML."""
+        html = generate_monitor_html()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(html.encode("utf-8"))
 
 
 async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None):
@@ -608,19 +661,29 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
     if port is None:
         port = int(os.environ.get("PORT", 8080))
 
-    print("[WEB] Resolving stop coordinates...")
+    log.info("Resolving stop coordinates...", extra={"component": "web"})
     stops = await resolve_stop_coordinates(config)
     if not stops:
-        print("[WEB] No stops found in config. Add stops first with 'transit-tracker'.")
+        log.warning("No stops found in config. Add stops first with 'transit-tracker'.", extra={"component": "web"})
         return
 
-    print(f"[WEB] Resolved {len(stops)} stops")
+    log.info("Resolved %d stops", len(stops), extra={"component": "web"})
 
     stops_json = json.dumps(stops, indent=2)
     spec_json = generate_api_spec(config)
     spec_html = generate_spec_html(spec_json)
 
     pages = [
+        {
+            "path": "/dashboard",
+            "name": "Dashboard",
+            "description": "Live metrics and observability dashboard",
+        },
+        {
+            "path": "/monitor",
+            "name": "Network Monitor",
+            "description": "Live topology diagram showing proxy, provider, and connected displays",
+        },
         {
             "path": "/spec",
             "name": "API Docs",
@@ -641,6 +704,16 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
             "name": "Status",
             "description": "Live service state (clients, rate limits, uptime)",
         },
+        {
+            "path": "/api/metrics",
+            "name": "Metrics",
+            "description": "Time-series metrics snapshot (JSON)",
+        },
+        {
+            "path": "/api/logs",
+            "name": "Logs",
+            "description": "Recent log entries from ring buffer (JSON)",
+        },
     ]
     index_html = generate_index_html(pages)
 
@@ -650,18 +723,1009 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
         "/api/spec": spec_json,
         "/api/stops": stops_json,
     }
-    # /api/status is dynamic — served from the state file on each request
-    TransitWebHandler.dynamic_routes = {"/api/status"}
+    # Dynamic routes — served fresh on each request
+    TransitWebHandler.dynamic_routes = {"/api/status", "/api/metrics", "/api/logs", "/dashboard", "/monitor"}
 
     server = HTTPServer((host, port), TransitWebHandler)
-    print(f"[WEB] Transit Tracker web server at http://{host}:{port}")
-    print("[WEB]   /spec       — API documentation page")
-    print("[WEB]   /api/spec   — Raw JSON specification")
-    print("[WEB]   /api/stops  — Stop coordinates JSON")
-    print("[WEB] Press Ctrl+C to stop")
+    log.info("Transit Tracker web server at http://%s:%d", host, port, extra={"component": "web"})
+    log.info("  /dashboard  — observability dashboard", extra={"component": "web"})
+    log.info("  /spec       — API documentation page", extra={"component": "web"})
+    log.info("  /api/metrics — metrics JSON endpoint", extra={"component": "web"})
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n[WEB] Shutting down...")
+        log.info("Shutting down...", extra={"component": "web"})
         server.shutdown()
+
+
+def generate_monitor_html() -> str:
+    """Generate a live network topology monitor page."""
+    return """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transit Tracker — Network Monitor</title>
+<style>
+:root {
+  --bg: #0f1219;
+  --bg-card: #171d2e;
+  --border: #252d44;
+  --text: #dde1ed;
+  --text2: #8891b0;
+  --muted: #505872;
+  --green: #00c853;
+  --blue: #448aff;
+  --purple: #7c4dff;
+  --orange: #ff9100;
+  --red: #ff1744;
+  --teal: #00bfa5;
+  --cyan: #00e5ff;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'SF Mono','Menlo','Consolas',monospace; background: var(--bg); color: var(--text); }
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--bg-card);
+}
+.header h1 { font-size: 15px; font-weight: 600; }
+.header h1 span { color: var(--purple); }
+.header-right { display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--text2); }
+.dot-live { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--green); animation: pulse 2s infinite; }
+.dot-live.off { background:var(--red); animation:none; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+.main { display: grid; grid-template-columns: 1fr 1fr; gap: 0; height: calc(100vh - 49px); }
+.col-topo { border-right: 1px solid var(--border); display:flex; flex-direction:column; }
+.col-feed { display:flex; flex-direction:column; overflow:hidden; }
+
+.section-header {
+  padding: 10px 20px; font-size: 11px; text-transform: uppercase; letter-spacing: .8px;
+  color: var(--muted); border-bottom: 1px solid var(--border); background: var(--bg-card);
+  display: flex; align-items: center; gap: 8px;
+}
+.section-header .indicator { width: 6px; height: 6px; border-radius: 50%; }
+
+/* Topology */
+.topo-container { flex: 1; position: relative; overflow: hidden; }
+svg.topo { width: 100%; height: 100%; }
+.topo text { font-family: 'SF Mono','Menlo','Consolas',monospace; }
+
+/* Trip table */
+.trips-section { border-top: 1px solid var(--border); }
+.trip-table { width:100%; border-collapse:collapse; font-size:12px; }
+.trip-table th { text-align:left; padding:6px 12px; color:var(--muted); font-weight:500; font-size:10px;
+  text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid var(--border); }
+.trip-table td { padding:5px 12px; border-bottom:1px solid #1a2035; }
+.trip-table tr:hover td { background: #1c2340; }
+.rt-dot { font-size: 14px; }
+.rt-dot.live { color: var(--green); }
+.rt-dot.sched { color: var(--muted); }
+.route-badge { display:inline-block; padding:1px 8px; border-radius:3px; font-weight:600; font-size:11px; }
+
+/* Message feed */
+.feed-list { flex:1; overflow-y:auto; font-size:12px; }
+.feed-entry {
+  display: grid; grid-template-columns: 70px 1fr; gap: 0;
+  padding: 4px 16px; border-bottom: 1px solid #151a2c;
+  transition: background .1s;
+}
+.feed-entry:hover { background: #1a2040; }
+.feed-ts { color: var(--muted); white-space: nowrap; padding-right: 10px; }
+.feed-body { display: flex; flex-direction: column; gap: 1px; }
+.feed-dir { font-weight: 600; }
+.feed-detail { color: var(--text2); }
+.feed-json { color: var(--muted); font-size: 11px; max-height: 60px; overflow: hidden;
+  text-overflow: ellipsis; white-space: pre-wrap; word-break: break-all;
+  margin-top: 2px; padding: 3px 6px; background: #111622; border-radius: 3px; }
+.dir-send { color: var(--cyan); }
+.dir-recv { color: var(--green); }
+.dir-err { color: var(--red); }
+.dir-throttle { color: var(--orange); }
+.dir-connect { color: var(--blue); }
+.dir-heartbeat { color: var(--muted); }
+
+/* Toggle */
+.toggle-json { font-size: 11px; cursor: pointer; color: var(--purple); padding: 0 6px; }
+.toggle-json:hover { text-decoration: underline; }
+
+@media (max-width: 800px) {
+  .main { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .col-topo { border-right: none; border-bottom: 1px solid var(--border); max-height: 50vh; }
+}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1><span>Transit Tracker</span> &mdash; Network Monitor</h1>
+  <div class="header-right">
+    <span><span class="dot-live" id="live-dot"></span> <span id="conn-label">Connecting</span></span>
+    <a href="/dashboard" style="color:var(--purple);text-decoration:none;font-size:12px;">Dashboard &rarr;</a>
+  </div>
+</div>
+
+<div class="main">
+  <div class="col-topo">
+    <div class="section-header">
+      <span class="indicator" style="background:var(--blue)"></span> Network Topology
+    </div>
+    <div class="topo-container">
+      <svg class="topo" id="topo-svg" viewBox="0 0 600 500" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+    <div class="trips-section">
+      <div class="section-header">
+        <span class="indicator" style="background:var(--green)"></span> Last Schedule Push
+        <span id="trip-age" style="margin-left:auto;color:var(--muted);font-size:10px;text-transform:none;letter-spacing:0"></span>
+      </div>
+      <div style="max-height:200px;overflow-y:auto;">
+        <table class="trip-table">
+          <thead><tr><th>Route</th><th>Headsign</th><th style="text-align:right">ETA</th><th>RT</th><th>Stop</th></tr></thead>
+          <tbody id="trip-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-feed">
+    <div class="section-header">
+      <span class="indicator" style="background:var(--purple)"></span> Message Flow
+      <span id="msg-count" style="margin-left:auto;color:var(--muted);font-size:10px;text-transform:none;letter-spacing:0">0 events</span>
+    </div>
+    <div class="feed-list" id="feed-list"></div>
+  </div>
+</div>
+
+<script>
+// ── state ──
+let state = {};
+let prevState = {};
+let events = [];
+let showJson = {};
+const MAX_EVENTS = 200;
+
+// ── helpers ──
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function ago(ts) {
+  if (!ts) return 'never';
+  const d = (Date.now()/1000) - ts;
+  if (d < 2) return 'just now';
+  if (d < 60) return Math.floor(d) + 's ago';
+  if (d < 3600) return Math.floor(d/60) + 'm ago';
+  return (d/3600).toFixed(1) + 'h ago';
+}
+function fmtTime(ts) {
+  return new Date(ts*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+function mins(arrTs) {
+  const d = (arrTs - Date.now()/1000) / 60;
+  if (d <= 0) return 'Now';
+  return Math.ceil(d) + 'm';
+}
+
+// ── events ──
+function addEvent(kind, dir, detail, jsonPayload) {
+  events.push({ ts: Date.now()/1000, kind, dir, detail, json: jsonPayload || null });
+  if (events.length > MAX_EVENTS) events = events.slice(-MAX_EVENTS);
+}
+
+function detectChanges(cur, prev) {
+  // Schedule push
+  const lu = cur.last_update || 0;
+  const plu = prev.last_update || 0;
+  if (lu && lu !== plu) {
+    const lm = cur.last_message || {};
+    const trips = (lm.data || {}).trips || [];
+    addEvent('send', 'server \\u2192 clients', trips.length + ' trips pushed',
+      JSON.stringify(lm, null, 2));
+  }
+  // Client changes
+  const cc = cur.client_count || 0;
+  const pc = prev.client_count || 0;
+  if (cc > pc) addEvent('connect', '+' + (cc-pc) + ' client(s)', 'connected (total ' + cc + ')',
+    JSON.stringify(cur.clients||[], null, 2));
+  if (cc < pc) addEvent('err', '-' + (pc-cc) + ' client(s)', 'disconnected (total ' + cc + ')');
+
+  // Throttle
+  const rl = cur.is_rate_limited;
+  const prl = prev.is_rate_limited;
+  if (rl && !prl) addEvent('throttle', 'OBA \\u2192 server', '429 rate limited');
+  if (prl && !rl) addEvent('recv', 'OBA \\u2192 server', 'Rate limit cleared');
+
+  // API calls
+  const ac = cur.api_calls_total || 0;
+  const pac = prev.api_calls_total || 0;
+  if (ac > pac) addEvent('recv', 'server \\u2192 OBA', (ac-pac) + ' API call(s) (total ' + ac + ')');
+
+  // Heartbeat
+  const hb = cur.heartbeat || 0;
+  const phb = prev.heartbeat || 0;
+  if (hb && hb !== phb) addEvent('heartbeat', 'server \\u2192 clients', 'heartbeat');
+}
+
+// ── SVG topology ──
+function renderTopo() {
+  const svg = document.getElementById('topo-svg');
+  const clients = state.clients || [];
+  const cc = state.client_count || 0;
+  const running = state.status === 'active';
+  const rl = state.is_rate_limited;
+  const apiCalls = state.api_calls_total || 0;
+  const throttle = state.throttle_total || 0;
+  const refresh = state.refresh_interval || 30;
+  const msgs = state.messages_processed || 0;
+  const upH = state.uptime_hours || 0;
+  const upStr = upH >= 1 ? upH.toFixed(1) + 'h' : Math.round(upH*60) + 'm';
+
+  // Adjust viewBox height based on client count
+  const clientRows = Math.max(cc, 1);
+  const svgH = 300 + clientRows * 60;
+  svg.setAttribute('viewBox', '0 0 600 ' + svgH);
+
+  let h = '';
+
+  // ── defs for animated dashes ──
+  h += '<defs>';
+  h += '<marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#448aff"/></marker>';
+  h += '<marker id="arrow-green" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#00c853"/></marker>';
+  h += '<marker id="arrow-red" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#ff1744"/></marker>';
+  h += '</defs>';
+
+  // ── OBA API box ──
+  const obaY = 20;
+  h += '<rect x="180" y="' + obaY + '" width="240" height="80" rx="8" fill="#1a1f36" stroke="' + (rl ? '#ff9100' : '#2d3555') + '" stroke-width="' + (rl ? 2 : 1) + '"/>';
+  h += '<text x="300" y="' + (obaY+24) + '" text-anchor="middle" fill="#ff9100" font-size="13" font-weight="600">OneBusAway API</text>';
+  h += '<text x="300" y="' + (obaY+44) + '" text-anchor="middle" fill="' + (rl ? '#ff1744' : '#00c853') + '" font-size="11" font-weight="600">' + (rl ? 'THROTTLED' : 'HEALTHY') + '</text>';
+  h += '<text x="300" y="' + (obaY+62) + '" text-anchor="middle" fill="#505872" font-size="10">Calls: ' + apiCalls + '  429s: ' + throttle + '</text>';
+
+  // ── OBA → Server connection ──
+  const wireY1 = obaY + 80;
+  const wireY2 = obaY + 140;
+  if (rl) {
+    h += '<line x1="300" y1="' + wireY1 + '" x2="300" y2="' + wireY2 + '" stroke="#ff1744" stroke-width="2" stroke-dasharray="6,4"/>';
+    h += '<text x="320" y="' + (wireY1+30) + '" fill="#ff1744" font-size="10">429 BLOCKED</text>';
+  } else {
+    h += '<line x1="300" y1="' + wireY1 + '" x2="300" y2="' + wireY2 + '" stroke="#448aff" stroke-width="1.5" stroke-dasharray="6,4" marker-end="url(#arrow)">';
+    h += '<animate attributeName="stroke-dashoffset" from="20" to="0" dur="1s" repeatCount="indefinite"/>';
+    h += '</line>';
+    h += '<text x="320" y="' + (wireY1+30) + '" fill="#505872" font-size="10">arrivals / ' + refresh + 's</text>';
+  }
+
+  // ── Proxy Server box ──
+  const srvY = wireY2;
+  h += '<rect x="160" y="' + srvY + '" width="280" height="100" rx="8" fill="#1a1f36" stroke="' + (running ? '#00e5ff' : '#ff1744') + '" stroke-width="' + (running ? 1.5 : 2) + '"/>';
+  h += '<circle cx="190" cy="' + (srvY+22) + '" r="5" fill="' + (running ? '#00c853' : '#ff1744') + '"/>';
+  h += '<text x="200" y="' + (srvY+26) + '" fill="' + (running ? '#00c853' : '#ff1744') + '" font-size="13" font-weight="700"> ' + (running ? 'RUNNING' : 'STOPPED') + '</text>';
+  h += '<text x="180" y="' + (srvY+46) + '" fill="#00e5ff" font-size="11">Transit Proxy :8000</text>';
+  h += '<text x="180" y="' + (srvY+64) + '" fill="#505872" font-size="10">Up: ' + esc(upStr) + '  Msgs: ' + msgs + '</text>';
+  h += '<text x="180" y="' + (srvY+80) + '" fill="#505872" font-size="10">Refresh: ' + refresh + 's  Clients: ' + cc + '</text>';
+
+  // ── Server → Clients connections ──
+  const clientStartY = srvY + 100 + 30;
+  if (clients.length === 0) {
+    h += '<line x1="300" y1="' + (srvY+100) + '" x2="300" y2="' + clientStartY + '" stroke="#252d44" stroke-width="1" stroke-dasharray="4,4"/>';
+    h += '<text x="300" y="' + (clientStartY + 20) + '" text-anchor="middle" fill="#505872" font-size="11" font-style="italic">No clients connected</text>';
+  } else {
+    for (let i = 0; i < clients.length; i++) {
+      const c = clients[i];
+      const cy = clientStartY + i * 60;
+      const name = c.name || 'Unknown';
+      const addr = (c.address || '?').split(':')[0];
+      const subs = c.subscriptions || 0;
+      const isLocal = addr === '127.0.0.1' || addr === 'localhost';
+      const icon = isLocal ? '\\u{1F5A5}' : '\\u{1F4FA}';
+
+      // Connection line
+      h += '<line x1="300" y1="' + (srvY+100) + '" x2="300" y2="' + cy + '" stroke="#00c853" stroke-width="1.5" stroke-dasharray="6,4" marker-end="url(#arrow-green)">';
+      h += '<animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/>';
+      h += '</line>';
+
+      // Client box
+      h += '<rect x="170" y="' + cy + '" width="260" height="44" rx="6" fill="#1a1f36" stroke="#2d3555" stroke-width="1"/>';
+      h += '<text x="188" y="' + (cy+18) + '" fill="#dde1ed" font-size="14">' + icon + '</text>';
+      h += '<text x="210" y="' + (cy+18) + '" fill="#dde1ed" font-size="12" font-weight="600">' + esc(name) + '</text>';
+      h += '<text x="210" y="' + (cy+34) + '" fill="#505872" font-size="10">' + esc(addr) + ' &middot; ' + subs + ' subscriptions</text>';
+    }
+  }
+
+  svg.innerHTML = h;
+}
+
+// ── Trip table ──
+function renderTrips() {
+  const lm = state.last_message || {};
+  const trips = (lm.data || {}).trips || [];
+  const body = document.getElementById('trip-body');
+  const ageEl = document.getElementById('trip-age');
+
+  if (!trips.length) {
+    body.innerHTML = '<tr><td colspan="5" style="color:var(--muted);font-style:italic;padding:12px">Waiting for data...</td></tr>';
+    ageEl.textContent = '';
+    return;
+  }
+
+  ageEl.textContent = ago(state.last_update);
+
+  body.innerHTML = trips.slice(0, 10).map(t => {
+    const rt = t.isRealtime;
+    const at = t.arrivalTime > 1e12 ? t.arrivalTime / 1000 : t.arrivalTime;
+    const color = t.routeColor ? '#' + t.routeColor : 'var(--cyan)';
+    return '<tr>' +
+      '<td><span class="route-badge" style="background:' + color + '22;color:' + color + '">' + esc(t.routeName||'?') + '</span></td>' +
+      '<td>' + esc(t.headsign||'') + '</td>' +
+      '<td style="text-align:right;font-weight:600">' + mins(at) + '</td>' +
+      '<td><span class="rt-dot ' + (rt?'live':'sched') + '">' + (rt?'\\u25C9':'\\u25CB') + '</span></td>' +
+      '<td style="color:var(--muted)">' + esc(t.stopId||'') + '</td>' +
+      '</tr>';
+  }).join('');
+}
+
+// ── Message feed ──
+function renderFeed() {
+  const list = document.getElementById('feed-list');
+  document.getElementById('msg-count').textContent = events.length + ' events';
+
+  const wasAtBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+  const visible = events.slice(-100);
+
+  list.innerHTML = visible.map((ev, i) => {
+    const idx = events.length - visible.length + i;
+    const ts = fmtTime(ev.ts);
+    let dirClass = 'dir-send';
+    if (ev.kind === 'recv') dirClass = 'dir-recv';
+    else if (ev.kind === 'err') dirClass = 'dir-err';
+    else if (ev.kind === 'throttle') dirClass = 'dir-throttle';
+    else if (ev.kind === 'connect') dirClass = 'dir-connect';
+    else if (ev.kind === 'heartbeat') dirClass = 'dir-heartbeat';
+
+    let jsonHtml = '';
+    if (ev.json) {
+      const visible = showJson[idx];
+      jsonHtml = '<span class="toggle-json" onclick="toggleJson(' + idx + ')">' + (visible ? '[-]' : '[json]') + '</span>';
+      if (visible) {
+        jsonHtml += '<div class="feed-json">' + esc(ev.json.substring(0, 800)) + '</div>';
+      }
+    }
+
+    return '<div class="feed-entry">' +
+      '<span class="feed-ts">' + ts + '</span>' +
+      '<div class="feed-body">' +
+        '<div><span class="feed-dir ' + dirClass + '">' + esc(ev.dir) + '</span> ' +
+        '<span class="feed-detail">' + esc(ev.detail) + '</span>' + jsonHtml + '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  if (wasAtBottom) list.scrollTop = list.scrollHeight;
+}
+
+function toggleJson(idx) {
+  showJson[idx] = !showJson[idx];
+  renderFeed();
+}
+
+// ── polling ──
+async function poll() {
+  try {
+    const res = await fetch('/api/status?full=1');
+    const cur = await res.json();
+    if (cur.status === 'unavailable' || cur.status === 'error') {
+      document.getElementById('live-dot').className = 'dot-live off';
+      document.getElementById('conn-label').textContent = 'Unavailable';
+      return;
+    }
+    document.getElementById('live-dot').className = 'dot-live';
+    document.getElementById('conn-label').textContent = 'Live';
+
+    detectChanges(cur, prevState);
+    prevState = {...state};
+    state = cur;
+
+    renderTopo();
+    renderTrips();
+    renderFeed();
+  } catch (e) {
+    document.getElementById('live-dot').className = 'dot-live off';
+    document.getElementById('conn-label').textContent = 'Error';
+  }
+}
+
+// Also poll logs for richer message feed
+let lastLogTs = 0;
+async function pollLogs() {
+  try {
+    const res = await fetch('/api/logs?since=' + lastLogTs + '&limit=50');
+    const data = await res.json();
+    if (data.logs && data.logs.length) {
+      for (const entry of data.logs) {
+        const comp = entry.component || entry.logger || '';
+        const msg = entry.msg || '';
+        const level = entry.level || 'INFO';
+
+        // Classify interesting log events into the message feed
+        if (msg.includes('429') || msg.includes('rate limit')) {
+          addEvent('throttle', 'OBA \\u2192 server', msg);
+        } else if (msg.includes('connected') && comp.includes('server')) {
+          addEvent('connect', 'client \\u2192 server', msg);
+        } else if (msg.includes('disconnect') && comp.includes('server')) {
+          addEvent('err', 'server \\u2715 client', msg);
+        } else if (msg.includes('subscribe') || msg.includes('subscription')) {
+          addEvent('recv', 'client \\u2192 server', msg,
+            entry.pairs ? '{"pairs":' + entry.pairs + '}' : null);
+        } else if (level === 'ERROR') {
+          addEvent('err', comp, msg);
+        }
+      }
+      lastLogTs = data.logs[data.logs.length - 1].ts + 0.001;
+      renderFeed();
+    }
+  } catch(e) {}
+}
+
+// ── boot ──
+poll();
+pollLogs();
+setInterval(poll, 2000);
+setInterval(pollLogs, 3000);
+</script>
+</body>
+</html>"""
+
+
+def generate_dashboard_html() -> str:
+    """Generate a Datadog-inspired observability dashboard (single-page, dark theme)."""
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transit Tracker — Dashboard</title>
+<style>
+  :root {
+    --bg-primary: #131826;
+    --bg-card: #1a1f36;
+    --bg-card-hover: #232942;
+    --border: #2d3555;
+    --text-primary: #e4e7f1;
+    --text-secondary: #8891b0;
+    --text-muted: #5a6384;
+    --accent-purple: #7c4dff;
+    --accent-blue: #448aff;
+    --accent-green: #00c853;
+    --accent-orange: #ff9100;
+    --accent-red: #ff1744;
+    --accent-teal: #00bfa5;
+    --accent-pink: #f50057;
+    --chart-grid: #252b45;
+    --scrollbar-bg: #1a1f36;
+    --scrollbar-thumb: #3d4570;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--scrollbar-bg); }
+  ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+
+  /* Header */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-card);
+  }
+  .header h1 { font-size: 18px; font-weight: 600; }
+  .header h1 span { color: var(--accent-purple); }
+  .header-right { display: flex; align-items: center; gap: 16px; }
+  .status-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--accent-green);
+    animation: pulse 2s infinite;
+  }
+  .status-dot.error { background: var(--accent-red); }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  .time-range {
+    display: flex;
+    background: var(--bg-primary);
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .time-range button {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    padding: 4px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .time-range button.active {
+    background: var(--accent-purple);
+    color: white;
+  }
+  .time-range button:hover:not(.active) { color: var(--text-primary); }
+
+  /* Layout */
+  .container { padding: 20px 24px; }
+  .grid { display: grid; gap: 16px; margin-bottom: 16px; }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid-1 { grid-template-columns: 1fr; }
+
+  /* Stat cards */
+  .stat-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    transition: border-color 0.15s;
+  }
+  .stat-card:hover { border-color: var(--accent-purple); }
+  .stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-bottom: 4px; }
+  .stat-value { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat-sub { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+  .stat-value.green { color: var(--accent-green); }
+  .stat-value.orange { color: var(--accent-orange); }
+  .stat-value.red { color: var(--accent-red); }
+  .stat-value.blue { color: var(--accent-blue); }
+  .stat-value.purple { color: var(--accent-purple); }
+
+  /* Chart cards */
+  .chart-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+  }
+  .chart-card h3 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .chart-card h3 .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  canvas { width: 100% !important; height: 160px !important; }
+
+  /* Log panel */
+  .log-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .log-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .log-panel-header h3 { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+  .log-filters {
+    display: flex;
+    gap: 6px;
+  }
+  .log-filters button {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    padding: 2px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .log-filters button.active { background: var(--accent-purple); border-color: var(--accent-purple); color: white; }
+  .log-filters button:hover:not(.active) { border-color: var(--text-muted); }
+  .log-list {
+    max-height: 360px;
+    overflow-y: auto;
+    font-family: 'SFMono-Regular', 'Menlo', 'Consolas', monospace;
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  .log-entry {
+    padding: 2px 20px;
+    border-bottom: 1px solid #1e2340;
+    display: flex;
+    gap: 12px;
+    transition: background 0.1s;
+  }
+  .log-entry:hover { background: var(--bg-card-hover); }
+  .log-ts { color: var(--text-muted); white-space: nowrap; min-width: 80px; }
+  .log-level {
+    font-weight: 600;
+    min-width: 44px;
+    text-align: center;
+    border-radius: 3px;
+    padding: 0 4px;
+  }
+  .log-level.DEBUG { color: var(--text-muted); }
+  .log-level.INFO { color: var(--accent-blue); }
+  .log-level.WARNING { color: var(--accent-orange); }
+  .log-level.ERROR { color: var(--accent-red); }
+  .log-component { color: var(--accent-teal); min-width: 60px; }
+  .log-msg { color: var(--text-primary); flex: 1; word-break: break-all; }
+
+  @media (max-width: 900px) {
+    .grid-4 { grid-template-columns: repeat(2, 1fr); }
+    .grid-2 { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 500px) {
+    .grid-4 { grid-template-columns: 1fr; }
+    .container { padding: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><span>Transit Tracker</span> &mdash; Dashboard</h1>
+  <div class="header-right">
+    <div class="time-range">
+      <button class="active" data-range="300">5m</button>
+      <button data-range="900">15m</button>
+      <button data-range="1800">30m</button>
+      <button data-range="0">All</button>
+    </div>
+    <span id="conn-status"><span class="status-dot"></span> Live</span>
+  </div>
+</div>
+
+<div class="container">
+  <!-- Stat cards -->
+  <div class="grid grid-4">
+    <div class="stat-card">
+      <div class="stat-label">Uptime</div>
+      <div class="stat-value green" id="s-uptime">—</div>
+      <div class="stat-sub" id="s-uptime-sub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Active Clients</div>
+      <div class="stat-value blue" id="s-clients">0</div>
+      <div class="stat-sub" id="s-clients-sub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Messages Sent</div>
+      <div class="stat-value purple" id="s-msgs">0</div>
+      <div class="stat-sub" id="s-msgs-sub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">API Calls</div>
+      <div class="stat-value" id="s-api">0</div>
+      <div class="stat-sub" id="s-api-sub"></div>
+    </div>
+  </div>
+
+  <div class="grid grid-4">
+    <div class="stat-card">
+      <div class="stat-label">Throttle Events (429s)</div>
+      <div class="stat-value" id="s-throttle">0</div>
+      <div class="stat-sub" id="s-throttle-sub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">API Errors</div>
+      <div class="stat-value" id="s-errors">0</div>
+      <div class="stat-sub" id="s-errors-sub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Refresh Interval</div>
+      <div class="stat-value" id="s-interval">—</div>
+      <div class="stat-sub" id="s-interval-sub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Cache Size</div>
+      <div class="stat-value" id="s-cache">0</div>
+      <div class="stat-sub">stops cached</div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="grid grid-2">
+    <div class="chart-card">
+      <h3><span class="dot" style="background:var(--accent-blue)"></span>API Latency (ms)</h3>
+      <canvas id="chart-latency"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3><span class="dot" style="background:var(--accent-green)"></span>Active Clients</h3>
+      <canvas id="chart-clients"></canvas>
+    </div>
+  </div>
+  <div class="grid grid-2">
+    <div class="chart-card">
+      <h3><span class="dot" style="background:var(--accent-purple)"></span>Refresh Interval (s)</h3>
+      <canvas id="chart-interval"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3><span class="dot" style="background:var(--accent-orange)"></span>Throttle Rate (%)</h3>
+      <canvas id="chart-throttle"></canvas>
+    </div>
+  </div>
+
+  <!-- Logs -->
+  <div class="log-panel">
+    <div class="log-panel-header">
+      <h3>Event Log</h3>
+      <div class="log-filters">
+        <button class="active" data-level="all">All</button>
+        <button data-level="ERROR">Error</button>
+        <button data-level="WARNING">Warn</button>
+        <button data-level="INFO">Info</button>
+        <button data-level="DEBUG">Debug</button>
+      </div>
+    </div>
+    <div class="log-list" id="log-list"></div>
+  </div>
+</div>
+
+<script>
+// ---- Minimal chart renderer (no external deps) ----
+class MiniChart {
+  constructor(canvas, color) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.color = color;
+    this.data = [];
+    this._resize();
+    window.addEventListener('resize', () => this._resize());
+  }
+  _resize() {
+    const r = this.canvas.parentElement.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    this.canvas.width = r.width * dpr;
+    this.canvas.height = 160 * dpr;
+    this.ctx.scale(dpr, dpr);
+    this.w = r.width;
+    this.h = 160;
+    this.draw();
+  }
+  setData(points) { this.data = points; this.draw(); }
+  draw() {
+    const ctx = this.ctx, w = this.w, h = this.h, d = this.data;
+    ctx.clearRect(0, 0, w, h);
+    if (d.length < 2) {
+      ctx.fillStyle = '#3d4570';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Waiting for data...', w/2, h/2);
+      return;
+    }
+    // Grid lines
+    ctx.strokeStyle = '#252b45';
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 4; i++) {
+      const y = (h / 4) * i;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    }
+    // Data
+    const vals = d.map(p => p[1]);
+    let min = Math.min(...vals), max = Math.max(...vals);
+    if (max === min) { max = min + 1; }
+    const pad = 8;
+    const innerH = h - pad * 2;
+    const xStep = w / (d.length - 1);
+    // Area fill
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    for (let i = 0; i < d.length; i++) {
+      const x = i * xStep;
+      const y = pad + innerH - ((vals[i] - min) / (max - min)) * innerH;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(w, h);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, this.color + '40');
+    grad.addColorStop(1, this.color + '05');
+    ctx.fillStyle = grad;
+    ctx.fill();
+    // Line
+    ctx.beginPath();
+    for (let i = 0; i < d.length; i++) {
+      const x = i * xStep;
+      const y = pad + innerH - ((vals[i] - min) / (max - min)) * innerH;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // Labels
+    ctx.fillStyle = '#5a6384';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(max.toFixed(1), 4, pad + 10);
+    ctx.fillText(min.toFixed(1), 4, h - 4);
+    // Latest value
+    if (d.length > 0) {
+      const last = vals[vals.length - 1];
+      ctx.fillStyle = this.color;
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(last.toFixed(1), w - 4, pad + 10);
+    }
+  }
+}
+
+// ---- Init charts ----
+const charts = {
+  latency: new MiniChart(document.getElementById('chart-latency'), '#448aff'),
+  clients: new MiniChart(document.getElementById('chart-clients'), '#00c853'),
+  interval: new MiniChart(document.getElementById('chart-interval'), '#7c4dff'),
+  throttle: new MiniChart(document.getElementById('chart-throttle'), '#ff9100'),
+};
+
+// ---- State ----
+let timeRange = 300; // seconds
+let logFilter = 'all';
+let lastLogTs = 0;
+let allLogs = [];
+
+// ---- Time range buttons ----
+document.querySelectorAll('.time-range button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.time-range button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    timeRange = parseInt(btn.dataset.range);
+    fetchMetrics();
+  });
+});
+
+// ---- Log filter buttons ----
+document.querySelectorAll('.log-filters button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.log-filters button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    logFilter = btn.dataset.level;
+    renderLogs();
+  });
+});
+
+// ---- Formatting helpers ----
+function fmtUptime(s) {
+  if (s < 60) return Math.floor(s) + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h + 'h ' + m + 'm';
+}
+function fmtNum(n) {
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return n.toString();
+}
+function fmtTime(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+}
+
+// ---- Fetch & render ----
+async function fetchMetrics() {
+  try {
+    const since = timeRange > 0 ? (Date.now() / 1000 - timeRange) : 0;
+    const res = await fetch('/api/metrics?since=' + since);
+    const m = await res.json();
+
+    // Stat cards
+    document.getElementById('s-uptime').textContent = fmtUptime(m.uptime_s);
+    const startDate = new Date((m.ts - m.uptime_s) * 1000);
+    document.getElementById('s-uptime-sub').textContent = 'since ' + startDate.toLocaleTimeString();
+
+    document.getElementById('s-clients').textContent = m.gauges.active_clients;
+    document.getElementById('s-clients-sub').textContent =
+      fmtNum(m.counters.ws_connections) + ' total connections';
+
+    document.getElementById('s-msgs').textContent = fmtNum(m.counters.messages_sent);
+    document.getElementById('s-msgs-sub').textContent =
+      fmtNum(m.counters.messages_received) + ' received';
+
+    const apiCalls = m.counters.api_calls;
+    document.getElementById('s-api').textContent = fmtNum(apiCalls);
+    const errRate = apiCalls > 0 ? (m.counters.api_errors / apiCalls * 100).toFixed(1) : '0.0';
+    document.getElementById('s-api-sub').textContent = errRate + '% error rate';
+
+    const throttle = m.counters.throttle_events;
+    const tEl = document.getElementById('s-throttle');
+    tEl.textContent = fmtNum(throttle);
+    tEl.className = 'stat-value ' + (throttle > 0 ? 'orange' : 'green');
+    const throttleRate = apiCalls > 0 ? (throttle / apiCalls * 100).toFixed(1) : '0.0';
+    document.getElementById('s-throttle-sub').textContent = throttleRate + '% of API calls';
+
+    const errEl = document.getElementById('s-errors');
+    errEl.textContent = fmtNum(m.counters.api_errors);
+    errEl.className = 'stat-value ' + (m.counters.api_errors > 0 ? 'red' : 'green');
+    document.getElementById('s-errors-sub').textContent =
+      fmtNum(m.counters.api_errors) + ' total errors';
+
+    const intEl = document.getElementById('s-interval');
+    intEl.textContent = m.gauges.refresh_interval_s + 's';
+    intEl.className = 'stat-value ' + (m.gauges.refresh_interval_s > 60 ? 'orange' : '');
+    document.getElementById('s-interval-sub').textContent = 'base: polling cycle';
+
+    document.getElementById('s-cache').textContent = m.gauges.cache_size;
+
+    // Charts
+    charts.latency.setData(m.series.api_latency_ms);
+    charts.clients.setData(m.series.active_clients);
+    charts.interval.setData(m.series.refresh_interval_s);
+    charts.throttle.setData(m.series.throttle_rate);
+
+    // Connection status
+    document.querySelector('.status-dot').className = 'status-dot';
+  } catch (e) {
+    document.querySelector('.status-dot').className = 'status-dot error';
+  }
+}
+
+async function fetchLogs() {
+  try {
+    const res = await fetch('/api/logs?since=' + lastLogTs + '&limit=200');
+    const data = await res.json();
+    if (data.logs && data.logs.length > 0) {
+      allLogs = allLogs.concat(data.logs);
+      // Keep only last 500
+      if (allLogs.length > 500) allLogs = allLogs.slice(-500);
+      lastLogTs = data.logs[data.logs.length - 1].ts + 0.001;
+      renderLogs();
+    }
+  } catch (e) {}
+}
+
+function renderLogs() {
+  const list = document.getElementById('log-list');
+  let filtered = allLogs;
+  if (logFilter !== 'all') {
+    filtered = allLogs.filter(e => e.level === logFilter);
+  }
+  // Show latest 200
+  const visible = filtered.slice(-200);
+  list.innerHTML = visible.map(e => {
+    const ts = fmtTime(e.ts);
+    const level = e.level || 'INFO';
+    const component = e.component || e.logger || '';
+    const msg = e.msg || '';
+    return `<div class="log-entry">
+      <span class="log-ts">${ts}</span>
+      <span class="log-level ${level}">${level}</span>
+      <span class="log-component">${component}</span>
+      <span class="log-msg">${escHtml(msg)}</span>
+    </div>`;
+  }).join('');
+  // Auto-scroll to bottom
+  list.scrollTop = list.scrollHeight;
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ---- Poll loop ----
+fetchMetrics();
+fetchLogs();
+setInterval(fetchMetrics, 2000);
+setInterval(fetchLogs, 2000);
+</script>
+</body>
+</html>"""

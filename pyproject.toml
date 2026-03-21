@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Tommy Doerr", email = "tommy.b.doerr@gmail.com" }
 ]
-requires-python = ">=3.14"
+requires-python = ">=3.13"
 dependencies = [
     "bdfparser>=2.2.0",
     "esptool>=5.2.0",
@@ -42,8 +42,8 @@ dev = [
 ]
 
 [tool.ruff]
-# Target Python 3.14 as specified in [project]
-target-version = "py313" # Ruff doesn't support py314 yet, so we use the closest
+# Target Python 3.13 as specified in [project]
+target-version = "py313"
 line-length = 88
 
 [tool.ruff.lint]

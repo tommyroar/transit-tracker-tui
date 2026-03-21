@@ -105,7 +105,8 @@ def setup_logging(
     _message_logging_enabled = message_logging
 
     root = logging.getLogger("transit_tracker")
-    root.setLevel(getattr(logging, level.upper(), logging.INFO))
+    level_name = str(level).upper() if not isinstance(level, str) else level.upper()
+    root.setLevel(getattr(logging, level_name, logging.INFO))
     root.handlers.clear()
 
     handler = logging.StreamHandler(sys.stdout)

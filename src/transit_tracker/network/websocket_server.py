@@ -102,7 +102,7 @@ class TransitServer:
         self.messages_processed = 0
         self.start_time = time.time()
         self.last_broadcast_time = 0
-        self.display_brightness = getattr(self.config, "display_brightness", 128)
+        self.display_brightness = self.config.transit_tracker.display_brightness
         self.dimming_override = False
         self.last_scheduled_brightness = None
 

@@ -241,7 +241,7 @@ def flash_hardware(port: str, config) -> bool:
                 flasher.set_entity("scroll_headsigns", EntityType.SWITCH, "ON")
 
                 status.update("[cyan]Configuring Brightness...")
-                brightness = getattr(config, "display_brightness", 128)
+                brightness = config.transit_tracker.display_brightness
                 flasher.set_entity("display_brightness", EntityType.NUMBER, brightness)
 
                 status.update("[cyan]Saving Preferences...")

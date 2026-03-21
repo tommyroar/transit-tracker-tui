@@ -210,8 +210,8 @@ def ws_config():
     config.transit_tracker = MagicMock()
     config.transit_tracker.time_display = "arrival"
     config.transit_tracker.display_brightness = 128
+    config.service.oba_api_key = None
     config.transit_tracker.abbreviations = []
-    config.transit_tracker.oba_api_key = None
     return config
 
 

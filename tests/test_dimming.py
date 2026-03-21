@@ -172,8 +172,8 @@ def dimming_config():
     config.transit_tracker = MagicMock()
     config.transit_tracker.time_display = "arrival"
     config.transit_tracker.display_brightness = 128
+    config.service.oba_api_key = None
     config.transit_tracker.abbreviations = []
-    config.transit_tracker.oba_api_key = None
     config.transit_tracker.device_ip = "192.168.5.248"
     config.transit_tracker.dimming_schedule = [
         DimmingEntry(time="07:00", brightness=128),

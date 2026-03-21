@@ -13,9 +13,9 @@ from transit_tracker.tui import (
 @pytest.fixture
 def mock_config():
     config = TransitConfig()
-    config.use_local_api = True
-    config.arrival_threshold_minutes = 5
-    config.num_panels = 2
+    config.service.use_local_api = True
+    config.service.arrival_threshold_minutes = 5
+    config.service.num_panels = 2
     return config
 
 @pytest.mark.asyncio
@@ -31,7 +31,7 @@ async def test_api_mode_wizard_choices(mock_config):
         mock_select.return_value = mock_instance
         
         # Test with use_local_api = True
-        mock_config.use_local_api = True
+        mock_config.service.use_local_api = True
         mock_console = MagicMock()
         await change_api_mode_wizard(mock_config, "config.yaml", mock_console)
         
@@ -39,7 +39,7 @@ async def test_api_mode_wizard_choices(mock_config):
         assert kwargs["default"] is True
         
         # Test with use_local_api = False
-        mock_config.use_local_api = False
+        mock_config.service.use_local_api = False
         mock_instance.ask_async = AsyncMock(return_value=False)
         # When False, it asks for a text URL
         mock_text.return_value.ask_async = AsyncMock(return_value="wss://test.api")
@@ -57,7 +57,7 @@ async def test_panels_wizard_choices(mock_config):
         mock_instance.ask_async = AsyncMock(return_value="3")
         mock_select.return_value = mock_instance
         
-        mock_config.num_panels = 2
+        mock_config.service.num_panels = 2
         mock_console = MagicMock()
         await change_panels_wizard(mock_config, "config.yaml", mock_console)
         
@@ -78,7 +78,7 @@ async def test_threshold_wizard(mock_config):
         mock_text.return_value = mock_instance
         
         await change_threshold_wizard(mock_config, "config.yaml")
-        assert mock_config.arrival_threshold_minutes == 10
+        assert mock_config.service.arrival_threshold_minutes == 10
         
         args, kwargs = mock_text.call_args
         assert kwargs["default"] == "5"

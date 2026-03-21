@@ -163,7 +163,7 @@ inclusion: auto
 - Restart/Stop Container buttons run `docker restart`/`docker stop` in background threads to avoid blocking the UI
 - When the container is stopped, the submenu shows "Not running" and the restart button label changes to "Start Container"
 - Container icon switches to 📵 when the container's `is_rate_limited` is true
-- Nomad maps container port 8080 → host 8081 (see `transit-tracker.nomad.hcl`)
+- Docker maps container port 8080 → host 8081
 
 ## Service State File
 

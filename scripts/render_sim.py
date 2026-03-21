@@ -11,7 +11,7 @@ from transit_tracker.simulator import LEDSimulator
 
 async def capture_sim_to_image():
     config = TransitConfig.load(".local/accurate_config.yaml")
-    config.use_local_api = True
+    config.service.use_local_api = True
     config.api_url = "ws://localhost:8000"
     
     sim = LEDSimulator(config, force_live=True)

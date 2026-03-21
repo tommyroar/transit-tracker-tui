@@ -4,6 +4,10 @@ import json
 import websockets
 
 from ..config import TransitConfig
+from ..logging import get_logger, is_message_logging_enabled
+from ..metrics import metrics
+
+log = get_logger("transit_tracker.client")
 
 
 async def run_service(config: TransitConfig = None):
@@ -13,53 +17,56 @@ async def run_service(config: TransitConfig = None):
     In 1-to-1 mode, this acts as a verification client for the local proxy.
     """
     from ..config import get_last_config_path
-    
+
     if config is None:
         config = TransitConfig.load()
-    
+
     current_path = get_last_config_path()
     api_url = config.api_url
 
-    print(f"[CLIENT] Starting background monitor, connecting to {api_url}")
-    
+    log.info("Starting background monitor, connecting to %s", api_url, extra={"component": "client"})
+
     while True:
         try:
             # Check for config reload
             new_path = get_last_config_path()
             if new_path and new_path != current_path:
-                print(f"[CLIENT] Config path changed: {new_path}. Reloading...")
+                log.info("Config path changed: %s — reloading", new_path, extra={"component": "client"})
                 config = TransitConfig.load(new_path)
                 current_path = new_path
                 api_url = config.api_url
-                # If we're already connected, the connection will be closed and restarted below
-                # or we can just continue and let the next iteration handle it.
 
             async with websockets.connect(api_url) as ws:
-                print(f"[CLIENT] Connected to {api_url}")
-                # Update current_path inside the connection context too
-                # to allow breaking out if config changes while connected
-                
+                log.info("Connected to %s", api_url, extra={"component": "client"})
+
                 # Build TJ Horner style routeStopPairs string for all subscriptions
                 pairs = []
                 for sub in config.subscriptions:
                     r_id = f"{sub.feed}:{sub.route}" if ":" not in sub.route else sub.route
                     s_id = f"{sub.feed}:{sub.stop}" if ":" not in sub.stop else sub.stop
                     pairs.append(f"{r_id},{s_id}")
-                
+
                 if pairs:
-                    await ws.send(json.dumps({
+                    sub_msg = json.dumps({
                         "event": "schedule:subscribe",
                         "client_name": "BackgroundMonitor",
                         "data": {
                             "routeStopPairs": ";".join(pairs)
                         }
-                    }))
+                    })
+                    await ws.send(sub_msg)
+                    if is_message_logging_enabled():
+                        log.debug("WS SEND: %s", sub_msg, extra={"component": "client", "direction": "send"})
 
                 async for message in ws:
+                    metrics.messages_received.inc()
+                    if is_message_logging_enabled():
+                        log.debug("WS RECV: %s", message, extra={"component": "client", "direction": "recv"})
+
                     # Check for config change while connected
                     check_path = get_last_config_path()
                     if check_path and check_path != current_path:
-                        print(f"[CLIENT] Config changed while connected. Reconnecting...")
+                        log.info("Config changed while connected — reconnecting", extra={"component": "client"})
                         break
 
                     data = json.loads(message)
@@ -70,7 +77,9 @@ async def run_service(config: TransitConfig = None):
                         if trips:
                             first = trips[0]
                             route = first.get("routeName", "??")
-                            print(f"[CLIENT] Received update: {len(trips)} trips. Next: {route} in {first.get('arrivalTime')} (Unix)")
+                            log.info("Received update: %d trips. Next: %s in %s (Unix)",
+                                     len(trips), route, first.get("arrivalTime"),
+                                     extra={"component": "client"})
         except Exception as e:
-            print(f"[CLIENT] Connection error: {e}. Retrying in 10s...")
+            log.warning("Connection error: %s — retrying in 10s", e, extra={"component": "client"})
             await asyncio.sleep(10)

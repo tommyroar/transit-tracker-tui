@@ -27,7 +27,7 @@ jobs:
       - name: Run Tests (including Capture Validation)
         env:
           TRANSIT_TRACKER_TESTING: "1"
-        run: uv run pytest -v
+        run: uv run pytest -v -m "not docker"
 
       - name: Verify CLI Launch
         run: uv run python scripts/verify_launch.py

@@ -4,6 +4,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+from .logging import get_logger
+
+log = get_logger("transit_tracker.api")
+
 
 class TransitAPIError(Exception):
     pass
@@ -213,8 +217,30 @@ class TransitAPI:
                     r["id"]: r for r in data["data"]["references"].get("routes", [])
                 }
 
-                results = []
+                # OBA sometimes returns duplicate entries for the same
+                # tripId (e.g. two vehicleIds for one trip).  Deduplicate,
+                # preferring the entry that has a vehicleId (realtime).
+                seen_trips: dict = {}
+                dupes = 0
                 for arr in arrivals:
+                    tid = arr["tripId"]
+                    if tid in seen_trips:
+                        dupes += 1
+                        prev = seen_trips[tid]
+                        # Keep whichever has a vehicleId; if both do, keep first
+                        if not prev.get("vehicleId") and arr.get("vehicleId"):
+                            seen_trips[tid] = arr
+                        continue
+                    seen_trips[tid] = arr
+                if dupes:
+                    log.warning(
+                        "Deduplicated %d OBA arrival(s) for stop %s (%d unique of %d total)",
+                        dupes, stop_id, len(seen_trips), len(arrivals),
+                        extra={"component": "api", "stop_id": stop_id},
+                    )
+
+                results = []
+                for arr in seen_trips.values():
                     route_id = arr["routeId"]
                     route_info = routes.get(route_id, {})
 

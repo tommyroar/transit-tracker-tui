@@ -13,6 +13,7 @@ class EntityType:
     SELECT = 2
     SWITCH = 3
     BUTTON = 4
+    NUMBER = 5
 
 class ESPHomeFlasher:
     def __init__(self, port_name: str, baudrate: int = 115200):
@@ -144,9 +145,9 @@ def load_hardware_config(port: str, config) -> bool:
                     val = base_url["value"]
                     config.api_url = val
                     if "localhost" in val or ".local" in val or "127.0.0.1" in val:
-                        config.use_local_api = True
+                        config.service.use_local_api = True
                     else:
-                        config.use_local_api = False
+                        config.service.use_local_api = False
                         config.transit_tracker.base_url = val
 
                 status.update("[cyan]Reading Schedule...")
@@ -193,7 +194,16 @@ def load_hardware_config(port: str, config) -> bool:
                         # Only replace if we actually found stops
                         if new_subs:
                             config.subscriptions = new_subs
-            
+
+                status.update("[cyan]Reading Brightness...")
+                brightness = flasher.get_entity("display_brightness", EntityType.NUMBER)
+                if brightness and "value" in brightness:
+                    try:
+                        val = int(float(brightness["value"]))
+                        config.transit_tracker.display_brightness = max(0, min(255, val))
+                    except (ValueError, TypeError):
+                        pass
+
             console.print("[bold green]Successfully read configuration from device![/bold green]")
             return True
         except Exception as e:
@@ -229,6 +239,10 @@ def flash_hardware(port: str, config) -> bool:
                 flasher.set_entity("list_mode_config", EntityType.SELECT, "sequential")
                 flasher.set_entity("time_units_config", EntityType.SELECT, "short")
                 flasher.set_entity("scroll_headsigns", EntityType.SWITCH, "ON")
+
+                status.update("[cyan]Configuring Brightness...")
+                brightness = config.transit_tracker.display_brightness
+                flasher.set_entity("display_brightness", EntityType.NUMBER, brightness)
 
                 status.update("[cyan]Saving Preferences...")
                 flasher.press_button("write_preferences")

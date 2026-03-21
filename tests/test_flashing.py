@@ -11,13 +11,15 @@ def test_config_serialization_for_hardware():
     Verifies that TransitConfig correctly serializes into the semicolon-separated 
     string format expected by the ESP32 hardware.
     """
-    config = TransitConfig()
-    config.use_local_api = True
-    config.transit_tracker.stops = [
-        TransitStop(stop_id="st:1_8494", routes=["st:40_100240"], time_offset="-7min"),
-        TransitStop(stop_id="st:1_1002", routes=["st:1_100451"], time_offset="2min")
-    ]
-    config.sync_internal_state()
+    config = TransitConfig(
+        service={"use_local_api": True},
+        transit_tracker={
+            "stops": [
+                {"stop_id": "st:1_8494", "routes": ["st:40_100240"], "time_offset": "-7min"},
+                {"stop_id": "st:1_1002", "routes": ["st:1_100451"], "time_offset": "2min"},
+            ]
+        },
+    )
 
     # The hardware expects: routeId,stopId,offsetSeconds;...
     # -7min = -420 seconds
@@ -45,10 +47,8 @@ def test_config_serialization_for_hardware():
 
 def test_local_api_url_resolution():
     """Ensures that setting use_local_api=True always results in a network-reachable URL."""
-    config = TransitConfig()
-    config.use_local_api = True
-    config.sync_internal_state()
-    
+    config = TransitConfig(service={"use_local_api": True})
+
     assert "localhost" not in config.api_url
     assert "Tommys-Mac-mini.local" in config.api_url
     assert config.api_url.startswith("ws://")

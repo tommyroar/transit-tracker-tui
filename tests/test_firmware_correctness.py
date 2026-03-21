@@ -15,12 +15,10 @@ def test_offset_contract_consistency():
     now_ts = int(time.time())
     arrival_ts = now_ts + 600 # 10 minutes from now
     
-    config = TransitConfig()
     from transit_tracker.config import TransitStop
-    config.transit_tracker.stops = [
-        TransitStop(stop_id="1_1234", routes=["st:14"], time_offset="-2min")
-    ]
-    config.sync_internal_state()
+    config = TransitConfig(
+        transit_tracker={"stops": [{"stop_id": "1_1234", "routes": ["st:14"], "time_offset": "-2min"}]}
+    )
     # Ensure routeId in mock trip matches what normalize_id expects
     arrival_ts = now_ts + 600
     mock_oba_trip = {
@@ -58,7 +56,7 @@ def test_offset_contract_consistency():
     assert sent_data["arrivalTime"] == expected_spoofed
     
     # Now run this through the Simulator WITH use_local_api=True
-    config.use_local_api = True
+    config.service.use_local_api = True
     config.api_url = "ws://localhost:8000"
     sim = LEDSimulator(config)
     sim.state["live"] = {"trips": ws.sent["data"]["trips"], "timestamp": time.time()}
@@ -70,7 +68,7 @@ def test_offset_contract_consistency():
     # The simulator (like the hardware) now expects the proxy to have handled
     # any necessary time offsets. If we point it at a raw API (like tt.horner.tj)
     # it should just show the raw arrival time.
-    config.use_local_api = False
+    config.service.use_local_api = False
     config.api_url = "wss://tt.horner.tj/"
     
     # Raw data from remote (no spoofing)

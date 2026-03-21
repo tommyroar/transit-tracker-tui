@@ -29,7 +29,7 @@ from .transit_api import TransitAPI
 
 log = get_logger("transit_tracker.gui")
 
-# Container status endpoint (Nomad maps container 8080 → host 8081)
+# Container status endpoint (container 8080 → host 8081)
 CONTAINER_STATUS_URL = "http://localhost:8081/api/status"
 CONTAINER_NAME = "transit-tracker"
 

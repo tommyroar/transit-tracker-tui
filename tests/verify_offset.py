@@ -65,14 +65,14 @@ def verify_offset():
         eff_mins = raw_mins + int(offset_sec / 60)
         
         # Test Arrival Mode (should show raw)
-        config.time_display = "arrival"
-        display_arrival = eff_mins if config.time_display == "departure" else raw_mins
+        config.transit_tracker.time_display = "arrival"
+        display_arrival = eff_mins if config.transit_tracker.time_display == "departure" else raw_mins
         print(f"Route {sub.route} [Mode: arrival]: Raw {raw_mins}m + Offset {sub.time_offset} -> Display {display_arrival}m")
         assert display_arrival == 15
         
         # Test Departure Mode (should show effective)
-        config.time_display = "departure"
-        display_departure = eff_mins if config.time_display == "departure" else raw_mins
+        config.transit_tracker.time_display = "departure"
+        display_departure = eff_mins if config.transit_tracker.time_display == "departure" else raw_mins
         print(f"Route {sub.route} [Mode: departure]: Raw {raw_mins}m + Offset {sub.time_offset} -> Display {display_departure}m")
         if sub.stop == "st:1_2360":
             assert display_departure == 5

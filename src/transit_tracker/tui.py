@@ -424,11 +424,11 @@ async def remove_stop_wizard(config: TransitConfig, config_path: str):
 async def change_threshold_wizard(config: TransitConfig, config_path: str):
     val = await questionary.text(
         "Enter new alert threshold in minutes:",
-        default=str(config.arrival_threshold_minutes)
+        default=str(config.service.arrival_threshold_minutes)
     ).ask_async()
     
     if val and val.isdigit() and int(val) > 0:
-        config.arrival_threshold_minutes = int(val)
+        config.service.arrival_threshold_minutes = int(val)
         config.save(config_path)
         print("Threshold updated.")
     else:
@@ -441,11 +441,11 @@ async def change_panels_wizard(config: TransitConfig, config_path: str, console:
         config=config,
         config_path=config_path,
         console=console,
-        default=str(config.num_panels)
+        default=str(config.service.num_panels)
     )
     
     if val:
-        config.num_panels = int(val)
+        config.service.num_panels = int(val)
         config.save(config_path)
         rprint(f"[green]Hardware setup updated to {val} panel(s).[/green]")
 
@@ -461,11 +461,11 @@ async def change_api_mode_wizard(config: TransitConfig, config_path: str, consol
         config=config,
         config_path=config_path,
         console=console,
-        default=config.use_local_api
+        default=config.service.use_local_api
     )
     
     if mode is not None:
-        config.use_local_api = mode
+        config.service.use_local_api = mode
         if not mode:
             url = await questionary.text(
                 "Enter Public API URL:",
@@ -512,7 +512,7 @@ def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
     if "RUNNING" in status:
         status_text.append(f" (PID: {pid}, Uptime: {uptime}, Msg: {messages})", style="dim")
     
-    if config.use_local_api:
+    if config.service.use_local_api:
         data_source = "Local (OBA Proxy)"
         port = 8000 
         service_info = f"Serving at: ws://Tommys-Mac-mini.local:{port}"
@@ -522,7 +522,7 @@ def make_dashboard(config: TransitConfig, config_path: str) -> Panel:
 
     source_text = Text(f"Data Source: {data_source}", style="cyan")
     info_text = Text(service_info, style="blue")
-    panels_text = Text(f"Hardware Setup: {config.num_panels} Panel(s)", style="magenta")
+    panels_text = Text(f"Hardware Setup: {config.service.num_panels} Panel(s)", style="magenta")
     config_file_text = Text(f"Current Config: {config_path or 'No file loaded (in-memory)'}", style="dim")
     
     last_svc_update = "Never"

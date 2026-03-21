@@ -35,7 +35,7 @@ async def generate_sim_template(config: TransitConfig) -> np.ndarray:
 
     # Constants matching render_sim.py
     scale = 4
-    display_width = config.panel_width * config.num_panels
+    display_width = config.service.panel_width * config.service.num_panels
     img = np.zeros((32 * scale, display_width * scale, 3), dtype=np.uint8)
     
     for i, dep in enumerate(deps[:4]):

@@ -128,7 +128,7 @@ def test_flash_hardware_serialization():
     MockSerialTx.writes = []
 
     config = TransitConfig()
-    config.use_local_api = False
+    config.service.use_local_api = False
     config.transit_tracker.base_url = "wss://tt.horner.tj/"
     config.api_url = "wss://tt.horner.tj/"
     

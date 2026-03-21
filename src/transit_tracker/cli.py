@@ -110,7 +110,7 @@ def _manage_service_launchctl(action: str):
 
     if action == "start":
         if sys.platform != "darwin":
-            print("[red]Service management requires macOS or Nomad.[/red]")
+            print("[red]Service management requires macOS.[/red]")
             return
         if get_service_status():
             print(f"[yellow]Service {label} is already running.[/yellow]")
@@ -123,7 +123,7 @@ def _manage_service_launchctl(action: str):
 
     elif action == "stop":
         if sys.platform != "darwin":
-            print("[red]Service management requires macOS or Nomad.[/red]")
+            print("[red]Service management requires macOS.[/red]")
             return
         print(f"Stopping {label} via launchctl...")
         os.system(f"launchctl unload {PLIST_PATH}")
@@ -171,14 +171,14 @@ async def run_full_service():
     gui_proc = None
 
     # GUI is tied to service lifecycle
-    if sys.platform == "darwin" and config.auto_launch_gui:
+    if sys.platform == "darwin" and config.service.auto_launch_gui:
         log.info("Starting GUI tray icon", extra={"component": "service"})
         gui_proc = subprocess.Popen([sys.executable, "-m", "transit_tracker.cli", "gui"])
 
     # Always start the local proxy server (for hardware/monitors)
     tasks.append(run_server(config=config))
 
-    if config.use_local_api:
+    if config.service.use_local_api:
         # Force notification client to use the local server we just started
         config.api_url = "ws://localhost:8000"
     else:

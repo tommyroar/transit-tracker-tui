@@ -38,7 +38,7 @@ docker logs transit-tracker --tail 20        # recent logs
 
 ## Container Management
 
-Managed directly by Docker restart policy (not Nomad):
+Managed directly by Docker restart policy:
 
 ```
 docker run -d --name transit-tracker --restart=always \
@@ -72,5 +72,3 @@ CLI integration:
 ```
 macOS login → OrbStack (start_at_login) → container (restart=always)
 ```
-
-Nomad job file (`transit-tracker.nomad.hcl`) is retained for ad-hoc use but is not in the production loop.

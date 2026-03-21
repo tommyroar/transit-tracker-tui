@@ -1,14 +1,17 @@
 import argparse
 import asyncio
 import os
+import subprocess
 import sys
 import time
-import subprocess
 
 from .config import TransitConfig, get_last_config_path
+from .logging import get_logger, setup_logging
 from .network.websocket_server import run_server
 from .network.websocket_service import run_service as run_client
 from .tui import run_cli
+
+log = get_logger("transit_tracker.cli")
 
 PLIST_NAME = "org.eastsideurbanism.transit-tracker.plist"
 PLIST_PATH = os.path.expanduser(f"~/Library/LaunchAgents/{PLIST_NAME}")
@@ -159,17 +162,17 @@ async def run_full_service():
     """Runs both the WebSocket server (for HW) and the notification client."""
     path = get_last_config_path()
     if path and os.path.exists(path):
-        print(f"[SERVICE] Loading config from {path}")
+        log.info("Loading config from %s", path, extra={"component": "service"})
         config = TransitConfig.load(path)
     else:
         config = TransitConfig.load()
-        
+
     tasks = []
     gui_proc = None
-    
+
     # GUI is tied to service lifecycle
     if sys.platform == "darwin" and config.service.auto_launch_gui:
-        print("[SERVICE] Starting GUI tray icon...")
+        log.info("Starting GUI tray icon", extra={"component": "service"})
         gui_proc = subprocess.Popen([sys.executable, "-m", "transit_tracker.cli", "gui"])
 
     # Always start the local proxy server (for hardware/monitors)
@@ -182,15 +185,15 @@ async def run_full_service():
         # If using public API, ensure it's not pointing to localhost
         if "localhost" in config.api_url or "127.0.0.1" in config.api_url:
             config.api_url = "wss://tt.horner.tj/"
-    
+
     # Notification client connects to configured target (Cloud or Local)
     tasks.append(run_client(config=config))
-    
+
     try:
         await asyncio.gather(*tasks)
     finally:
         if gui_proc:
-            print("[SERVICE] Cleaning up GUI tray icon...")
+            log.info("Cleaning up GUI tray icon", extra={"component": "service"})
             gui_proc.terminate()
             try:
                 gui_proc.wait(timeout=2)
@@ -211,9 +214,24 @@ def main():
         nargs="*",
         help="Command to run: 'ui' (default), 'service [start|stop|restart|status]', 'simulator', 'gui', 'web'."
     )
+    parser.add_argument("--log-level", default=os.environ.get("TT_LOG_LEVEL", "INFO"),
+                        help="Log level: DEBUG, INFO, WARNING, ERROR")
+    parser.add_argument("--log-json", action="store_true",
+                        default=os.environ.get("TT_LOG_JSON", "").lower() in ("1", "true"),
+                        help="Emit structured JSON logs (for containers)")
+    parser.add_argument("--log-messages", action="store_true",
+                        default=os.environ.get("TT_LOG_MESSAGES", "").lower() in ("1", "true"),
+                        help="Log all WebSocket messages sent/received")
 
     args = parser.parse_args()
-    
+
+    # Configure logging before anything else
+    setup_logging(
+        level=args.log_level,
+        json_output=args.log_json,
+        message_logging=args.log_messages,
+    )
+
     cmd_list = args.command
     primary_cmd = cmd_list[0] if cmd_list else "ui"
     sub_cmd = cmd_list[1] if len(cmd_list) > 1 else None
@@ -233,6 +251,10 @@ def main():
     elif primary_cmd == "simulator":
         from .simulator import run_simulator
         run_simulator(config, force_live=True)
+    elif primary_cmd == "monitor":
+        from .monitor import run_monitor
+        use_ws = "--ws" in sys.argv
+        asyncio.run(run_monitor(config, use_ws=use_ws))
     elif primary_cmd == "web":
         from .web import run_web
         asyncio.run(run_web(config))

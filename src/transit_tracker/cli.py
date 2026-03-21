@@ -168,14 +168,14 @@ async def run_full_service():
     gui_proc = None
     
     # GUI is tied to service lifecycle
-    if sys.platform == "darwin" and config.auto_launch_gui:
+    if sys.platform == "darwin" and config.service.auto_launch_gui:
         print("[SERVICE] Starting GUI tray icon...")
         gui_proc = subprocess.Popen([sys.executable, "-m", "transit_tracker.cli", "gui"])
 
     # Always start the local proxy server (for hardware/monitors)
     tasks.append(run_server(config=config))
 
-    if config.use_local_api:
+    if config.service.use_local_api:
         # Force notification client to use the local server we just started
         config.api_url = "ws://localhost:8000"
     else:

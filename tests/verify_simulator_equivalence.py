@@ -15,7 +15,7 @@ async def get_sim_output(url):
     config = TransitConfig.load(".local/accurate_config.yaml")
     config.api_url = url
     # Ensure simulator knows we are testing live-like behavior
-    config.use_local_api = ("localhost" in url or "127.0.0.1" in url)
+    config.service.use_local_api = ("localhost" in url or "127.0.0.1" in url)
     
     sim = LEDSimulator(config, force_live=True)
     task = asyncio.create_task(sim._listen_websocket())

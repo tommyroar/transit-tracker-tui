@@ -61,7 +61,7 @@ transit-tracker service # start background service (WebSocket server + client)
 
 | Module | Role |
 |--------|------|
-| `config.py` | Pydantic config schema; reads/writes `~/.config/transit-tracker/settings.yaml` |
+| `config.py` | Two-part config: `ServiceSettings` (service/env) + `TransitTrackerSettings` (board subscriptions), merged into `TransitConfig` at runtime |
 | `transit_api.py` | Async httpx client for OBA API (geocode, stops, arrivals, polylines) |
 | `network/websocket_server.py` | Local proxy — subscriptions, OBA polling, rate-limit backoff, ferry logic |
 | `network/websocket_service.py` | Background client — connects to configured API endpoint, monitors config changes |
@@ -85,10 +85,11 @@ The menu bar profile submenu shows live trip data as text lines: `ROUTE  Headsig
 ### GUI lifecycle
 The GUI tray icon is a subprocess of the service (`run_full_service()` in `cli.py`). When the service restarts, the GUI is killed and relaunched automatically. `service restart` uses `launchctl kickstart -k` for reliability.
 
-### Config
-- Schema: `TransitConfig` (root) wraps `TransitTrackerSettings` (nested under `transit_tracker:`)
-- Last-used config path stored in `~/.config/transit-tracker/settings.yaml` as `last_config_path`
-- Service detects config file changes and reconnects automatically
+### Config (two-file system)
+- **Board subscription profiles** (`.local/*.yaml`, `data/needle_stops.yaml`): Pure stop/route data under `transit_tracker:` key. Schema: `TransitTrackerSettings` — only `base_url`, `time_display`, `scroll_headsigns`, `display_format`, `stops`, `abbreviations`. No API keys or service settings.
+- **Service settings** (`~/.config/transit-tracker/settings.yaml`): `ServiceSettings` model — `oba_api_key`, `check_interval_seconds`, `request_spacing_ms`, `arrival_threshold_minutes`, `num_panels`, `panel_width`, `panel_height`, `use_local_api`, `auto_launch_gui`, `last_config_path`.
+- `TransitConfig` is a runtime composite: merges both at load time. Access board settings via `config.transit_tracker.*`, service settings via `config.service.*`.
+- `config.save()` writes only the `transit_tracker:` block. Service settings persist via `save_service_settings()`.
 - Profile `.yaml` files can live in project root or `.local/`
 
 ### Integration testing

@@ -190,7 +190,7 @@ class LEDSimulator:
 
         # Correctly prioritize the local API if configured
         api_url = self.config.api_url
-        if self.config.use_local_api and ("localhost" not in api_url and "127.0.0.1" not in api_url):
+        if self.config.service.use_local_api and ("localhost" not in api_url and "127.0.0.1" not in api_url):
             # Fallback/Safety: if use_local_api is True but url isn't local, force it
             api_url = "ws://localhost:8000"
         
@@ -251,8 +251,8 @@ class LEDSimulator:
         to determine segment order and colors.  The HEADSIGN segment gets
         scrolling support; the LIVE segment renders the animated icon.
         """
-        display_width = self.config.panel_width * self.config.num_panels
-        fmt = getattr(self.config, "display_format", None)
+        display_width = self.config.service.panel_width * self.config.service.num_panels
+        fmt = self.config.transit_tracker.display_format
         segments = build_bitmap_segments(dep, fmt=fmt)
 
         # Pre-compute total fixed width (everything except HEADSIGN)
@@ -287,7 +287,7 @@ class LEDSimulator:
                 full_w = len(bm_full[0])
                 scroll_offset = 0
                 if (
-                    self.config.scroll_headsigns
+                    self.config.transit_tracker.scroll_headsigns
                     and full_w > headsign_area_w > 0
                 ):
                     overflow = full_w - headsign_area_w
@@ -441,7 +441,7 @@ class LEDSimulator:
                     
                     if arr_val is None: continue
                     
-                    display_mode = getattr(self.config, "time_display", "arrival")
+                    display_mode = self.config.transit_tracker.time_display
                     
                     now_minus_buffer_ms = current_time_ms - (3600 * 1000)
                     
@@ -538,8 +538,8 @@ class LEDSimulator:
     def get_current_display_text(self) -> str:
         """Returns a string representation of the current display (e.g., '14 Downtown 2m')."""
         deps = self.get_upcoming_departures()
-        fmt = getattr(self.config, "display_format", None)
-        display_width = self.config.panel_width * self.config.num_panels
+        fmt = self.config.transit_tracker.display_format
+        display_width = self.config.service.panel_width * self.config.service.num_panels
         lines = []
         for d in deps[:3]:
             segments = build_bitmap_segments(d, fmt=fmt)
@@ -595,7 +595,7 @@ class LEDSimulator:
                 all_lines.extend(self._render_trip_row(dep, elapsed))
                 all_lines.append(Text("")) # Spacer row
 
-        panel_title = f"[bold red]HUB75 {64 * self.config.num_panels}x32 LED SIMULATOR[/bold red]"
+        panel_title = f"[bold red]HUB75 {64 * self.config.service.num_panels}x32 LED SIMULATOR[/bold red]"
         if is_mock:
             panel_title += " [yellow](MOCK DATA)[/yellow]"
         else:

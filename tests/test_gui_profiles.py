@@ -5,6 +5,8 @@ import time
 from unittest.mock import MagicMock, patch, AsyncMock
 import pytest
 
+pytestmark = pytest.mark.integration
+
 if sys.platform != "darwin":
     pytest.skip("GUI tests require macOS (rumps)", allow_module_level=True)
 

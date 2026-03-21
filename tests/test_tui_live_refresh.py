@@ -6,6 +6,7 @@ import pytest
 from transit_tracker.config import TransitConfig
 from transit_tracker.tui import ask_with_live_dashboard
 
+pytestmark = pytest.mark.unit
 
 @pytest.mark.asyncio
 async def test_live_dashboard_refresh():

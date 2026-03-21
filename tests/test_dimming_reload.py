@@ -17,6 +17,8 @@ from transit_tracker.config import (
     save_service_settings,
 )
 
+pytestmark = pytest.mark.unit
+
 
 # ---------------------------------------------------------------------------
 # Config path resolution

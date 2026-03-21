@@ -1,4 +1,5 @@
 """
+
 Test suite for the Transit Tracker web module.
 
 Tests cover:
@@ -23,6 +24,8 @@ from transit_tracker.web import (
     generate_index_html,
     resolve_stop_coordinates,
 )
+
+pytestmark = pytest.mark.unit
 
 # --- Fixtures ---
 

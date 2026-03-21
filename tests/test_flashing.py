@@ -5,6 +5,7 @@ import pytest
 from transit_tracker.config import TransitConfig, TransitStop
 from transit_tracker.hardware import EntityType, flash_hardware
 
+pytestmark = pytest.mark.unit
 
 def test_config_serialization_for_hardware():
     """

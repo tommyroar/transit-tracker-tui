@@ -7,6 +7,8 @@ import pytest
 from transit_tracker.config import TransitConfig, TransitSubscription
 from transit_tracker.network.websocket_server import TransitServer
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def mock_config():

@@ -1,7 +1,11 @@
 from unittest.mock import MagicMock, patch
 import subprocess
 import os
+import pytest
 from transit_tracker.cli import main
+
+pytestmark = pytest.mark.unit
+
 
 def test_cli_main_ui_launch():
     """Verifies that running with no args (default 'ui') attempts to launch the TUI."""

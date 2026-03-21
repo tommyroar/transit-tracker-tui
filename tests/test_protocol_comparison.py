@@ -1,25 +1,24 @@
-import asyncio
+"""Contract tests: local proxy protocol matches reference cloud format.
+
+
+Verifies that the local WebSocket proxy produces responses whose
+structure (event names, field types, units) is identical to the
+reference cloud proxy at wss://tt.horner.tj/.
+"""
+
 import json
 import time
+
+import pytest
 
 from transit_tracker.config import TransitConfig, TransitSubscription
 from transit_tracker.network.websocket_server import TransitServer
 
+pytestmark = pytest.mark.contract
 
-class ProtocolValidator:
-    def __init__(self, name, data):
-        self.name = name
-        self.data = data
-        self.results = {}
 
-    def check(self, key, condition, description):
-        try:
-            passed = condition(self.data)
-            self.results[key] = "✅ PASS" if passed else "❌ FAIL"
-        except Exception as e:
-            self.results[key] = f"💥 ERR ({str(e)[:15]})"
-
-def get_reference_trip(now):
+def _get_reference_trip(now):
+    """Canonical trip dict matching the cloud proxy schema."""
     return {
         "tripId": "ref-123",
         "routeId": "14",
@@ -29,86 +28,244 @@ def get_reference_trip(now):
         "headsign": "Downtown",
         "arrivalTime": now + 600,
         "departureTime": now + 600,
-        "isRealtime": True
+        "isRealtime": True,
     }
 
-async def run_protocol_test():
+
+class MockWS:
+    def __init__(self):
+        self.sent = []
+
+    async def send(self, msg):
+        self.sent.append(json.loads(msg))
+
+    @property
+    def remote_address(self):
+        return ("192.168.1.50", 1234)
+
+
+@pytest.fixture
+def protocol_payload():
+    """Run the local proxy and return (actual_payload, reference_payload, now)."""
+
+    async def _run():
+        now = int(time.time())
+        config = TransitConfig()
+        config.subscriptions = [
+            TransitSubscription(
+                feed="st", route="14", stop="1_1234", label="14", time_offset="0min"
+            )
+        ]
+
+        server = TransitServer(config)
+        server.cache["1_1234"] = (
+            time.time(),
+            [
+                {
+                    "tripId": "ref-123",
+                    "routeId": "14",
+                    "stopId": "1_1234",
+                    "predictedArrivalTime": (now + 600) * 1000,
+                    "routeName": "14",
+                    "headsign": "Downtown",
+                }
+            ],
+        )
+
+        ws = MockWS()
+        server.clients.add(ws)
+        server.subscriptions[ws] = [{"routeId": "14", "stopId": "1_1234"}]
+        await server.send_update(ws)
+
+        actual = ws.sent[0]
+        reference = {
+            "event": "schedule",
+            "data": {"trips": [_get_reference_trip(now)]},
+        }
+        return actual, reference, now
+
+    import asyncio
+
+    return asyncio.get_event_loop().run_until_complete(_run())
+
+
+def _trip_from(payload):
+    """Extract first trip from a schedule payload."""
+    d = payload.get("data") or payload.get("payload") or {}
+    trips = d.get("trips", [{}])
+    return trips[0] if trips else {}
+
+
+# -- Individual protocol checks as proper test functions ---------------------
+
+
+@pytest.mark.asyncio
+async def test_event_name_is_schedule():
+    """Top-level 'event' field must be 'schedule'."""
     now = int(time.time())
     config = TransitConfig()
     config.subscriptions = [
-        TransitSubscription(feed="st", route="14", stop="1_1234", label="14", time_offset="0min")
+        TransitSubscription(
+            feed="st", route="14", stop="1_1234", label="14", time_offset="0min"
+        )
     ]
-    
     server = TransitServer(config)
-    server.cache["1_1234"] = (time.time(), [{
-        "tripId": "ref-123",
-        "routeId": "14",
-        "stopId": "1_1234",
-        "predictedArrivalTime": (now + 600) * 1000, # OBA ms
-        "routeName": "14",
-        "headsign": "Downtown"
-    }])
-
-    class MockWS:
-        def __init__(self): self.sent = []
-        async def send(self, msg): self.sent.append(json.loads(msg))
-        @property
-        def remote_address(self): return ("192.168.1.50", 1234)
-
+    server.cache["1_1234"] = (
+        time.time(),
+        [
+            {
+                "tripId": "ref-123",
+                "routeId": "14",
+                "stopId": "1_1234",
+                "predictedArrivalTime": (now + 600) * 1000,
+                "routeName": "14",
+                "headsign": "Downtown",
+            }
+        ],
+    )
     ws = MockWS()
-    # Simulate Subscribe
-    subscribe_msg = json.dumps({
-        "event": "schedule:subscribe",
-        "data": {"routeStopPairs": "14,1_1234"}
-    })
-    
-    # We'll manually run the registration logic steps
     server.clients.add(ws)
-    # The register loop is normally an 'async for message in ws'
-    # We'll just trigger the inner logic for send_update
     server.subscriptions[ws] = [{"routeId": "14", "stopId": "1_1234"}]
     await server.send_update(ws)
-    
-    actual_payload = ws.sent[0]
-    # Check both keys just in case, but reference should use 'data'
-    d = actual_payload.get("data") or actual_payload.get("payload") or {}
-    trips = d.get("trips", [{}])
-    trip = trips[0]
+    payload = ws.sent[0]
 
-    # VALIDATORS
-    local = ProtocolValidator("Local Proxy", actual_payload)
-    
-    # Define Reference (The "Clean" baseline we WANT to match)
-    ref_payload = {
-        "event": "schedule",
-        "data": {
-            "trips": [get_reference_trip(now)]
-        }
-    }
-    reference = ProtocolValidator("Original (Reference)", ref_payload)
+    assert payload.get("event") == "schedule"
 
-    # CHECK SUITE
-    checks = [
-        ("Event Name", lambda d: d.get("event") == "schedule", "Top-level 'event' is 'schedule'"),
-        ("Data Key", lambda d: "data" in d, "Data is wrapped in 'data' key"),
-        ("Trip Count", lambda d: len(d.get("data", {}).get("trips", [])) > 0, "At least one trip returned"),
-        ("StopId Inside", lambda d: "stopId" in d.get("data", {}).get("trips", [{}])[0], "stopId present inside trip"),
-        ("Arrival Type", lambda d: isinstance(d.get("data", {}).get("trips", [{}])[0].get("arrivalTime"), int), "arrivalTime is an Integer"),
-        ("Arrival Unit", lambda d: d.get("data", {}).get("trips", [{}])[0].get("arrivalTime", 0) < 2*10**9, "arrivalTime is Seconds (not ms)"),
-        ("Departure Exist", lambda d: "departureTime" in d.get("data", {}).get("trips", [{}])[0], "departureTime field is present"),
-        ("RouteColor Format", lambda d: d.get("data", {}).get("trips", [{}])[0].get("routeColor") is None or "#" not in str(d.get("data", {}).get("trips", [{}])[0].get("routeColor")), "No # in routeColor"),
-        ("IsRealtime Bool", lambda d: isinstance(d.get("data", {}).get("trips", [{}])[0].get("isRealtime"), bool), "isRealtime is Boolean"),
+
+@pytest.mark.asyncio
+async def test_data_key_present():
+    """Response wraps trips in a 'data' key."""
+    now = int(time.time())
+    config = TransitConfig()
+    config.subscriptions = [
+        TransitSubscription(
+            feed="st", route="14", stop="1_1234", label="14", time_offset="0min"
+        )
     ]
+    server = TransitServer(config)
+    server.cache["1_1234"] = (
+        time.time(),
+        [
+            {
+                "tripId": "ref-123",
+                "routeId": "14",
+                "stopId": "1_1234",
+                "predictedArrivalTime": (now + 600) * 1000,
+                "routeName": "14",
+                "headsign": "Downtown",
+            }
+        ],
+    )
+    ws = MockWS()
+    server.clients.add(ws)
+    server.subscriptions[ws] = [{"routeId": "14", "stopId": "1_1234"}]
+    await server.send_update(ws)
+    payload = ws.sent[0]
 
-    for key, cond, desc in checks:
-        local.check(key, cond, desc)
-        reference.check(key, cond, desc)
+    assert "data" in payload
 
-    # PRINT TABLE
-    print("\n| Protocol Feature | Local Proxy (Current) | Original (Reference) |")
-    print("| :--- | :--- | :--- |")
-    for key, _, _ in checks:
-        print(f"| {key} | {local.results[key]} | {reference.results[key]} |")
 
-if __name__ == "__main__":
-    asyncio.run(run_protocol_test())
+@pytest.mark.asyncio
+async def test_trip_has_required_fields():
+    """Each trip must have stopId, arrivalTime (int, seconds), isRealtime (bool)."""
+    now = int(time.time())
+    config = TransitConfig()
+    config.subscriptions = [
+        TransitSubscription(
+            feed="st", route="14", stop="1_1234", label="14", time_offset="0min"
+        )
+    ]
+    server = TransitServer(config)
+    server.cache["1_1234"] = (
+        time.time(),
+        [
+            {
+                "tripId": "ref-123",
+                "routeId": "14",
+                "stopId": "1_1234",
+                "predictedArrivalTime": (now + 600) * 1000,
+                "routeName": "14",
+                "headsign": "Downtown",
+            }
+        ],
+    )
+    ws = MockWS()
+    server.clients.add(ws)
+    server.subscriptions[ws] = [{"routeId": "14", "stopId": "1_1234"}]
+    await server.send_update(ws)
+    trip = _trip_from(ws.sent[0])
+
+    assert "stopId" in trip
+    assert isinstance(trip.get("arrivalTime"), int)
+    # arrivalTime should be in seconds, not milliseconds
+    assert trip["arrivalTime"] < 2 * 10**9
+    assert isinstance(trip.get("isRealtime"), bool)
+
+
+@pytest.mark.asyncio
+async def test_departure_time_present():
+    """departureTime field must be present in trip."""
+    now = int(time.time())
+    config = TransitConfig()
+    config.subscriptions = [
+        TransitSubscription(
+            feed="st", route="14", stop="1_1234", label="14", time_offset="0min"
+        )
+    ]
+    server = TransitServer(config)
+    server.cache["1_1234"] = (
+        time.time(),
+        [
+            {
+                "tripId": "ref-123",
+                "routeId": "14",
+                "stopId": "1_1234",
+                "predictedArrivalTime": (now + 600) * 1000,
+                "routeName": "14",
+                "headsign": "Downtown",
+            }
+        ],
+    )
+    ws = MockWS()
+    server.clients.add(ws)
+    server.subscriptions[ws] = [{"routeId": "14", "stopId": "1_1234"}]
+    await server.send_update(ws)
+    trip = _trip_from(ws.sent[0])
+
+    assert "departureTime" in trip
+
+
+@pytest.mark.asyncio
+async def test_route_color_format():
+    """routeColor must not contain '#' prefix (bare hex)."""
+    now = int(time.time())
+    config = TransitConfig()
+    config.subscriptions = [
+        TransitSubscription(
+            feed="st", route="14", stop="1_1234", label="14", time_offset="0min"
+        )
+    ]
+    server = TransitServer(config)
+    server.cache["1_1234"] = (
+        time.time(),
+        [
+            {
+                "tripId": "ref-123",
+                "routeId": "14",
+                "stopId": "1_1234",
+                "predictedArrivalTime": (now + 600) * 1000,
+                "routeName": "14",
+                "headsign": "Downtown",
+                "routeColor": "FF00FF",
+            }
+        ],
+    )
+    ws = MockWS()
+    server.clients.add(ws)
+    server.subscriptions[ws] = [{"routeId": "14", "stopId": "1_1234"}]
+    await server.send_update(ws)
+    trip = _trip_from(ws.sent[0])
+
+    color = trip.get("routeColor")
+    if color is not None:
+        assert "#" not in str(color)

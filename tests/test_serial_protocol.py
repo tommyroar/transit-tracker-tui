@@ -5,6 +5,7 @@ import pytest
 
 from transit_tracker.hardware import EntityType, ESPHomeFlasher
 
+pytestmark = pytest.mark.unit
 
 def test_esphome_flasher_protocol():
     """Test that ESPHomeFlasher correctly formats JRPC messages over serial."""

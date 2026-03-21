@@ -7,6 +7,8 @@ import pytest
 from transit_tracker.config import TransitConfig
 from transit_tracker.network.websocket_server import TransitServer
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.asyncio
 async def test_service_isolation_from_disk_changes():

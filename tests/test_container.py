@@ -1,5 +1,6 @@
 """Docker container integration tests for Transit Tracker.
 
+
 Builds the transit-tracker image, starts a container, and verifies:
 - WebSocket heartbeat on port 8000
 - /api/spec returns valid JSON on port 8080
@@ -19,6 +20,8 @@ import httpx
 import pytest
 import websockets.sync.client
 
+pytestmark = pytest.mark.e2e
+
 def _docker_available() -> bool:
     if not shutil.which("docker"):
         return False
@@ -32,7 +35,6 @@ def _docker_available() -> bool:
 
 if not _docker_available():
     pytest.skip("Docker not available", allow_module_level=True)
-
 IMAGE_NAME = "transit-tracker"
 CONTAINER_NAME = "transit-tracker-test"
 WS_HOST_PORT = 18000

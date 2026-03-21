@@ -4,10 +4,11 @@ import sys
 import pytest
 import yaml
 
+pytestmark = pytest.mark.integration
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 from transit_tracker.config import TransitConfig
 from transit_tracker.simulator import LEDSimulator
-
 
 def get_captures():
     candidates = [

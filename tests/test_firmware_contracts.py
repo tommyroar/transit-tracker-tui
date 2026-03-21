@@ -4,6 +4,7 @@ import tempfile
 import httpx
 import pytest
 
+pytestmark = pytest.mark.contract
 # The expected latest version we are testing against (from our research)
 LATEST_VERSION = "v2.8.3"
 REPO_OWNER = "EastsideUrbanism"

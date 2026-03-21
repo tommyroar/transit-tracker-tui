@@ -5,6 +5,8 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+pytestmark = pytest.mark.unit
+
 # Add src to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
@@ -69,7 +71,6 @@ def test_config_save_load(tmp_path):
 def test_service_settings_roundtrip(tmp_path):
     """Service settings save and load correctly via .local/service.yaml."""
     import unittest.mock as mock
-
     settings_file = tmp_path / "service.yaml"
     with mock.patch(
         "transit_tracker.config._resolve_settings_path",

@@ -1,3 +1,4 @@
+import datetime
 import os
 import re
 import tempfile
@@ -53,7 +54,10 @@ def list_profiles() -> List[str]:
     local_dir = os.path.join(project_root, ".local")
     if os.path.exists(local_dir):
         for f in os.listdir(local_dir):
-            if f.endswith(".yaml") and f not in ["service_state.json", "accurate_config.yaml"]:
+            if f.endswith(".yaml") and f not in [
+                "service_state.json",
+                "accurate_config.yaml",
+            ]:
                 profiles.append(os.path.abspath(os.path.join(local_dir, f)))
 
     # Check project root
@@ -87,6 +91,21 @@ class Abbreviation(BaseModel):
     short: str
 
 
+class DimmingEntry(BaseModel):
+    time: str  # "HH:MM" format
+    brightness: int = Field(ge=0, le=255)
+
+    @field_validator("time")
+    @classmethod
+    def validate_time_format(cls, v):
+        if not re.match(r"^\d{2}:\d{2}$", v):
+            raise ValueError("time must be in HH:MM format")
+        h, m = v.split(":")
+        if not (0 <= int(h) <= 23 and 0 <= int(m) <= 59):
+            raise ValueError("time must be valid HH:MM (00:00-23:59)")
+        return v
+
+
 class TransitStop(BaseModel):
     stop_id: str
     time_offset: str = "0min"
@@ -109,6 +128,8 @@ class TransitTrackerSettings(BaseModel):
     list_mode: str = Field(default="sequential")
     scroll_headsigns: bool = Field(default=False)
     display_brightness: int = Field(default=128, ge=0, le=255)
+    device_ip: Optional[str] = None
+    dimming_schedule: List[DimmingEntry] = Field(default_factory=list)
     display_format: str = Field(default="{ROUTE}  {HEADSIGN}  {LIVE} {TIME}")
     num_panels: int = Field(default=2)
     panel_width: int = Field(default=64)
@@ -134,7 +155,9 @@ class TransitConfig(BaseModel):
     auto_launch_gui: bool = Field(default=True)
 
     # Core settings (nested)
-    transit_tracker: TransitTrackerSettings = Field(default_factory=TransitTrackerSettings)
+    transit_tracker: TransitTrackerSettings = Field(
+        default_factory=TransitTrackerSettings
+    )
 
     # Internal flattened state (synced from transit_tracker)
     api_url: str = ""
@@ -155,14 +178,14 @@ class TransitConfig(BaseModel):
     @model_validator(mode="after")
     def sync_internal_state(self) -> "TransitConfig":
         tt = self.transit_tracker
-        
+
         # 1. Sync FROM root TO tt if root values were provided and differ from defaults
         # This supports tests like TransitConfig(arrival_threshold_minutes=10)
         if self.arrival_threshold_minutes != 5 and tt.arrival_threshold_minutes == 5:
             tt.arrival_threshold_minutes = self.arrival_threshold_minutes
         if self.check_interval_seconds != 30 and tt.check_interval_seconds == 30:
             tt.check_interval_seconds = self.check_interval_seconds
-            
+
         if self.use_local_api:
             # Force local proxy URL if mode is enabled
             # We use .local hostname instead of localhost so flashed hardware can connect
@@ -223,3 +246,28 @@ class TransitConfig(BaseModel):
         data = self.model_dump(exclude_unset=True)
         with open(path, "w") as f:
             yaml.safe_dump(data, f, sort_keys=False)
+
+
+def evaluate_dimming_schedule(
+    schedule: List[DimmingEntry], now_time: datetime.time
+) -> Optional[int]:
+    """Find the brightness from the most recent past schedule entry.
+
+    Returns None if schedule is empty.
+    Handles midnight wraparound: if current time is before all entries,
+    uses the last entry from the sorted list (active from "yesterday").
+    """
+    if not schedule:
+        return None
+
+    sorted_entries = sorted(schedule, key=lambda e: e.time)
+    # Walk backwards to find the latest entry at or before now
+    result = None
+    for entry in sorted_entries:
+        entry_time = datetime.time(int(entry.time[:2]), int(entry.time[3:]))
+        if entry_time <= now_time:
+            result = entry.brightness
+    # If no entry is at or before now, wrap around to the last entry
+    if result is None:
+        result = sorted_entries[-1].brightness
+    return result

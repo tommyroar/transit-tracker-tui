@@ -1,8 +1,12 @@
 import json
 import os
+import sys
 import time
 from unittest.mock import MagicMock, patch, AsyncMock
 import pytest
+
+if sys.platform != "darwin":
+    pytest.skip("GUI tests require macOS (rumps)", allow_module_level=True)
 
 # Define a completely isolated MockApp for testing logic without rumps inheritance
 class MockApp:
@@ -15,7 +19,7 @@ class MockApp:
         self.clients_menu = MagicMock()
         self.restart_item = MagicMock()
         self.shutdown_item = MagicMock()
-        
+
         self.api = MagicMock()
         self.arrivals_cache = {}
         self.display_trips = []
@@ -41,25 +45,25 @@ def test_app():
 def test_gui_profile_menu_building(test_app):
     """Test that the GUI correctly builds the profiles submenu with arrivals."""
     mock_profiles = ["/path/to/home.yaml"]
-    
+
     from transit_tracker.config import TransitConfig, TransitSubscription
     mock_config = MagicMock(spec=TransitConfig)
     mock_sub = TransitSubscription(
-        feed="st", 
-        route="1_100", 
-        stop="1_123", 
-        label="Work", 
+        feed="st",
+        route="1_100",
+        stop="1_123",
+        label="Work",
         direction="N"
     )
     mock_config.subscriptions = [mock_sub]
-    
+
     test_app.arrivals_cache = {
         "1_123": [{"arrivalTime": (time.time() + 600) * 1000, "routeId": "1_100"}]
     }
     test_app.display_trips = [
         {"routeName": "554", "headsign": "Downtown Seattle", "arrivalTime": int(time.time()) + 600, "isRealtime": True},
     ]
-    
+
     def create_menu_item(title, **kwargs):
         m = MagicMock()
         if isinstance(title, str):
@@ -78,13 +82,13 @@ def test_gui_profile_menu_building(test_app):
          patch("rumps.MenuItem", side_effect=create_menu_item), \
          patch("rumps.separator", MagicMock()), \
          patch("subprocess.run") as mock_run:
-        
+
         mock_run.return_value.returncode = 0
-        
+
         test_app.update_state(None)
-        
+
         profile_root = test_app.profiles_menu.add.call_args_list[0][0][0]
-        
+
         titles = []
         for call in profile_root.add.call_args_list:
             item = call[0][0]
@@ -92,7 +96,7 @@ def test_gui_profile_menu_building(test_app):
             # If it was a mock (separator), item.title might be a Mock or ""
             if hasattr(item, 'title') and isinstance(item.title, str):
                 titles.append(item.title)
-        
+
         # Active profile shows simulator-style rows: "route  headsign  ◉ Xm"
         assert any("554" in t and "Downtown Seattle" in t and "◉" in t for t in titles)
         assert any("File: /path/to/home.yaml" in t for t in titles)
@@ -147,7 +151,7 @@ def test_format_trip_line_missing_fields():
 def test_switch_profile_callback(test_app):
     sender = MagicMock()
     sender.p_path = "/path/to/new.yaml"
-    
+
     with patch("transit_tracker.gui.set_last_config_path") as mock_set, \
          patch("transit_tracker.gui.TransitConfig"), \
          patch("rumps.notification"):

@@ -4,7 +4,7 @@
 # =============================================================================
 
 # --------------- build stage ---------------
-FROM python:3.14-slim AS builder
+FROM python:3.13-slim AS builder
 
 # Install uv for fast dependency resolution
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -29,7 +29,7 @@ RUN uv sync --no-dev --frozen --no-editable \
     --no-install-package rumps
 
 # --------------- runtime stage ---------------
-FROM python:3.14-slim
+FROM python:3.13-slim
 
 # Create non-root user
 RUN groupadd -g 1000 transit && \

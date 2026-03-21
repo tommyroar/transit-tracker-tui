@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Tommy Doerr", email = "tommy.b.doerr@gmail.com" }
 ]
-requires-python = ">=3.14"
+requires-python = ">=3.13"
 dependencies = [
     "astral>=3.2",
     "bdfparser>=2.2.0",
@@ -17,12 +17,12 @@ dependencies = [
     "opencv-python-headless>=4.13.0.92",
     "pillow>=12.1.1",
     "pydantic>=2.12.5",
-    "pyobjc-framework-quartz>=12.1",
+    "pyobjc-framework-quartz>=12.1; sys_platform == 'darwin'",
     "pyserial>=3.5",
     "pyyaml>=6.0.3",
     "questionary>=2.1.1",
     "rich>=14.3.3",
-    "rumps>=0.4.0",
+    "rumps>=0.4.0; sys_platform == 'darwin'",
     "websockets>=16.0",
 ]
 
@@ -43,8 +43,8 @@ dev = [
 ]
 
 [tool.ruff]
-# Target Python 3.14 as specified in [project]
-target-version = "py313" # Ruff doesn't support py314 yet, so we use the closest
+# Target Python 3.13 as specified in [project]
+target-version = "py313"
 line-length = 88
 
 [tool.ruff.lint]

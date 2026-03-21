@@ -10,6 +10,7 @@ Requirements: 5.1, 5.2, 5.3, 5.4, 5.5
 """
 
 import json
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -17,6 +18,20 @@ from pathlib import Path
 import httpx
 import pytest
 import websockets.sync.client
+
+def _docker_available() -> bool:
+    if not shutil.which("docker"):
+        return False
+    try:
+        result = subprocess.run(
+            ["docker", "info"], capture_output=True, timeout=10,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+if not _docker_available():
+    pytest.skip("Docker not available", allow_module_level=True)
 
 IMAGE_NAME = "transit-tracker"
 CONTAINER_NAME = "transit-tracker-test"

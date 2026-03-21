@@ -18,6 +18,7 @@ CONTAINER_NAME="transit-tracker"
 WS_PORT=8000
 HTTP_PORT=8080
 CONFIG_PATH="$PROJECT_DIR/.local/home.yaml"
+SERVICE_YAML="$PROJECT_DIR/.local/service.yaml"
 DETACH=false
 
 # ---- Parse arguments ----
@@ -66,6 +67,9 @@ if [ "$DETACH" = true ]; then
         -p "$WS_PORT:$WS_PORT" \
         -p "$HTTP_PORT:$HTTP_PORT" \
         -v "$CONFIG_PATH:/config/config.yaml:ro" \
+        -v "$SERVICE_YAML:/config/service.yaml" \
+        -e SERVICE_SETTINGS_PATH=/config/service.yaml \
+        -e TZ=America/Los_Angeles \
         "$IMAGE_NAME"
 
     # Wait for WebSocket port to accept connections (up to 60s)
@@ -92,5 +96,8 @@ else
         -p "$WS_PORT:$WS_PORT" \
         -p "$HTTP_PORT:$HTTP_PORT" \
         -v "$CONFIG_PATH:/config/config.yaml:ro" \
+        -v "$SERVICE_YAML:/config/service.yaml" \
+        -e SERVICE_SETTINGS_PATH=/config/service.yaml \
+        -e TZ=America/Los_Angeles \
         "$IMAGE_NAME"
 fi

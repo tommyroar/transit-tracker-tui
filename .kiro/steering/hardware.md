@@ -39,7 +39,7 @@ inclusion: auto
 - `time_units`: `short` (e.g., "5m")
 - `list_mode`: `sequential`
 - `scroll_headsigns`: ON
-- `display_brightness`: OFF (panel-level, not software)
+- `display_brightness`: light entity (domain `light`, not `number`); control via `/light/display_brightness/turn_on?brightness=N` or `/turn_off`
 - `now_str`: "Now", `min_long_str`: "min", `min_short_str`: "m", `hours_short_str`: "h"
 
 ## Active Config Profile
@@ -64,7 +64,7 @@ Ferry abbreviations configured: SEA/BAI, BAI/SEA, BRE/SEA, SEA/BRE.
 ## Development Notes
 
 - The device's web UI is at `http://192.168.5.248/` (ESPHome native dashboard)
-- Entity state is available via REST: `http://192.168.5.248/text/<entity_id>`, `/select/<entity_id>`, `/switch/<entity_id>`
+- Entity state is available via REST: `http://192.168.5.248/text/<entity_id>`, `/select/<entity_id>`, `/switch/<entity_id>`, `/light/<entity_id>`
 - SSE event stream at `http://192.168.5.248/events` provides real-time logs and state changes
 - Serial JSON-RPC (`JRPC:` prefix) is used for USB configuration — see `hardware.py` and `capture_hardware.py`
 - The `flip_display` entity does not exist on this firmware version

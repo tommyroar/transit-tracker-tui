@@ -17,37 +17,47 @@ from transit_tracker.network.websocket_server import TransitServer
 
 def test_brightness_default():
     config = TransitConfig()
-    assert config.transit_tracker.display_brightness == 128
+    assert config.service.display_brightness == 128
 
 
 def test_brightness_boundary_values():
-    config_zero = TransitConfig(transit_tracker={"display_brightness": 0})
-    assert config_zero.transit_tracker.display_brightness == 0
+    config_zero = TransitConfig(service={"display_brightness": 0})
+    assert config_zero.service.display_brightness == 0
 
-    config_max = TransitConfig(transit_tracker={"display_brightness": 255})
-    assert config_max.transit_tracker.display_brightness == 255
+    config_max = TransitConfig(service={"display_brightness": 255})
+    assert config_max.service.display_brightness == 255
 
 
 def test_brightness_rejects_out_of_range():
     with pytest.raises(ValidationError):
-        TransitConfig(transit_tracker={"display_brightness": -1})
+        TransitConfig(service={"display_brightness": -1})
 
     with pytest.raises(ValidationError):
-        TransitConfig(transit_tracker={"display_brightness": 256})
+        TransitConfig(service={"display_brightness": 256})
 
 
-def test_brightness_round_trip_yaml(tmp_path):
-    config = TransitConfig(transit_tracker={"display_brightness": 42})
-    path = str(tmp_path / "bright.yaml")
-    config.save(path)
+def test_brightness_round_trip_service_settings(tmp_path):
+    """display_brightness is a ServiceSettings field, persisted via save_service_settings."""
+    from transit_tracker.config import (
+        SERVICE_SETTINGS_FILE,
+        load_service_settings,
+        save_service_settings,
+        ServiceSettings,
+    )
+    from unittest import mock
+    import os
 
-    loaded = TransitConfig.load(path)
-    assert loaded.transit_tracker.display_brightness == 42
+    settings_file = tmp_path / "service.yaml"
+    with mock.patch("transit_tracker.config.SERVICE_SETTINGS_FILE", str(settings_file)):
+        svc = ServiceSettings(display_brightness=42)
+        save_service_settings(svc)
+        loaded = load_service_settings()
+        assert loaded.display_brightness == 42
 
 
-def test_brightness_set_via_transit_tracker():
-    config = TransitConfig(transit_tracker={"display_brightness": 200})
-    assert config.transit_tracker.display_brightness == 200
+def test_brightness_set_via_service():
+    config = TransitConfig(service={"display_brightness": 200})
+    assert config.service.display_brightness == 200
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +106,7 @@ def test_flash_sends_brightness():
 
         mock_serial.readline.side_effect = mock_readline
 
-        config = TransitConfig(transit_tracker={"display_brightness": 200})
+        config = TransitConfig(service={"display_brightness": 200})
         config.subscriptions = [
             TransitSubscription(
                 feed="st", route="st:40_100240", stop="st:1_8494", label="Test"
@@ -156,7 +166,7 @@ def test_load_reads_brightness():
 
         result = load_hardware_config("/dev/tty.mock", config)
         assert result is True
-        assert config.transit_tracker.display_brightness == 180
+        assert config.service.display_brightness == 180
 
 
 def test_load_handles_float_brightness():
@@ -185,7 +195,7 @@ def test_load_handles_float_brightness():
         from transit_tracker.hardware import load_hardware_config
 
         load_hardware_config("/dev/tty.mock", config)
-        assert config.transit_tracker.display_brightness == 64
+        assert config.service.display_brightness == 64
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +219,7 @@ def ws_config():
     config.service.request_spacing_ms = 250
     config.transit_tracker = MagicMock()
     config.transit_tracker.time_display = "arrival"
-    config.transit_tracker.display_brightness = 128
+    config.service.display_brightness = 128
     config.service.oba_api_key = None
     config.transit_tracker.abbreviations = []
     return config

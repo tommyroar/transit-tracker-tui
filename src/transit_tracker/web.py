@@ -16,7 +16,7 @@ log = get_logger("transit_tracker.web")
 
 async def resolve_stop_coordinates(config: TransitConfig) -> List[Dict[str, Any]]:
     """Fetch lat/lon for all configured stops from the OBA API."""
-    api = TransitAPI()
+    api = TransitAPI(oba_api_key=config.service.oba_api_key)
     try:
         tasks = [api.get_stop(stop.stop_id) for stop in config.transit_tracker.stops]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -578,6 +578,9 @@ class TransitWebHandler(BaseHTTPRequestHandler):
             if path == "/monitor":
                 self._serve_monitor()
                 return
+            if path == "/api/dimming":
+                self._serve_dimming_get()
+                return
 
         content = self.routes.get(path)
         if content is not None:
@@ -594,6 +597,26 @@ class TransitWebHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(b"<h1>404 Not Found</h1>")
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+
+        if path == "/api/dimming":
+            self._handle_dimming_post()
+            return
+
+        self.send_response(404)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"<h1>404 Not Found</h1>")
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
 
     def log_message(self, format, *args):
         log.debug("%s", args[0], extra={"component": "web"})
@@ -655,6 +678,56 @@ class TransitWebHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(html.encode("utf-8"))
 
+    def _json_error(self, code: int, message: str):
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(json.dumps({"error": message}).encode("utf-8"))
+
+    def _serve_dimming_get(self):
+        """Return the current dimming schedule from service settings."""
+        from .config import load_service_settings
+        settings = load_service_settings()
+        self._json_response(json.dumps({
+            "dimming_schedule": [e.model_dump() for e in settings.dimming_schedule],
+            "display_brightness": settings.display_brightness,
+            "device_ip": settings.device_ip,
+        }))
+
+    def _handle_dimming_post(self):
+        """Update the dimming schedule via REST, persisting to service.yaml."""
+        from .config import DimmingEntry, load_service_settings, save_service_settings
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as e:
+            self._json_error(400, f"Invalid JSON: {e}")
+            return
+
+        try:
+            entries = [DimmingEntry.model_validate(e) for e in data.get("dimming_schedule", [])]
+        except Exception as e:
+            self._json_error(400, f"Validation error: {e}")
+            return
+
+        settings = load_service_settings()
+        settings.dimming_schedule = entries
+        if "device_ip" in data:
+            settings.device_ip = data["device_ip"]
+        if "display_brightness" in data:
+            settings.display_brightness = int(data["display_brightness"])
+        save_service_settings(settings)
+
+        self._json_response(json.dumps({
+            "status": "ok",
+            "dimming_schedule": [e.model_dump() for e in entries],
+            "message": "Schedule saved. Will take effect within 60 seconds.",
+        }))
+
 
 async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None):
     """Start the Transit Tracker web server with API spec and stop data."""
@@ -664,10 +737,10 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
     log.info("Resolving stop coordinates...", extra={"component": "web"})
     stops = await resolve_stop_coordinates(config)
     if not stops:
-        log.warning("No stops found in config. Add stops first with 'transit-tracker'.", extra={"component": "web"})
-        return
-
-    log.info("Resolved %d stops", len(stops), extra={"component": "web"})
+        log.warning("No stops resolved — serving with empty stop data", extra={"component": "web"})
+        stops = []
+    else:
+        log.info("Resolved %d stops", len(stops), extra={"component": "web"})
 
     stops_json = json.dumps(stops, indent=2)
     spec_json = generate_api_spec(config)
@@ -724,7 +797,7 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
         "/api/stops": stops_json,
     }
     # Dynamic routes — served fresh on each request
-    TransitWebHandler.dynamic_routes = {"/api/status", "/api/metrics", "/api/logs", "/dashboard", "/monitor"}
+    TransitWebHandler.dynamic_routes = {"/api/status", "/api/metrics", "/api/logs", "/api/dimming", "/dashboard", "/monitor"}
 
     server = HTTPServer((host, port), TransitWebHandler)
     log.info("Transit Tracker web server at http://%s:%d", host, port, extra={"component": "web"})

@@ -462,7 +462,7 @@ async def change_brightness_wizard(config: TransitConfig, config_path: str, cons
         questionary.Choice("Custom...", value="custom"),
     ]
 
-    current = str(config.transit_tracker.display_brightness)
+    current = str(config.service.display_brightness)
     default = current if current in ["0", "32", "64", "128", "192", "255"] else "custom"
 
     val = await ask_with_live_dashboard(
@@ -477,14 +477,14 @@ async def change_brightness_wizard(config: TransitConfig, config_path: str, cons
     if val == "custom":
         val = await questionary.text(
             "Enter brightness (0-255):",
-            default=str(config.transit_tracker.display_brightness)
+            default=str(config.service.display_brightness)
         ).ask_async()
 
     if val is not None:
         try:
             brightness = int(val)
             if 0 <= brightness <= 255:
-                config.transit_tracker.display_brightness = brightness
+                config.service.display_brightness = brightness
                 config.save(config_path)
                 rprint(f"[green]Display brightness set to {brightness}.[/green]")
             else:

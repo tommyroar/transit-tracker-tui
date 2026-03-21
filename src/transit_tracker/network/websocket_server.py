@@ -10,7 +10,10 @@ from typing import Any, Dict
 import httpx
 import websockets
 
-from ..config import TransitConfig, evaluate_dimming_schedule, get_last_config_path
+from ..config import (
+    TransitConfig, evaluate_dimming_schedule, get_last_config_path,
+    load_service_settings, _resolve_settings_path,
+)
 from ..display import format_trip_line
 from ..gtfs_schedule import GTFSSchedule
 from ..logging import get_logger, is_message_logging_enabled
@@ -75,7 +78,7 @@ class TransitServer:
         self.messages_processed = 0
         self.start_time = time.time()
         self.last_broadcast_time = 0
-        self.display_brightness = self.config.transit_tracker.display_brightness
+        self.display_brightness = self.config.service.display_brightness
         self.dimming_override = False
         self.last_scheduled_brightness = None
 
@@ -87,6 +90,13 @@ class TransitServer:
 
         # GTFS static schedule fallback (None if DB not built yet)
         self.gtfs = GTFSSchedule()
+
+        # Service settings hot-reload (file mtime tracking)
+        self._service_settings_path = _resolve_settings_path()
+        try:
+            self._service_settings_mtime = os.path.getmtime(self._service_settings_path)
+        except OSError:
+            self._service_settings_mtime = 0
 
         # Sync initial gauge values
         metrics.refresh_interval.set(self.current_refresh_interval)
@@ -549,8 +559,8 @@ class TransitServer:
 
     async def _apply_dimming_schedule(self, http_client: httpx.AsyncClient):
         """Single iteration of dimming schedule check. Returns True if brightness changed."""
-        schedule = self.config.transit_tracker.dimming_schedule
-        device_ip = self.config.transit_tracker.device_ip
+        schedule = self.config.service.dimming_schedule
+        device_ip = self.config.service.device_ip
 
         if not schedule:
             return False
@@ -577,11 +587,15 @@ class TransitServer:
         self.display_brightness = target
         log.info("Dimming schedule: brightness -> %d", target, extra={"component": "server"})
 
-        # POST to ESPHome REST API
+        # POST to ESPHome REST API (light entity, not number)
         if device_ip:
             try:
-                url = f"http://{device_ip}/number/display_brightness"
-                await http_client.post(url, json={"value": target})
+                if target == 0:
+                    url = f"http://{device_ip}/light/display_brightness/turn_off"
+                    await http_client.post(url, headers={"Content-Length": "0"})
+                else:
+                    url = f"http://{device_ip}/light/display_brightness/turn_on?brightness={target}"
+                    await http_client.post(url, headers={"Content-Length": "0"})
                 log.info("ESPHome brightness set to %d", target, extra={"component": "server"})
             except Exception as e:
                 log.warning("ESPHome brightness POST failed: %s", e, extra={"component": "server"})
@@ -597,12 +611,25 @@ class TransitServer:
         self.sync_state()
         return True
 
+    def _maybe_reload_service_settings(self):
+        """Reload service settings from disk if the file has changed."""
+        try:
+            current_mtime = os.path.getmtime(self._service_settings_path)
+        except OSError:
+            return
+        if current_mtime != self._service_settings_mtime:
+            self._service_settings_mtime = current_mtime
+            self.config.service = load_service_settings()
+            log.info("Service settings reloaded from %s", self._service_settings_path,
+                     extra={"component": "server"})
+
     async def dimming_loop(self):
         """Background task that applies time-based brightness schedule."""
         http_client = httpx.AsyncClient(timeout=5.0)
         try:
             while True:
                 try:
+                    self._maybe_reload_service_settings()
                     await self._apply_dimming_schedule(http_client)
                 except Exception as e:
                     log.error("Dimming loop error: %s", e, extra={"component": "server"})

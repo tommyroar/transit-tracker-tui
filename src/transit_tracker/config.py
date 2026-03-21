@@ -15,6 +15,21 @@ _LEGACY_SETTINGS_DIR = os.path.expanduser("~/.config/transit-tracker")
 _LEGACY_SETTINGS_FILE = os.path.join(_LEGACY_SETTINGS_DIR, "settings.yaml")
 
 
+class DimmingEntry(BaseModel):
+    time: str  # "HH:MM" format
+    brightness: int = Field(ge=0, le=255)
+
+    @field_validator("time")
+    @classmethod
+    def validate_time_format(cls, v):
+        if not re.match(r"^\d{2}:\d{2}$", v):
+            raise ValueError("time must be in HH:MM format")
+        h, m = v.split(":")
+        if not (0 <= int(h) <= 23 and 0 <= int(m) <= 59):
+            raise ValueError("time must be valid HH:MM (00:00-23:59)")
+        return v
+
+
 class ServiceSettings(BaseModel):
     """Dev environment / service settings stored at .local/service.yaml.
 
@@ -44,18 +59,26 @@ class ServiceSettings(BaseModel):
     use_local_api: bool = Field(default=False)
     auto_launch_gui: bool = Field(default=True)
 
+    # Display brightness / scheduled dimming
+    display_brightness: int = Field(default=128, ge=0, le=255)
+    device_ip: Optional[str] = None
+    dimming_schedule: List[DimmingEntry] = Field(default_factory=list)
+
 
 def _resolve_settings_path() -> str:
     """Return the path to the service settings file.
 
-    Primary: .local/service.yaml  (project-local, gitignored)
+    Priority: SERVICE_SETTINGS_PATH env var (container override)
+    Then: .local/service.yaml  (project-local, gitignored)
     Fallback: ~/.config/transit-tracker/settings.yaml  (legacy installs)
     """
+    env_path = os.environ.get("SERVICE_SETTINGS_PATH")
+    if env_path:
+        return env_path
     if os.path.exists(SERVICE_SETTINGS_FILE):
         return SERVICE_SETTINGS_FILE
     if os.path.exists(_LEGACY_SETTINGS_FILE):
         return _LEGACY_SETTINGS_FILE
-    # Default to the project-local path for new writes
     return SERVICE_SETTINGS_FILE
 
 
@@ -73,17 +96,16 @@ def load_service_settings() -> ServiceSettings:
 
 
 def save_service_settings(settings: ServiceSettings):
-    """Persist service settings to .local/service.yaml."""
-    if os.environ.get("TRANSIT_TRACKER_TESTING") == "1":
-        return
-    settings_dir = os.path.dirname(SERVICE_SETTINGS_FILE)
+    """Persist service settings to the resolved service.yaml path."""
+    path = _resolve_settings_path()
+    settings_dir = os.path.dirname(path)
     os.makedirs(settings_dir, exist_ok=True)
     data = settings.model_dump(exclude_none=True)
     fd, tmp_path = tempfile.mkstemp(dir=settings_dir, suffix=".yaml")
     try:
         with os.fdopen(fd, "w") as f:
             yaml.safe_dump(data, f)
-        os.replace(tmp_path, SERVICE_SETTINGS_FILE)
+        os.replace(tmp_path, path)
     except Exception:
         os.unlink(tmp_path)
         raise
@@ -94,8 +116,6 @@ def get_last_config_path() -> Optional[str]:
 
 
 def set_last_config_path(path: str):
-    if os.environ.get("TRANSIT_TRACKER_TESTING") == "1":
-        return
     svc = load_service_settings()
     svc.last_config_path = os.path.abspath(path)
     save_service_settings(svc)
@@ -147,21 +167,6 @@ class Abbreviation(BaseModel):
     short: str
 
 
-class DimmingEntry(BaseModel):
-    time: str  # "HH:MM" format
-    brightness: int = Field(ge=0, le=255)
-
-    @field_validator("time")
-    @classmethod
-    def validate_time_format(cls, v):
-        if not re.match(r"^\d{2}:\d{2}$", v):
-            raise ValueError("time must be in HH:MM format")
-        h, m = v.split(":")
-        if not (0 <= int(h) <= 23 and 0 <= int(m) <= 59):
-            raise ValueError("time must be valid HH:MM (00:00-23:59)")
-        return v
-
-
 class TransitStop(BaseModel):
     stop_id: str
     time_offset: str = "0min"
@@ -186,9 +191,6 @@ class TransitTrackerSettings(BaseModel):
     base_url: str = Field(default="wss://tt.horner.tj/")
     time_display: str = Field(default="arrival")
     scroll_headsigns: bool = Field(default=False)
-    display_brightness: int = Field(default=128, ge=0, le=255)
-    device_ip: Optional[str] = None
-    dimming_schedule: List[DimmingEntry] = Field(default_factory=list)
     display_format: str = Field(default="{ROUTE}  {HEADSIGN}  {LIVE} {TIME}")
     stops: List[TransitStop] = Field(default_factory=list)
     abbreviations: List[Abbreviation] = Field(default_factory=list)
@@ -203,6 +205,9 @@ _LEGACY_TT_KEYS = {
     "panel_width",
     "panel_height",
     "arrival_threshold_minutes",
+    "display_brightness",
+    "device_ip",
+    "dimming_schedule",
 }
 
 # Keys that used to live at the root of the config YAML

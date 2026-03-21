@@ -8,18 +8,28 @@
 set -e
 
 CONFIG_PATH="/config/config.yaml"
-SETTINGS_DIR="$HOME/.config/transit-tracker"
-SETTINGS_FILE="$SETTINGS_DIR/settings.yaml"
+SERVICE_YAML="${SERVICE_SETTINGS_PATH:-/config/service.yaml}"
 
 # ---- Config discovery ----
 # If a config file is mounted at /config/config.yaml, register it so the CLI
-# picks it up via get_last_config_path().  Otherwise, defaults apply.
+# picks it up via get_last_config_path().
 if [ -f "$CONFIG_PATH" ]; then
     echo "[ENTRYPOINT] Found mounted config at $CONFIG_PATH"
-    mkdir -p "$SETTINGS_DIR"
-    cat > "$SETTINGS_FILE" <<EOF
+    # Inject last_config_path into service settings (create if missing)
+    if [ -f "$SERVICE_YAML" ]; then
+        if ! grep -q "last_config_path" "$SERVICE_YAML" 2>/dev/null; then
+            # Prepend — sed -i can't write to mounted volumes, so use tmp+cat
+            TMP=$(mktemp)
+            echo "last_config_path: $CONFIG_PATH" > "$TMP"
+            cat "$SERVICE_YAML" >> "$TMP"
+            cat "$TMP" > "$SERVICE_YAML"
+            rm "$TMP"
+        fi
+    else
+        cat > "$SERVICE_YAML" <<EOF
 last_config_path: $CONFIG_PATH
 EOF
+    fi
 else
     echo "[ENTRYPOINT] No config mounted — using defaults (wss://tt.horner.tj/)"
 fi

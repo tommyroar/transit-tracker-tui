@@ -71,11 +71,9 @@ def test_service_settings_roundtrip(tmp_path):
     import unittest.mock as mock
 
     settings_file = tmp_path / "service.yaml"
-    with (
-        mock.patch(
-            "transit_tracker.config.SERVICE_SETTINGS_FILE", str(settings_file)
-        ),
-        mock.patch.dict(os.environ, {"TRANSIT_TRACKER_TESTING": "0"}),
+    with mock.patch(
+        "transit_tracker.config._resolve_settings_path",
+        return_value=str(settings_file),
     ):
         svc = ServiceSettings(
             oba_api_key="test-key-123",

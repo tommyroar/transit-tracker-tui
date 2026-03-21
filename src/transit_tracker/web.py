@@ -16,7 +16,7 @@ log = get_logger("transit_tracker.web")
 
 async def resolve_stop_coordinates(config: TransitConfig) -> List[Dict[str, Any]]:
     """Fetch lat/lon for all configured stops from the OBA API."""
-    api = TransitAPI()
+    api = TransitAPI(oba_api_key=config.service.oba_api_key)
     try:
         tasks = [api.get_stop(stop.stop_id) for stop in config.transit_tracker.stops]
         results = await asyncio.gather(*tasks, return_exceptions=True)

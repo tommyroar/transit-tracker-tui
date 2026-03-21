@@ -737,10 +737,10 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
     log.info("Resolving stop coordinates...", extra={"component": "web"})
     stops = await resolve_stop_coordinates(config)
     if not stops:
-        log.warning("No stops found in config. Add stops first with 'transit-tracker'.", extra={"component": "web"})
-        return
-
-    log.info("Resolved %d stops", len(stops), extra={"component": "web"})
+        log.warning("No stops resolved — serving with empty stop data", extra={"component": "web"})
+        stops = []
+    else:
+        log.info("Resolved %d stops", len(stops), extra={"component": "web"})
 
     stops_json = json.dumps(stops, indent=2)
     spec_json = generate_api_spec(config)

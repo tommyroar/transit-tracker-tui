@@ -7,46 +7,102 @@ from typing import Any, Dict, List, Optional
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-GLOBAL_SETTINGS_DIR = os.path.expanduser("~/.config/transit-tracker")
-GLOBAL_SETTINGS_FILE = os.path.join(GLOBAL_SETTINGS_DIR, "settings.yaml")
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+SERVICE_SETTINGS_FILE = os.path.join(_PROJECT_ROOT, ".local", "service.yaml")
+
+# Legacy path — read-only fallback for existing installs
+_LEGACY_SETTINGS_DIR = os.path.expanduser("~/.config/transit-tracker")
+_LEGACY_SETTINGS_FILE = os.path.join(_LEGACY_SETTINGS_DIR, "settings.yaml")
 
 
-def get_last_config_path() -> Optional[str]:
-    if os.path.exists(GLOBAL_SETTINGS_FILE):
+class ServiceSettings(BaseModel):
+    """Dev environment / service settings stored at .local/service.yaml.
+
+    These are environment/instance concerns: credentials, polling intervals,
+    hardware dimensions, and service mode flags.  They are NOT part of the
+    board subscription schema and should never appear inside profile YAMLs.
+    """
+
+    last_config_path: Optional[str] = None
+
+    # Credentials (env var OBA_API_KEY is still the primary fallback)
+    oba_api_key: Optional[str] = None
+
+    # Server polling / rate limiting
+    check_interval_seconds: int = Field(default=30, ge=10)
+    request_spacing_ms: int = Field(default=500, ge=0, le=2000)
+
+    # Filtering
+    arrival_threshold_minutes: int = Field(default=5, ge=1)
+
+    # Hardware config
+    num_panels: int = Field(default=2)
+    panel_width: int = Field(default=64)
+    panel_height: int = Field(default=32)
+
+    # Service mode
+    use_local_api: bool = Field(default=False)
+    auto_launch_gui: bool = Field(default=True)
+
+
+def _resolve_settings_path() -> str:
+    """Return the path to the service settings file.
+
+    Primary: .local/service.yaml  (project-local, gitignored)
+    Fallback: ~/.config/transit-tracker/settings.yaml  (legacy installs)
+    """
+    if os.path.exists(SERVICE_SETTINGS_FILE):
+        return SERVICE_SETTINGS_FILE
+    if os.path.exists(_LEGACY_SETTINGS_FILE):
+        return _LEGACY_SETTINGS_FILE
+    # Default to the project-local path for new writes
+    return SERVICE_SETTINGS_FILE
+
+
+def load_service_settings() -> ServiceSettings:
+    """Load service settings from .local/service.yaml (or legacy fallback)."""
+    path = _resolve_settings_path()
+    if os.path.exists(path):
         try:
-            with open(GLOBAL_SETTINGS_FILE, "r") as f:
+            with open(path, "r") as f:
                 data = yaml.safe_load(f) or {}
-                return data.get("last_config_path")
+                return ServiceSettings.model_validate(data)
         except Exception:
             pass
-    return None
+    return ServiceSettings()
 
 
-def set_last_config_path(path: str):
+def save_service_settings(settings: ServiceSettings):
+    """Persist service settings to .local/service.yaml."""
     if os.environ.get("TRANSIT_TRACKER_TESTING") == "1":
         return
-    os.makedirs(GLOBAL_SETTINGS_DIR, exist_ok=True)
-    data = {}
-    if os.path.exists(GLOBAL_SETTINGS_FILE):
-        try:
-            with open(GLOBAL_SETTINGS_FILE, "r") as f:
-                data = yaml.safe_load(f) or {}
-        except Exception:
-            pass
-    data["last_config_path"] = os.path.abspath(path)
-    # Write atomically: temp file in same directory, then rename
-    fd, tmp_path = tempfile.mkstemp(dir=GLOBAL_SETTINGS_DIR, suffix=".yaml")
+    settings_dir = os.path.dirname(SERVICE_SETTINGS_FILE)
+    os.makedirs(settings_dir, exist_ok=True)
+    data = settings.model_dump(exclude_none=True)
+    fd, tmp_path = tempfile.mkstemp(dir=settings_dir, suffix=".yaml")
     try:
         with os.fdopen(fd, "w") as f:
             yaml.safe_dump(data, f)
-        os.replace(tmp_path, GLOBAL_SETTINGS_FILE)
+        os.replace(tmp_path, SERVICE_SETTINGS_FILE)
     except Exception:
         os.unlink(tmp_path)
         raise
 
 
+def get_last_config_path() -> Optional[str]:
+    return load_service_settings().last_config_path
+
+
+def set_last_config_path(path: str):
+    if os.environ.get("TRANSIT_TRACKER_TESTING") == "1":
+        return
+    svc = load_service_settings()
+    svc.last_config_path = os.path.abspath(path)
+    save_service_settings(svc)
+
+
 def list_profiles() -> List[str]:
-    """Lists all available .yaml configuration files in the project root and .local directory."""
+    """Lists available .yaml config files in project root and .local/."""
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     profiles = []
 
@@ -122,89 +178,97 @@ class TransitStop(BaseModel):
 
 
 class TransitTrackerSettings(BaseModel):
+    """Board subscription schema — matches the public reference project format.
+
+    Profile YAML files contain only this block under the ``transit_tracker:`` key.
+    """
+
     base_url: str = Field(default="wss://tt.horner.tj/")
     time_display: str = Field(default="arrival")
-    show_units: str = Field(default="short")
-    list_mode: str = Field(default="sequential")
     scroll_headsigns: bool = Field(default=False)
     display_brightness: int = Field(default=128, ge=0, le=255)
     device_ip: Optional[str] = None
     dimming_schedule: List[DimmingEntry] = Field(default_factory=list)
     display_format: str = Field(default="{ROUTE}  {HEADSIGN}  {LIVE} {TIME}")
-    num_panels: int = Field(default=2)
-    panel_width: int = Field(default=64)
-    panel_height: int = Field(default=32)
-    check_interval_seconds: int = Field(default=30, ge=10)
-    request_spacing_ms: int = Field(default=500, ge=0, le=2000)
-    arrival_threshold_minutes: int = Field(default=5, ge=1)
     stops: List[TransitStop] = Field(default_factory=list)
-    styles: List[Dict[str, Any]] = Field(default_factory=list)
     abbreviations: List[Abbreviation] = Field(default_factory=list)
-    oba_api_key: Optional[str] = None
-    mapbox_access_token: Optional[str] = None
+
+
+# Keys that used to live inside transit_tracker but now belong in ServiceSettings
+_LEGACY_TT_KEYS = {
+    "oba_api_key",
+    "check_interval_seconds",
+    "request_spacing_ms",
+    "num_panels",
+    "panel_width",
+    "panel_height",
+    "arrival_threshold_minutes",
+}
+
+# Keys that used to live at the root of the config YAML
+_LEGACY_ROOT_KEYS = {"use_local_api", "auto_launch_gui"}
+
+# Dead fields that should be silently stripped
+_DEAD_KEYS = {"mapbox_access_token", "show_units", "list_mode", "styles"}
+
+
+def _migrate_legacy_fields(data: dict, svc: ServiceSettings):
+    """If an old-format profile YAML has service-level fields, absorb them."""
+    tt_data = data.get("transit_tracker", {})
+
+    for key in _LEGACY_TT_KEYS:
+        if key in tt_data:
+            current_default = ServiceSettings.model_fields[key].default
+            if getattr(svc, key) == current_default:
+                setattr(svc, key, tt_data.pop(key))
+            else:
+                tt_data.pop(key)
+
+    for key in _LEGACY_ROOT_KEYS:
+        if key in data:
+            current_default = ServiceSettings.model_fields[key].default
+            if getattr(svc, key) == current_default:
+                setattr(svc, key, data.pop(key))
+            else:
+                data.pop(key)
+
+    # Strip dead fields
+    for key in _DEAD_KEYS:
+        tt_data.pop(key, None)
+        data.pop(key, None)
 
 
 class TransitConfig(BaseModel):
-    """
-    Root configuration object.
-    Automatically handles the nested 'transit_tracker' key from the public configurator.
-    """
+    """Runtime composite: merges a board subscription profile with service settings."""
 
-    # Application settings
-    use_local_api: bool = Field(default=False)
-    auto_launch_gui: bool = Field(default=True)
-
-    # Core settings (nested)
+    # Board subscription (from profile YAML)
     transit_tracker: TransitTrackerSettings = Field(
         default_factory=TransitTrackerSettings
     )
 
-    # Internal flattened state (synced from transit_tracker)
+    # Service settings (from .local/service.yaml)
+    service: ServiceSettings = Field(default_factory=ServiceSettings)
+
+    # Derived fields (computed, not persisted)
     api_url: str = ""
-    num_panels: int = 2
-    panel_width: int = 64
-    panel_height: int = 32
-    check_interval_seconds: int = Field(default=30, ge=10)
-    arrival_threshold_minutes: int = Field(default=5, ge=1)
-    time_display: str = "arrival"
-    scroll_headsigns: bool = False
-    display_brightness: int = 128
     subscriptions: List[TransitSubscription] = Field(default_factory=list)
 
-    # Testing state
+    # Testing state (runtime only)
     mock_state: Optional[List[Dict[str, Any]]] = None
     captures: List[Dict[str, Any]] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def sync_internal_state(self) -> "TransitConfig":
         tt = self.transit_tracker
+        svc = self.service
 
-        # 1. Sync FROM root TO tt if root values were provided and differ from defaults
-        # This supports tests like TransitConfig(arrival_threshold_minutes=10)
-        if self.arrival_threshold_minutes != 5 and tt.arrival_threshold_minutes == 5:
-            tt.arrival_threshold_minutes = self.arrival_threshold_minutes
-        if self.check_interval_seconds != 30 and tt.check_interval_seconds == 30:
-            tt.check_interval_seconds = self.check_interval_seconds
-
-        if self.use_local_api:
-            # Force local proxy URL if mode is enabled
-            # We use .local hostname instead of localhost so flashed hardware can connect
+        # Compute api_url
+        if svc.use_local_api:
             self.api_url = "ws://Tommys-Mac-mini.local:8000/"
         elif not self.api_url or tt.base_url != "wss://tt.horner.tj/":
-            # Sync from transit_tracker if api_url is empty or if base_url was explicitly provided
             self.api_url = tt.base_url
 
-        # 2. Sync FROM tt TO root (tt is the final source of truth)
-        self.num_panels = tt.num_panels
-        self.panel_width = tt.panel_width
-        self.panel_height = tt.panel_height
-        self.check_interval_seconds = tt.check_interval_seconds
-        self.arrival_threshold_minutes = tt.arrival_threshold_minutes
-        self.time_display = tt.time_display
-        self.scroll_headsigns = tt.scroll_headsigns
-        self.display_brightness = tt.display_brightness
-
-        # Build flattened subscriptions
+        # Build flattened subscriptions from stops
         self.subscriptions = []
         for stop in tt.stops:
             for route in stop.routes:
@@ -222,28 +286,39 @@ class TransitConfig(BaseModel):
         return self
 
     @classmethod
-    def load(cls, path: str = "config.yaml") -> "TransitConfig":
-        if os.path.exists(path):
-            pass
-        else:
+    def load(
+        cls, path: str = "config.yaml", service_settings: ServiceSettings | None = None
+    ) -> "TransitConfig":
+        if service_settings is None:
+            service_settings = load_service_settings()
+
+        if not os.path.exists(path):
             local_path = os.path.join(".local", path)
             if os.path.exists(local_path):
                 path = local_path
             else:
-                return cls()
+                return cls(service=service_settings)
 
         with open(path, "r") as f:
             data = yaml.safe_load(f) or {}
 
-        # Ensure we always create a fresh instance with the data
-        # If it only contains transit_tracker, Pydantic will handle it
-        return cls.model_validate(data)
+        # Backward compat: absorb any legacy service fields from old profile YAMLs
+        _migrate_legacy_fields(data, service_settings)
+
+        tt_data = data.get("transit_tracker", data)
+        return cls(
+            transit_tracker=TransitTrackerSettings.model_validate(tt_data),
+            service=service_settings,
+        )
 
     def save(self, path: str = "config.yaml") -> None:
+        """Save only the board subscription profile (transit_tracker block)."""
         if not os.path.dirname(path) and os.path.exists(".local"):
             path = os.path.join(".local", path)
 
-        data = self.model_dump(exclude_unset=True)
+        data = {
+            "transit_tracker": self.transit_tracker.model_dump(exclude_defaults=False)
+        }
         with open(path, "w") as f:
             yaml.safe_dump(data, f, sort_keys=False)
 

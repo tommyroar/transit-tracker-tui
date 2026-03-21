@@ -82,7 +82,7 @@ class TransitServer:
     def __init__(self, config: TransitConfig):
         self.config = config
         self.config_path = get_last_config_path()
-        self.api = TransitAPI(oba_api_key=config.transit_tracker.oba_api_key)
+        self.api = TransitAPI(oba_api_key=config.service.oba_api_key)
         self.clients = set()
         self.subscriptions = {}  # ws -> List[Dict] (pairs)
         self.client_names = {}  # ws -> str
@@ -95,7 +95,7 @@ class TransitServer:
         self.rate_limit_until = {}  # stop_id -> timestamp when retry is allowed
 
         # Exponential Backoff State
-        self.base_interval = self.config.check_interval_seconds
+        self.base_interval = self.config.service.check_interval_seconds
         self.current_refresh_interval = self.base_interval
         self.max_refresh_interval = 600  # 10 minutes max backoff
 
@@ -385,7 +385,7 @@ class TransitServer:
         )
 
         any_429 = False
-        spacing_sec = self.config.transit_tracker.request_spacing_ms / 1000.0
+        spacing_sec = self.config.service.request_spacing_ms / 1000.0
         stops_list = sorted(unique_stops)
         for i, clean_id in enumerate(stops_list):
             if i > 0 and spacing_sec > 0:
@@ -473,7 +473,7 @@ class TransitServer:
                 relevant_routes = set(route_to_sub.keys())
 
                 now_ts = int(time.time())
-                display_mode = getattr(self.config, "time_display", "arrival")
+                display_mode = self.config.transit_tracker.time_display
 
                 for arr in arrivals:
                     full_route_id = arr.get("routeId", "")

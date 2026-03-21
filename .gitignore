@@ -20,7 +20,7 @@ wheels/
 # Virtual environments
 .venv
 
-# Local configuration
+# Local configuration & dev service settings
 .local/
 
 # GTFS static data (large files, built by scripts/download_gtfs.py)

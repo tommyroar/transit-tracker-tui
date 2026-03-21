@@ -14,14 +14,16 @@ def mock_config():
     config.subscriptions = [
         TransitSubscription(feed="st", route="st:40_100240", stop="st:1_8494", label="Route st:40_100240")
     ]
-    config.use_local_api = True
-    config.auto_launch_gui = True
-    config.arrival_threshold_minutes = 5
-    config.check_interval_seconds = 30
-    config.time_display = "arrival"
+    config.service = MagicMock()
+    config.service.use_local_api = True
+    config.service.auto_launch_gui = True
+    config.service.arrival_threshold_minutes = 5
+    config.service.check_interval_seconds = 30
+    config.service.request_spacing_ms = 250
+    config.service.oba_api_key = None
     config.transit_tracker = MagicMock()
     config.transit_tracker.abbreviations = []
-    config.transit_tracker.request_spacing_ms = 250
+    config.transit_tracker.time_display = "arrival"
     return config
 
 
@@ -230,14 +232,16 @@ def ferry_config():
     config.subscriptions = [
         TransitSubscription(feed="wsf", route="95_37", stop="95_3", label="SEA-BI")
     ]
-    config.use_local_api = True
-    config.auto_launch_gui = False
-    config.arrival_threshold_minutes = 5
-    config.check_interval_seconds = 30
-    config.time_display = "arrival"
+    config.service = MagicMock()
+    config.service.use_local_api = True
+    config.service.auto_launch_gui = False
+    config.service.arrival_threshold_minutes = 5
+    config.service.check_interval_seconds = 30
+    config.service.request_spacing_ms = 250
+    config.service.oba_api_key = None
     config.transit_tracker = MagicMock()
     config.transit_tracker.abbreviations = []
-    config.transit_tracker.request_spacing_ms = 250
+    config.transit_tracker.time_display = "arrival"
     return config
 
 
@@ -336,7 +340,7 @@ async def test_non_ferry_route_headsign_unchanged(mock_config):
 @pytest.mark.asyncio
 async def test_departure_enabled_uses_departure_time(ferry_config):
     """When OBA says departureEnabled=True (ferry leaving this dock), use departure time."""
-    ferry_config.time_display = "departure"
+    ferry_config.transit_tracker.time_display = "departure"
     server = TransitServer(ferry_config)
     now = int(time.time())
 
@@ -379,7 +383,7 @@ async def test_arrival_enabled_uses_arrival_time(ferry_config):
     predictedDepartureTime is in the distant past (when it left Seattle).
     predictedArrivalTime is when it docks at Bainbridge (the useful time).
     """
-    ferry_config.time_display = "arrival"
+    ferry_config.transit_tracker.time_display = "arrival"
     server = TransitServer(ferry_config)
     now = int(time.time())
 
@@ -418,7 +422,7 @@ async def test_arrival_enabled_uses_arrival_time(ferry_config):
 @pytest.mark.asyncio
 async def test_both_flags_true_falls_back_to_display_mode(mock_config):
     """When both arrivalEnabled and departureEnabled are true (bus stops), use display_mode."""
-    mock_config.time_display = "arrival"
+    mock_config.transit_tracker.time_display = "arrival"
     server = TransitServer(mock_config)
     now = int(time.time())
 
@@ -455,7 +459,7 @@ async def test_both_flags_true_falls_back_to_display_mode(mock_config):
 @pytest.mark.asyncio
 async def test_missing_flags_falls_back_to_display_mode(mock_config):
     """When OBA flags are absent (older data or non-ferry), use global display_mode."""
-    mock_config.time_display = "arrival"
+    mock_config.transit_tracker.time_display = "arrival"
     server = TransitServer(mock_config)
     now = int(time.time())
 
@@ -524,7 +528,7 @@ async def test_departed_ferry_skipped_at_origin(ferry_config):
 @pytest.mark.asyncio
 async def test_ferry_wrong_direction_filtered(ferry_config):
     """BI→SEA arrival at Seattle Terminal should be filtered when display_mode=departure."""
-    ferry_config.time_display = "departure"
+    ferry_config.transit_tracker.time_display = "departure"
     server = TransitServer(ferry_config)
     now = int(time.time())
 
@@ -559,7 +563,7 @@ async def test_ferry_wrong_direction_filtered(ferry_config):
 @pytest.mark.asyncio
 async def test_ferry_scheduled_not_realtime(ferry_config):
     """Ferry with no vehicleId should show isRealtime=False even if predictedTimes exist."""
-    ferry_config.time_display = "departure"
+    ferry_config.transit_tracker.time_display = "departure"
     server = TransitServer(ferry_config)
     now = int(time.time())
 
@@ -638,7 +642,7 @@ async def test_rate_limit_sets_backoff_interval(mock_config):
 @pytest.mark.asyncio
 async def test_refresh_all_data_applies_inter_request_spacing(mock_config):
     """With 200ms spacing and 3 stops, gaps between API calls should be >= 130ms (75% jitter floor)."""
-    mock_config.transit_tracker.request_spacing_ms = 200
+    mock_config.service.request_spacing_ms = 200
     server = TransitServer(mock_config)
     server.api = AsyncMock()
 
@@ -669,7 +673,7 @@ async def test_refresh_all_data_applies_inter_request_spacing(mock_config):
 @pytest.mark.asyncio
 async def test_refresh_all_data_zero_spacing_fires_immediately(mock_config):
     """With spacing=0, all requests fire back-to-back (backwards compat)."""
-    mock_config.transit_tracker.request_spacing_ms = 0
+    mock_config.service.request_spacing_ms = 0
     server = TransitServer(mock_config)
     server.api = AsyncMock()
 
@@ -697,7 +701,7 @@ async def test_refresh_all_data_zero_spacing_fires_immediately(mock_config):
 @pytest.mark.asyncio
 async def test_spacing_preserves_backoff_on_429(mock_config):
     """Inter-request spacing must not interfere with exponential backoff on 429."""
-    mock_config.transit_tracker.request_spacing_ms = 200
+    mock_config.service.request_spacing_ms = 200
     server = TransitServer(mock_config)
     server.api = AsyncMock()
     server.api.get_arrivals.side_effect = Exception("HTTP 429 Too Many Requests")
@@ -715,7 +719,7 @@ async def test_spacing_preserves_backoff_on_429(mock_config):
 @pytest.mark.asyncio
 async def test_spacing_prevents_burst_429s(mock_config):
     """Simulate a 150ms server rate limit: 250ms spacing should yield zero 429s."""
-    mock_config.transit_tracker.request_spacing_ms = 250
+    mock_config.service.request_spacing_ms = 250
     server = TransitServer(mock_config)
     server.api = AsyncMock()
 

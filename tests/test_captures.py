@@ -51,7 +51,7 @@ def test_capture_match(capture):
         })
         
     config = TransitConfig()
-    config.num_panels = 2
+    config.service.num_panels = 2
     config.mock_state = mock_buses
     
     sim = LEDSimulator(config, force_live=False)

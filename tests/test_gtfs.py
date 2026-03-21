@@ -70,13 +70,15 @@ def make_gtfs_db(tmp_path, *, services=None, exceptions=None, routes=None, depar
 def mock_config():
     config = MagicMock()
     config.subscriptions = []
-    config.use_local_api = True
-    config.arrival_threshold_minutes = 5
-    config.check_interval_seconds = 30
-    config.time_display = "arrival"
+    config.service = MagicMock()
+    config.service.use_local_api = True
+    config.service.arrival_threshold_minutes = 5
+    config.service.check_interval_seconds = 30
+    config.service.request_spacing_ms = 250
+    config.service.oba_api_key = None
     config.transit_tracker = MagicMock()
     config.transit_tracker.abbreviations = []
-    config.transit_tracker.request_spacing_ms = 250
+    config.transit_tracker.time_display = "arrival"
     return config
 
 

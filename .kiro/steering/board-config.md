@@ -8,6 +8,18 @@ inclusion: auto
 
 Config files are subscription configurations for the transit board hardware (ESP32 LED matrix displays). They define which stops and routes the board displays, not how the service itself runs. The same config should work whether connected to the reference container (`ghcr.io/tjhorner/transit-tracker-api`) or this project's custom container.
 
+## Two-File Config System
+
+Configuration is split into two concerns:
+
+### 1. Board Subscription Profiles (per-profile YAML files)
+Pure subscription data under the `transit_tracker:` key. These match the public reference schema and contain only stops, routes, display preferences, and abbreviations. No API keys, no polling intervals, no hardware config.
+
+### 2. Service Settings (`.local/service.yaml`, gitignored)
+Dev environment and instance settings: API credentials (`oba_api_key`), polling intervals (`check_interval_seconds`, `request_spacing_ms`), hardware config (`num_panels`, `panel_width`, `panel_height`), filtering (`arrival_threshold_minutes`), and service mode flags (`use_local_api`, `auto_launch_gui`). The `ServiceSettings` Pydantic model validates these. For Docker containers, use environment variables (e.g., `OBA_API_KEY`) instead. Falls back to `~/.config/transit-tracker/settings.yaml` for legacy installs.
+
+At runtime, `TransitConfig` loads both and merges them into a single composite object. Access board settings via `config.transit_tracker.*` and service settings via `config.service.*`.
+
 ## Running Services
 
 The transit tracker runs as a Docker container in production, or as local Python processes in development:
@@ -32,27 +44,44 @@ The transit tracker runs as a Docker container in production, or as local Python
 - `.local/accurate_config.yaml` — reference config for accuracy testing
 - `.local/test_isolation_config.yaml` — test-only config
 
+Reference config in the repo: `data/needle_stops.yaml` — the canonical example of a clean board subscription profile.
+
 ## Config Structure
 
-All configs use the `TransitConfig` Pydantic model. The canonical form nests board subscriptions under `transit_tracker:`:
+Board subscription profiles use the `TransitTrackerSettings` Pydantic model nested under `transit_tracker:`:
 
 ```yaml
 transit_tracker:
   base_url: "wss://tt.horner.tj/"
   time_display: arrival
-  check_interval_seconds: 30
+  scroll_headsigns: false
+  display_format: "{ROUTE}  {HEADSIGN}  {LIVE} {TIME}"
   stops:
     - stop_id: "st:1_8494"
       time_offset: "-7min"
       routes:
         - "st:40_100240"
   abbreviations: []
-  styles: []
+```
+
+Service settings (`.local/service.yaml`, gitignored):
+
+```yaml
+last_config_path: /path/to/home.yaml
+oba_api_key: your-key-here
+check_interval_seconds: 30
+request_spacing_ms: 500
+arrival_threshold_minutes: 5
+num_panels: 2
+panel_width: 64
+panel_height: 32
+use_local_api: false
+auto_launch_gui: true
 ```
 
 ## Config Loading Order
 
-1. Check `get_last_config_path()` from `~/.config/transit-tracker/settings.yaml`
+1. Check `get_last_config_path()` from `.local/service.yaml`
 2. Check explicit path argument
 3. Check `.local/<path>` fallback
 4. Default to `TransitConfig()` (public API at `wss://tt.horner.tj/`)
@@ -73,4 +102,5 @@ transit_tracker:
 ## Key Environment Variables
 
 - `TRANSIT_TRACKER_TESTING=1` — disables config persistence, enables test isolation
+- `OBA_API_KEY` — OneBusAway API key (fallback when not set in service settings)
 - `PORT` — override HTTP web server port (default: 8080)

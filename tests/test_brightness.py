@@ -17,16 +17,15 @@ from transit_tracker.network.websocket_server import TransitServer
 
 def test_brightness_default():
     config = TransitConfig()
-    assert config.display_brightness == 128
     assert config.transit_tracker.display_brightness == 128
 
 
 def test_brightness_boundary_values():
     config_zero = TransitConfig(transit_tracker={"display_brightness": 0})
-    assert config_zero.display_brightness == 0
+    assert config_zero.transit_tracker.display_brightness == 0
 
     config_max = TransitConfig(transit_tracker={"display_brightness": 255})
-    assert config_max.display_brightness == 255
+    assert config_max.transit_tracker.display_brightness == 255
 
 
 def test_brightness_rejects_out_of_range():
@@ -43,13 +42,12 @@ def test_brightness_round_trip_yaml(tmp_path):
     config.save(path)
 
     loaded = TransitConfig.load(path)
-    assert loaded.display_brightness == 42
     assert loaded.transit_tracker.display_brightness == 42
 
 
-def test_brightness_syncs_to_root():
+def test_brightness_set_via_transit_tracker():
     config = TransitConfig(transit_tracker={"display_brightness": 200})
-    assert config.display_brightness == 200
+    assert config.transit_tracker.display_brightness == 200
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +156,7 @@ def test_load_reads_brightness():
 
         result = load_hardware_config("/dev/tty.mock", config)
         assert result is True
-        assert config.display_brightness == 180
+        assert config.transit_tracker.display_brightness == 180
 
 
 def test_load_handles_float_brightness():
@@ -187,7 +185,7 @@ def test_load_handles_float_brightness():
         from transit_tracker.hardware import load_hardware_config
 
         load_hardware_config("/dev/tty.mock", config)
-        assert config.display_brightness == 64
+        assert config.transit_tracker.display_brightness == 64
 
 
 # ---------------------------------------------------------------------------
@@ -203,15 +201,16 @@ def ws_config():
             feed="st", route="st:40_100240", stop="st:1_8494", label="Test"
         )
     ]
-    config.use_local_api = True
-    config.auto_launch_gui = True
-    config.arrival_threshold_minutes = 5
-    config.check_interval_seconds = 30
-    config.time_display = "arrival"
-    config.display_brightness = 128
+    config.service = MagicMock()
+    config.service.use_local_api = True
+    config.service.auto_launch_gui = True
+    config.service.arrival_threshold_minutes = 5
+    config.service.check_interval_seconds = 30
+    config.service.request_spacing_ms = 250
     config.transit_tracker = MagicMock()
+    config.transit_tracker.time_display = "arrival"
+    config.transit_tracker.display_brightness = 128
     config.transit_tracker.abbreviations = []
-    config.transit_tracker.request_spacing_ms = 250
     config.transit_tracker.oba_api_key = None
     return config
 

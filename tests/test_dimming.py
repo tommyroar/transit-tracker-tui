@@ -163,15 +163,16 @@ def dimming_config():
             feed="st", route="st:40_100240", stop="st:1_8494", label="Test"
         )
     ]
-    config.use_local_api = True
-    config.auto_launch_gui = True
-    config.arrival_threshold_minutes = 5
-    config.check_interval_seconds = 30
-    config.time_display = "arrival"
-    config.display_brightness = 128
+    config.service = MagicMock()
+    config.service.use_local_api = True
+    config.service.auto_launch_gui = True
+    config.service.arrival_threshold_minutes = 5
+    config.service.check_interval_seconds = 30
+    config.service.request_spacing_ms = 250
     config.transit_tracker = MagicMock()
+    config.transit_tracker.time_display = "arrival"
+    config.transit_tracker.display_brightness = 128
     config.transit_tracker.abbreviations = []
-    config.transit_tracker.request_spacing_ms = 250
     config.transit_tracker.oba_api_key = None
     config.transit_tracker.device_ip = "192.168.5.248"
     config.transit_tracker.dimming_schedule = [

@@ -145,9 +145,9 @@ def load_hardware_config(port: str, config) -> bool:
                     val = base_url["value"]
                     config.api_url = val
                     if "localhost" in val or ".local" in val or "127.0.0.1" in val:
-                        config.use_local_api = True
+                        config.service.use_local_api = True
                     else:
-                        config.use_local_api = False
+                        config.service.use_local_api = False
                         config.transit_tracker.base_url = val
 
                 status.update("[cyan]Reading Schedule...")
@@ -200,7 +200,7 @@ def load_hardware_config(port: str, config) -> bool:
                 if brightness and "value" in brightness:
                     try:
                         val = int(float(brightness["value"]))
-                        config.display_brightness = max(0, min(255, val))
+                        config.transit_tracker.display_brightness = max(0, min(255, val))
                     except (ValueError, TypeError):
                         pass
 

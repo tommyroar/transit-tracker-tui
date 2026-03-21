@@ -21,7 +21,7 @@ from .network.websocket_server import (
 from .display import format_trip_line  # noqa: F401 — re-exported for backwards compat
 from .transit_api import TransitAPI
 
-# Container status endpoint (Nomad maps container 8080 → host 8081)
+# Container status endpoint (container 8080 → host 8081)
 CONTAINER_STATUS_URL = "http://localhost:8081/api/status"
 CONTAINER_NAME = "transit-tracker"
 

@@ -107,7 +107,7 @@ def _manage_service_launchctl(action: str):
 
     if action == "start":
         if sys.platform != "darwin":
-            print("[red]Service management requires macOS or Nomad.[/red]")
+            print("[red]Service management requires macOS.[/red]")
             return
         if get_service_status():
             print(f"[yellow]Service {label} is already running.[/yellow]")
@@ -120,7 +120,7 @@ def _manage_service_launchctl(action: str):
 
     elif action == "stop":
         if sys.platform != "darwin":
-            print("[red]Service management requires macOS or Nomad.[/red]")
+            print("[red]Service management requires macOS.[/red]")
             return
         print(f"Stopping {label} via launchctl...")
         os.system(f"launchctl unload {PLIST_PATH}")

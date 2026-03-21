@@ -67,5 +67,3 @@ transit-tracker service stop     # docker stop transit-tracker
 transit-tracker service restart  # docker restart transit-tracker
 transit-tracker service status   # docker inspect state
 ```
-
-Nomad is available for ad-hoc job management (`transit-tracker.nomad.hcl`) but is not in the production loop.

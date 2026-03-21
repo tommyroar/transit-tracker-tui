@@ -96,12 +96,11 @@ The GUI tray icon is a subprocess of the service (`run_full_service()` in `cli.p
 
 ## Service management
 
-The service runs as a Nomad job (`transit-tracker`). See `~/dev/NOMAD.md` for full Nomad context.
+The service runs as a Docker container with `--restart=always`. See `.kiro/steering/docker.md` for full container context.
 
 ```bash
-nomad job run transit-tracker.nomad.hcl   # start/update
-nomad job status transit-tracker          # check status
-nomad alloc logs <alloc-id>               # view logs
-nomad job stop transit-tracker            # stop (keeps job registered)
-nomad job stop -purge transit-tracker     # stop and remove
+transit-tracker service start     # docker start transit-tracker
+transit-tracker service stop      # docker stop transit-tracker
+transit-tracker service restart   # docker restart transit-tracker
+transit-tracker service status    # docker inspect state
 ```

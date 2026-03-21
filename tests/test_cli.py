@@ -39,16 +39,21 @@ def test_cli_main_simulator_launch():
 
 def test_cli_main_gui_command_direct_launch():
     """Verifies that 'gui' command launches the GUI directly."""
+    mock_gui_main = MagicMock()
+    mock_gui_module = MagicMock()
+    mock_gui_module.main = mock_gui_main
+
+    import sys
     with patch("transit_tracker.cli.get_last_config_path", return_value=None), \
          patch("transit_tracker.cli.TransitConfig.load"), \
-         patch("transit_tracker.gui.main") as mock_gui_main, \
+         patch.dict(sys.modules, {"transit_tracker.gui": mock_gui_module}), \
          patch("argparse.ArgumentParser.parse_args") as mock_args:
-        
+
         mock_args.return_value = MagicMock()
         mock_args.return_value.command = ["gui"]
-        
+
         main()
-        
+
         mock_gui_main.assert_called_once()
 
 def test_service_start_idempotency():

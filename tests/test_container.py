@@ -10,12 +10,28 @@ Requirements: 5.1, 5.2, 5.3, 5.4, 5.5
 """
 
 import json
+import shutil
 import subprocess
 import time
+from pathlib import Path
 
 import httpx
 import pytest
 import websockets.sync.client
+
+def _docker_available() -> bool:
+    if not shutil.which("docker"):
+        return False
+    try:
+        result = subprocess.run(
+            ["docker", "info"], capture_output=True, timeout=10,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+if not _docker_available():
+    pytest.skip("Docker not available", allow_module_level=True)
 
 IMAGE_NAME = "transit-tracker"
 CONTAINER_NAME = "transit-tracker-test"
@@ -56,9 +72,12 @@ def docker_container(docker_image):
         "--name", CONTAINER_NAME,
         "-p", f"{WS_HOST_PORT}:8000",
         "-p", f"{HTTP_HOST_PORT}:8080",
-        "-v", f"{CONFIG_MOUNT}:/config/config.yaml:ro",
-        docker_image,
     ]
+    # Only mount config if it exists (CI environments won't have it)
+    config_path = Path(CONFIG_MOUNT)
+    if config_path.exists():
+        run_cmd += ["-v", f"{config_path.resolve()}:/config/config.yaml:ro"]
+    run_cmd.append(docker_image)
     result = subprocess.run(run_cmd, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, f"Container start failed:\n{result.stderr}"
 

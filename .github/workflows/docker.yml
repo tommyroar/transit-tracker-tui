@@ -22,4 +22,4 @@ jobs:
           # Full integration tests (WebSocket heartbeat, /api/spec) require a
           # mounted config with real stop/route subscriptions, so they are left
           # to local `pytest -m docker` runs.
-          docker run --rm transit-tracker:test sh -c "python -c 'import transit_tracker; print(\"OK\")'"
+          docker run --rm --entrypoint python transit-tracker:test -c "import transit_tracker; print('OK')"

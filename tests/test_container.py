@@ -12,6 +12,7 @@ Requirements: 5.1, 5.2, 5.3, 5.4, 5.5
 import json
 import subprocess
 import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -56,9 +57,12 @@ def docker_container(docker_image):
         "--name", CONTAINER_NAME,
         "-p", f"{WS_HOST_PORT}:8000",
         "-p", f"{HTTP_HOST_PORT}:8080",
-        "-v", f"{CONFIG_MOUNT}:/config/config.yaml:ro",
-        docker_image,
     ]
+    # Only mount config if it exists (CI environments won't have it)
+    config_path = Path(CONFIG_MOUNT)
+    if config_path.exists():
+        run_cmd += ["-v", f"{config_path.resolve()}:/config/config.yaml:ro"]
+    run_cmd.append(docker_image)
     result = subprocess.run(run_cmd, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, f"Container start failed:\n{result.stderr}"
 

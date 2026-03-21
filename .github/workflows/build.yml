@@ -24,6 +24,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --dev
 
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Check formatting
+        run: uv run ruff format --check .
+
       - name: Run Tests (including Capture Validation)
         env:
           TRANSIT_TRACKER_TESTING: "1"

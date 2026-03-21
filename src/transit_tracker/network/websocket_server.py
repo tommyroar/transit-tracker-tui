@@ -577,11 +577,15 @@ class TransitServer:
         self.display_brightness = target
         log.info("Dimming schedule: brightness -> %d", target, extra={"component": "server"})
 
-        # POST to ESPHome REST API
+        # POST to ESPHome REST API (light entity, not number)
         if device_ip:
             try:
-                url = f"http://{device_ip}/number/display_brightness"
-                await http_client.post(url, json={"value": target})
+                if target == 0:
+                    url = f"http://{device_ip}/light/display_brightness/turn_off"
+                    await http_client.post(url, headers={"Content-Length": "0"})
+                else:
+                    url = f"http://{device_ip}/light/display_brightness/turn_on?brightness={target}"
+                    await http_client.post(url, headers={"Content-Length": "0"})
                 log.info("ESPHome brightness set to %d", target, extra={"component": "server"})
             except Exception as e:
                 log.warning("ESPHome brightness POST failed: %s", e, extra={"component": "server"})

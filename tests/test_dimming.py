@@ -196,8 +196,8 @@ async def test_apply_posts_to_esphome(dimming_config):
 
     assert server.display_brightness == 20
     mock_client.post.assert_called_once_with(
-        "http://192.168.5.248/number/display_brightness",
-        json={"value": 20},
+        "http://192.168.5.248/light/display_brightness/turn_on?brightness=20",
+        headers={"Content-Length": "0"},
     )
 
 

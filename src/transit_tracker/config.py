@@ -108,6 +108,7 @@ class TransitTrackerSettings(BaseModel):
     show_units: str = Field(default="short")
     list_mode: str = Field(default="sequential")
     scroll_headsigns: bool = Field(default=False)
+    display_brightness: int = Field(default=128, ge=0, le=255)
     display_format: str = Field(default="{ROUTE}  {HEADSIGN}  {LIVE} {TIME}")
     num_panels: int = Field(default=2)
     panel_width: int = Field(default=64)
@@ -144,6 +145,7 @@ class TransitConfig(BaseModel):
     arrival_threshold_minutes: int = Field(default=5, ge=1)
     time_display: str = "arrival"
     scroll_headsigns: bool = False
+    display_brightness: int = 128
     subscriptions: List[TransitSubscription] = Field(default_factory=list)
 
     # Testing state
@@ -177,6 +179,7 @@ class TransitConfig(BaseModel):
         self.arrival_threshold_minutes = tt.arrival_threshold_minutes
         self.time_display = tt.time_display
         self.scroll_headsigns = tt.scroll_headsigns
+        self.display_brightness = tt.display_brightness
 
         # Build flattened subscriptions
         self.subscriptions = []

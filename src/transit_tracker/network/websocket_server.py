@@ -69,6 +69,7 @@ class TransitServer:
         self.messages_processed = 0
         self.start_time = time.time()
         self.last_broadcast_time = 0
+        self.display_brightness = getattr(self.config, "display_brightness", 128)
 
         # Throttle metrics
         self.throttle_total = 0          # lifetime 429 count
@@ -250,6 +251,38 @@ class TransitServer:
                         print(f"[SERVER] Client {ws.remote_address} subscribed to {len(pairs)} pairs")
                         # Send immediate update from cache (or fetch if new)
                         await self.send_update(ws)
+
+                        # Push current brightness to newly connected client
+                        try:
+                            await ws.send(json.dumps({
+                                "event": "control:brightness",
+                                "data": {"value": self.display_brightness}
+                            }))
+                        except Exception:
+                            pass
+
+                elif event == "control:brightness":
+                    data = payload.get("data", {})
+                    value = data.get("value")
+                    if value is not None:
+                        try:
+                            b = int(value)
+                            if 0 <= b <= 255:
+                                self.display_brightness = b
+                                msg = json.dumps({
+                                    "event": "control:brightness",
+                                    "data": {"value": b}
+                                })
+                                for client in list(self.clients):
+                                    if client != ws:
+                                        try:
+                                            await client.send(msg)
+                                        except Exception:
+                                            pass
+                                print(f"[SERVER] Brightness set to {b}")
+                        except (ValueError, TypeError):
+                            pass
+
         except websockets.exceptions.ConnectionClosed:
             pass
         finally:

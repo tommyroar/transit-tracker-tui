@@ -13,6 +13,7 @@ class EntityType:
     SELECT = 2
     SWITCH = 3
     BUTTON = 4
+    NUMBER = 5
 
 class ESPHomeFlasher:
     def __init__(self, port_name: str, baudrate: int = 115200):
@@ -193,7 +194,16 @@ def load_hardware_config(port: str, config) -> bool:
                         # Only replace if we actually found stops
                         if new_subs:
                             config.subscriptions = new_subs
-            
+
+                status.update("[cyan]Reading Brightness...")
+                brightness = flasher.get_entity("display_brightness", EntityType.NUMBER)
+                if brightness and "value" in brightness:
+                    try:
+                        val = int(float(brightness["value"]))
+                        config.display_brightness = max(0, min(255, val))
+                    except (ValueError, TypeError):
+                        pass
+
             console.print("[bold green]Successfully read configuration from device![/bold green]")
             return True
         except Exception as e:
@@ -229,6 +239,10 @@ def flash_hardware(port: str, config) -> bool:
                 flasher.set_entity("list_mode_config", EntityType.SELECT, "sequential")
                 flasher.set_entity("time_units_config", EntityType.SELECT, "short")
                 flasher.set_entity("scroll_headsigns", EntityType.SWITCH, "ON")
+
+                status.update("[cyan]Configuring Brightness...")
+                brightness = getattr(config, "display_brightness", 128)
+                flasher.set_entity("display_brightness", EntityType.NUMBER, brightness)
 
                 status.update("[cyan]Saving Preferences...")
                 flasher.press_button("write_preferences")

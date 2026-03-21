@@ -451,6 +451,49 @@ async def change_panels_wizard(config: TransitConfig, config_path: str, console:
 
 
 
+async def change_brightness_wizard(config: TransitConfig, config_path: str, console: Console):
+    presets = [
+        questionary.Choice("Off (0)", value="0"),
+        questionary.Choice("Dim (32)", value="32"),
+        questionary.Choice("Low (64)", value="64"),
+        questionary.Choice("Medium (128)", value="128"),
+        questionary.Choice("Bright (192)", value="192"),
+        questionary.Choice("Full (255)", value="255"),
+        questionary.Choice("Custom...", value="custom"),
+    ]
+
+    current = str(config.display_brightness)
+    default = current if current in ["0", "32", "64", "128", "192", "255"] else "custom"
+
+    val = await ask_with_live_dashboard(
+        "Select display brightness:",
+        choices=presets,
+        config=config,
+        config_path=config_path,
+        console=console,
+        default=default
+    )
+
+    if val == "custom":
+        val = await questionary.text(
+            "Enter brightness (0-255):",
+            default=str(config.display_brightness)
+        ).ask_async()
+
+    if val is not None:
+        try:
+            brightness = int(val)
+            if 0 <= brightness <= 255:
+                config.display_brightness = brightness
+                config.transit_tracker.display_brightness = brightness
+                config.save(config_path)
+                rprint(f"[green]Display brightness set to {brightness}.[/green]")
+            else:
+                rprint("[red]Brightness must be between 0 and 255.[/red]")
+        except ValueError:
+            rprint("[red]Invalid brightness value.[/red]")
+
+
 async def change_api_mode_wizard(config: TransitConfig, config_path: str, console: Console):
     mode = await ask_with_live_dashboard(
         "Select API Mode:",
@@ -848,6 +891,7 @@ async def async_main_menu():
                         "API Settings",
                         "Manage Stops",
                         "Change Number of Panels",
+                        "Change Brightness",
                         "Debug",
                         "Back"
                     ],
@@ -1020,6 +1064,9 @@ async def async_main_menu():
                         
                 elif c_action == "Change Number of Panels":
                     await change_panels_wizard(config, config_path, console)
+
+                elif c_action == "Change Brightness":
+                    await change_brightness_wizard(config, config_path, console)
 
         elif action == "Simulator":
             rprint(f"[dim]Using config: {config_path}[/dim]")

@@ -67,13 +67,14 @@ def test_config_save_load(tmp_path):
 
 
 def test_service_settings_roundtrip(tmp_path):
-    """Service settings save and load correctly."""
+    """Service settings save and load correctly via .local/service.yaml."""
     import unittest.mock as mock
 
-    settings_file = tmp_path / "settings.yaml"
+    settings_file = tmp_path / "service.yaml"
     with (
-        mock.patch("transit_tracker.config.GLOBAL_SETTINGS_FILE", str(settings_file)),
-        mock.patch("transit_tracker.config.GLOBAL_SETTINGS_DIR", str(tmp_path)),
+        mock.patch(
+            "transit_tracker.config.SERVICE_SETTINGS_FILE", str(settings_file)
+        ),
         mock.patch.dict(os.environ, {"TRANSIT_TRACKER_TESTING": "0"}),
     ):
         svc = ServiceSettings(
@@ -83,6 +84,7 @@ def test_service_settings_roundtrip(tmp_path):
             last_config_path="/some/path.yaml",
         )
         save_service_settings(svc)
+        assert settings_file.exists()
 
         loaded = load_service_settings()
         assert loaded.oba_api_key == "test-key-123"

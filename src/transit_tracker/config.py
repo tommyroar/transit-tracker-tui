@@ -6,12 +6,16 @@ from typing import Any, Dict, List, Optional
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-GLOBAL_SETTINGS_DIR = os.path.expanduser("~/.config/transit-tracker")
-GLOBAL_SETTINGS_FILE = os.path.join(GLOBAL_SETTINGS_DIR, "settings.yaml")
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+SERVICE_SETTINGS_FILE = os.path.join(_PROJECT_ROOT, ".local", "service.yaml")
+
+# Legacy path — read-only fallback for existing installs
+_LEGACY_SETTINGS_DIR = os.path.expanduser("~/.config/transit-tracker")
+_LEGACY_SETTINGS_FILE = os.path.join(_LEGACY_SETTINGS_DIR, "settings.yaml")
 
 
 class ServiceSettings(BaseModel):
-    """Service-level settings stored at ~/.config/transit-tracker/settings.yaml.
+    """Dev environment / service settings stored at .local/service.yaml.
 
     These are environment/instance concerns: credentials, polling intervals,
     hardware dimensions, and service mode flags.  They are NOT part of the
@@ -40,11 +44,26 @@ class ServiceSettings(BaseModel):
     auto_launch_gui: bool = Field(default=True)
 
 
+def _resolve_settings_path() -> str:
+    """Return the path to the service settings file.
+
+    Primary: .local/service.yaml  (project-local, gitignored)
+    Fallback: ~/.config/transit-tracker/settings.yaml  (legacy installs)
+    """
+    if os.path.exists(SERVICE_SETTINGS_FILE):
+        return SERVICE_SETTINGS_FILE
+    if os.path.exists(_LEGACY_SETTINGS_FILE):
+        return _LEGACY_SETTINGS_FILE
+    # Default to the project-local path for new writes
+    return SERVICE_SETTINGS_FILE
+
+
 def load_service_settings() -> ServiceSettings:
-    """Load service settings from ~/.config/transit-tracker/settings.yaml."""
-    if os.path.exists(GLOBAL_SETTINGS_FILE):
+    """Load service settings from .local/service.yaml (or legacy fallback)."""
+    path = _resolve_settings_path()
+    if os.path.exists(path):
         try:
-            with open(GLOBAL_SETTINGS_FILE, "r") as f:
+            with open(path, "r") as f:
                 data = yaml.safe_load(f) or {}
                 return ServiceSettings.model_validate(data)
         except Exception:
@@ -53,16 +72,17 @@ def load_service_settings() -> ServiceSettings:
 
 
 def save_service_settings(settings: ServiceSettings):
-    """Persist service settings to ~/.config/transit-tracker/settings.yaml."""
+    """Persist service settings to .local/service.yaml."""
     if os.environ.get("TRANSIT_TRACKER_TESTING") == "1":
         return
-    os.makedirs(GLOBAL_SETTINGS_DIR, exist_ok=True)
+    settings_dir = os.path.dirname(SERVICE_SETTINGS_FILE)
+    os.makedirs(settings_dir, exist_ok=True)
     data = settings.model_dump(exclude_none=True)
-    fd, tmp_path = tempfile.mkstemp(dir=GLOBAL_SETTINGS_DIR, suffix=".yaml")
+    fd, tmp_path = tempfile.mkstemp(dir=settings_dir, suffix=".yaml")
     try:
         with os.fdopen(fd, "w") as f:
             yaml.safe_dump(data, f)
-        os.replace(tmp_path, GLOBAL_SETTINGS_FILE)
+        os.replace(tmp_path, SERVICE_SETTINGS_FILE)
     except Exception:
         os.unlink(tmp_path)
         raise
@@ -207,7 +227,7 @@ class TransitConfig(BaseModel):
         default_factory=TransitTrackerSettings
     )
 
-    # Service settings (from ~/.config/transit-tracker/settings.yaml)
+    # Service settings (from .local/service.yaml)
     service: ServiceSettings = Field(default_factory=ServiceSettings)
 
     # Derived fields (computed, not persisted)

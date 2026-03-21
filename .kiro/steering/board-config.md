@@ -15,8 +15,8 @@ Configuration is split into two concerns:
 ### 1. Board Subscription Profiles (per-profile YAML files)
 Pure subscription data under the `transit_tracker:` key. These match the public reference schema and contain only stops, routes, display preferences, and abbreviations. No API keys, no polling intervals, no hardware config.
 
-### 2. Service Settings (`~/.config/transit-tracker/settings.yaml`)
-Environment/instance settings: API credentials (`oba_api_key`), polling intervals (`check_interval_seconds`, `request_spacing_ms`), hardware config (`num_panels`, `panel_width`, `panel_height`), filtering (`arrival_threshold_minutes`), and service mode flags (`use_local_api`, `auto_launch_gui`). The `ServiceSettings` Pydantic model validates these. For Docker containers, use environment variables (e.g., `OBA_API_KEY`) instead.
+### 2. Service Settings (`.local/service.yaml`, gitignored)
+Dev environment and instance settings: API credentials (`oba_api_key`), polling intervals (`check_interval_seconds`, `request_spacing_ms`), hardware config (`num_panels`, `panel_width`, `panel_height`), filtering (`arrival_threshold_minutes`), and service mode flags (`use_local_api`, `auto_launch_gui`). The `ServiceSettings` Pydantic model validates these. For Docker containers, use environment variables (e.g., `OBA_API_KEY`) instead. Falls back to `~/.config/transit-tracker/settings.yaml` for legacy installs.
 
 At runtime, `TransitConfig` loads both and merges them into a single composite object. Access board settings via `config.transit_tracker.*` and service settings via `config.service.*`.
 
@@ -64,7 +64,7 @@ transit_tracker:
   abbreviations: []
 ```
 
-Service settings (`~/.config/transit-tracker/settings.yaml`):
+Service settings (`.local/service.yaml`, gitignored):
 
 ```yaml
 last_config_path: /path/to/home.yaml
@@ -81,7 +81,7 @@ auto_launch_gui: true
 
 ## Config Loading Order
 
-1. Check `get_last_config_path()` from `~/.config/transit-tracker/settings.yaml`
+1. Check `get_last_config_path()` from `.local/service.yaml`
 2. Check explicit path argument
 3. Check `.local/<path>` fallback
 4. Default to `TransitConfig()` (public API at `wss://tt.horner.tj/`)

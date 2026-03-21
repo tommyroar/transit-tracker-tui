@@ -24,10 +24,16 @@ def mock_env(tmp_path):
     accurate_yaml = local_dir / "accurate_config.yaml"
     accurate_yaml.write_text("transit_tracker: {stops: [{stop_id: 'accurate'}]}")
     
-    # Use transit_tracker.config.GLOBAL_SETTINGS_FILE
-    with mock.patch("transit_tracker.config.GLOBAL_SETTINGS_FILE", str(settings_file)), \
-         mock.patch("transit_tracker.config.GLOBAL_SETTINGS_DIR", str(settings_file.parent)), \
-         mock.patch("transit_tracker.tui.os.path.abspath", side_effect=lambda p: str(p)):
+    # Point service settings to temp dir
+    svc_patch = mock.patch(
+        "transit_tracker.config.SERVICE_SETTINGS_FILE",
+        str(settings_file),
+    )
+    abs_patch = mock.patch(
+        "transit_tracker.tui.os.path.abspath",
+        side_effect=lambda p: str(p),
+    )
+    with svc_patch, abs_patch:
         
         yield {
             "settings": settings_file,

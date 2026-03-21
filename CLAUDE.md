@@ -87,7 +87,7 @@ The GUI tray icon is a subprocess of the service (`run_full_service()` in `cli.p
 
 ### Config (two-file system)
 - **Board subscription profiles** (`.local/*.yaml`, `data/needle_stops.yaml`): Pure stop/route data under `transit_tracker:` key. Schema: `TransitTrackerSettings` — only `base_url`, `time_display`, `scroll_headsigns`, `display_format`, `stops`, `abbreviations`. No API keys or service settings.
-- **Service settings** (`~/.config/transit-tracker/settings.yaml`): `ServiceSettings` model — `oba_api_key`, `check_interval_seconds`, `request_spacing_ms`, `arrival_threshold_minutes`, `num_panels`, `panel_width`, `panel_height`, `use_local_api`, `auto_launch_gui`, `last_config_path`.
+- **Service settings** (`.local/service.yaml`, gitignored): `ServiceSettings` model — `oba_api_key`, `check_interval_seconds`, `request_spacing_ms`, `arrival_threshold_minutes`, `num_panels`, `panel_width`, `panel_height`, `use_local_api`, `auto_launch_gui`, `last_config_path`.
 - `TransitConfig` is a runtime composite: merges both at load time. Access board settings via `config.transit_tracker.*`, service settings via `config.service.*`.
 - `config.save()` writes only the `transit_tracker:` block. Service settings persist via `save_service_settings()`.
 - Profile `.yaml` files can live in project root or `.local/`

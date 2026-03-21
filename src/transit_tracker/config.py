@@ -68,14 +68,17 @@ class ServiceSettings(BaseModel):
 def _resolve_settings_path() -> str:
     """Return the path to the service settings file.
 
-    Primary: .local/service.yaml  (project-local, gitignored)
+    Priority: SERVICE_SETTINGS_PATH env var (container override)
+    Then: .local/service.yaml  (project-local, gitignored)
     Fallback: ~/.config/transit-tracker/settings.yaml  (legacy installs)
     """
+    env_path = os.environ.get("SERVICE_SETTINGS_PATH")
+    if env_path:
+        return env_path
     if os.path.exists(SERVICE_SETTINGS_FILE):
         return SERVICE_SETTINGS_FILE
     if os.path.exists(_LEGACY_SETTINGS_FILE):
         return _LEGACY_SETTINGS_FILE
-    # Default to the project-local path for new writes
     return SERVICE_SETTINGS_FILE
 
 
@@ -93,15 +96,16 @@ def load_service_settings() -> ServiceSettings:
 
 
 def save_service_settings(settings: ServiceSettings):
-    """Persist service settings to .local/service.yaml."""
-    settings_dir = os.path.dirname(SERVICE_SETTINGS_FILE)
+    """Persist service settings to the resolved service.yaml path."""
+    path = _resolve_settings_path()
+    settings_dir = os.path.dirname(path)
     os.makedirs(settings_dir, exist_ok=True)
     data = settings.model_dump(exclude_none=True)
     fd, tmp_path = tempfile.mkstemp(dir=settings_dir, suffix=".yaml")
     try:
         with os.fdopen(fd, "w") as f:
             yaml.safe_dump(data, f)
-        os.replace(tmp_path, SERVICE_SETTINGS_FILE)
+        os.replace(tmp_path, path)
     except Exception:
         os.unlink(tmp_path)
         raise

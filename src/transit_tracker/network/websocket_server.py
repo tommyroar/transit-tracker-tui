@@ -10,7 +10,10 @@ from typing import Any, Dict
 import httpx
 import websockets
 
-from ..config import TransitConfig, evaluate_dimming_schedule, get_last_config_path
+from ..config import (
+    TransitConfig, evaluate_dimming_schedule, get_last_config_path,
+    load_service_settings, _resolve_settings_path,
+)
 from ..display import format_trip_line
 from ..gtfs_schedule import GTFSSchedule
 from ..logging import get_logger, is_message_logging_enabled
@@ -87,6 +90,13 @@ class TransitServer:
 
         # GTFS static schedule fallback (None if DB not built yet)
         self.gtfs = GTFSSchedule()
+
+        # Service settings hot-reload (file mtime tracking)
+        self._service_settings_path = _resolve_settings_path()
+        try:
+            self._service_settings_mtime = os.path.getmtime(self._service_settings_path)
+        except OSError:
+            self._service_settings_mtime = 0
 
         # Sync initial gauge values
         metrics.refresh_interval.set(self.current_refresh_interval)
@@ -601,12 +611,25 @@ class TransitServer:
         self.sync_state()
         return True
 
+    def _maybe_reload_service_settings(self):
+        """Reload service settings from disk if the file has changed."""
+        try:
+            current_mtime = os.path.getmtime(self._service_settings_path)
+        except OSError:
+            return
+        if current_mtime != self._service_settings_mtime:
+            self._service_settings_mtime = current_mtime
+            self.config.service = load_service_settings()
+            log.info("Service settings reloaded from %s", self._service_settings_path,
+                     extra={"component": "server"})
+
     async def dimming_loop(self):
         """Background task that applies time-based brightness schedule."""
         http_client = httpx.AsyncClient(timeout=5.0)
         try:
             while True:
                 try:
+                    self._maybe_reload_service_settings()
                     await self._apply_dimming_schedule(http_client)
                 except Exception as e:
                     log.error("Dimming loop error: %s", e, extra={"component": "server"})

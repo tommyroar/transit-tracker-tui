@@ -144,9 +144,9 @@ def load_hardware_config(port: str, config) -> bool:
                     val = base_url["value"]
                     config.api_url = val
                     if "localhost" in val or ".local" in val or "127.0.0.1" in val:
-                        config.use_local_api = True
+                        config.service.use_local_api = True
                     else:
-                        config.use_local_api = False
+                        config.service.use_local_api = False
                         config.transit_tracker.base_url = val
 
                 status.update("[cyan]Reading Schedule...")

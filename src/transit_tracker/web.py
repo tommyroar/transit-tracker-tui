@@ -87,12 +87,12 @@ def generate_api_spec(config: TransitConfig) -> str:
             "web_url": "http://localhost:8080",
         },
         "config": {
-            "check_interval_seconds": config.check_interval_seconds,
-            "arrival_threshold_minutes": config.arrival_threshold_minutes,
-            "time_display": config.time_display,
-            "num_panels": config.num_panels,
-            "panel_size": f"{config.panel_width}x{config.panel_height}",
-            "scroll_headsigns": config.scroll_headsigns,
+            "check_interval_seconds": config.service.check_interval_seconds,
+            "arrival_threshold_minutes": config.service.arrival_threshold_minutes,
+            "time_display": config.transit_tracker.time_display,
+            "num_panels": config.service.num_panels,
+            "panel_size": f"{config.service.panel_width}x{config.service.panel_height}",
+            "scroll_headsigns": config.transit_tracker.scroll_headsigns,
             "subscriptions": [
                 {
                     "feed": sub.feed,
@@ -141,7 +141,7 @@ def generate_api_spec(config: TransitConfig) -> str:
                 "schedule": {
                     "description": (
                         "Pushed on every data refresh cycle "
-                        f"(every {config.check_interval_seconds}s)."
+                        f"(every {config.service.check_interval_seconds}s)."
                     ),
                     "fields": {
                         "event": {"type": "string", "value": "schedule"},

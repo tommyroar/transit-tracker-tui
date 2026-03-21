@@ -22,15 +22,15 @@ from transit_tracker.network.websocket_server import TransitServer
 
 def test_dimming_schedule_empty_by_default():
     config = TransitConfig()
-    assert config.transit_tracker.dimming_schedule == []
+    assert config.service.dimming_schedule == []
 
 
 def test_device_ip_optional():
     config = TransitConfig()
-    assert config.transit_tracker.device_ip is None
+    assert config.service.device_ip is None
 
-    config2 = TransitConfig(transit_tracker={"device_ip": "192.168.5.248"})
-    assert config2.transit_tracker.device_ip == "192.168.5.248"
+    config2 = TransitConfig(service={"device_ip": "192.168.5.248"})
+    assert config2.service.device_ip == "192.168.5.248"
 
 
 def test_dimming_entry_valid():
@@ -61,24 +61,32 @@ def test_dimming_entry_rejects_bad_brightness():
         DimmingEntry(time="22:00", brightness=256)
 
 
-def test_dimming_schedule_round_trip_yaml(tmp_path):
-    config = TransitConfig(
-        transit_tracker={
-            "dimming_schedule": [
-                {"time": "22:00", "brightness": 20},
-                {"time": "07:00", "brightness": 128},
-            ],
-            "device_ip": "192.168.5.248",
-        }
+def test_dimming_schedule_round_trip_service_settings(tmp_path):
+    """dimming_schedule and device_ip are ServiceSettings fields."""
+    from transit_tracker.config import (
+        ServiceSettings,
+        load_service_settings,
+        save_service_settings,
     )
-    path = str(tmp_path / "dim.yaml")
-    config.save(path)
+    from unittest import mock
+    import os
 
-    loaded = TransitConfig.load(path)
-    assert len(loaded.transit_tracker.dimming_schedule) == 2
-    assert loaded.transit_tracker.dimming_schedule[0].time == "22:00"
-    assert loaded.transit_tracker.dimming_schedule[0].brightness == 20
-    assert loaded.transit_tracker.device_ip == "192.168.5.248"
+    settings_file = tmp_path / "service.yaml"
+    with mock.patch("transit_tracker.config.SERVICE_SETTINGS_FILE", str(settings_file)), \
+         mock.patch.dict(os.environ, {"TRANSIT_TRACKER_TESTING": "0"}):
+        svc = ServiceSettings(
+            device_ip="192.168.5.248",
+            dimming_schedule=[
+                DimmingEntry(time="22:00", brightness=20),
+                DimmingEntry(time="07:00", brightness=128),
+            ],
+        )
+        save_service_settings(svc)
+        loaded = load_service_settings()
+        assert len(loaded.dimming_schedule) == 2
+        assert loaded.dimming_schedule[0].time == "22:00"
+        assert loaded.dimming_schedule[0].brightness == 20
+        assert loaded.device_ip == "192.168.5.248"
 
 
 # ---------------------------------------------------------------------------
@@ -171,11 +179,11 @@ def dimming_config():
     config.service.request_spacing_ms = 250
     config.transit_tracker = MagicMock()
     config.transit_tracker.time_display = "arrival"
-    config.transit_tracker.display_brightness = 128
+    config.service.display_brightness = 128
     config.service.oba_api_key = None
     config.transit_tracker.abbreviations = []
-    config.transit_tracker.device_ip = "192.168.5.248"
-    config.transit_tracker.dimming_schedule = [
+    config.service.device_ip = "192.168.5.248"
+    config.service.dimming_schedule = [
         DimmingEntry(time="07:00", brightness=128),
         DimmingEntry(time="22:00", brightness=20),
     ]
@@ -229,7 +237,7 @@ async def test_apply_broadcasts_ws(dimming_config):
 @pytest.mark.asyncio
 async def test_apply_skips_when_no_schedule(dimming_config):
     """No schedule means no POST and no broadcast."""
-    dimming_config.transit_tracker.dimming_schedule = []
+    dimming_config.service.dimming_schedule = []
     server = TransitServer(dimming_config)
     mock_client = AsyncMock()
 
@@ -299,7 +307,7 @@ async def test_apply_handles_http_failure(dimming_config):
 @pytest.mark.asyncio
 async def test_apply_no_device_ip_skips_post(dimming_config):
     """Without device_ip, HTTP POST is skipped but WS broadcast still happens."""
-    dimming_config.transit_tracker.device_ip = None
+    dimming_config.service.device_ip = None
     server = TransitServer(dimming_config)
     server.display_brightness = 128
 

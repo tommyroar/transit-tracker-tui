@@ -75,7 +75,7 @@ class TransitServer:
         self.messages_processed = 0
         self.start_time = time.time()
         self.last_broadcast_time = 0
-        self.display_brightness = self.config.transit_tracker.display_brightness
+        self.display_brightness = self.config.service.display_brightness
         self.dimming_override = False
         self.last_scheduled_brightness = None
 
@@ -549,8 +549,8 @@ class TransitServer:
 
     async def _apply_dimming_schedule(self, http_client: httpx.AsyncClient):
         """Single iteration of dimming schedule check. Returns True if brightness changed."""
-        schedule = self.config.transit_tracker.dimming_schedule
-        device_ip = self.config.transit_tracker.device_ip
+        schedule = self.config.service.dimming_schedule
+        device_ip = self.config.service.device_ip
 
         if not schedule:
             return False

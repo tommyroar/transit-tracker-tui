@@ -200,7 +200,7 @@ def load_hardware_config(port: str, config) -> bool:
                 if brightness and "value" in brightness:
                     try:
                         val = int(float(brightness["value"]))
-                        config.transit_tracker.display_brightness = max(0, min(255, val))
+                        config.service.display_brightness = max(0, min(255, val))
                     except (ValueError, TypeError):
                         pass
 
@@ -241,7 +241,7 @@ def flash_hardware(port: str, config) -> bool:
                 flasher.set_entity("scroll_headsigns", EntityType.SWITCH, "ON")
 
                 status.update("[cyan]Configuring Brightness...")
-                brightness = config.transit_tracker.display_brightness
+                brightness = config.service.display_brightness
                 flasher.set_entity("display_brightness", EntityType.NUMBER, brightness)
 
                 status.update("[cyan]Saving Preferences...")

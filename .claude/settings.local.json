@@ -1,6 +1,12 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(TRANSIT_TRACKER_TESTING=1 uv run pytest tests/test_dimming.py tests/test_brightness.py -v 2>&1)",
+      "Bash(TRANSIT_TRACKER_TESTING=1 uv run pytest tests/test_brightness.py tests/test_dimming.py tests/test_config.py -v 2>&1)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "nomad"
-  ],
-  "enableAllProjectMcpServers": true
+  ]
 }

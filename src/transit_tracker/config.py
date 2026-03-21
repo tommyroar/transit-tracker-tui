@@ -15,6 +15,21 @@ _LEGACY_SETTINGS_DIR = os.path.expanduser("~/.config/transit-tracker")
 _LEGACY_SETTINGS_FILE = os.path.join(_LEGACY_SETTINGS_DIR, "settings.yaml")
 
 
+class DimmingEntry(BaseModel):
+    time: str  # "HH:MM" format
+    brightness: int = Field(ge=0, le=255)
+
+    @field_validator("time")
+    @classmethod
+    def validate_time_format(cls, v):
+        if not re.match(r"^\d{2}:\d{2}$", v):
+            raise ValueError("time must be in HH:MM format")
+        h, m = v.split(":")
+        if not (0 <= int(h) <= 23 and 0 <= int(m) <= 59):
+            raise ValueError("time must be valid HH:MM (00:00-23:59)")
+        return v
+
+
 class ServiceSettings(BaseModel):
     """Dev environment / service settings stored at .local/service.yaml.
 
@@ -43,6 +58,11 @@ class ServiceSettings(BaseModel):
     # Service mode
     use_local_api: bool = Field(default=False)
     auto_launch_gui: bool = Field(default=True)
+
+    # Display brightness / scheduled dimming
+    display_brightness: int = Field(default=128, ge=0, le=255)
+    device_ip: Optional[str] = None
+    dimming_schedule: List[DimmingEntry] = Field(default_factory=list)
 
 
 def _resolve_settings_path() -> str:
@@ -147,21 +167,6 @@ class Abbreviation(BaseModel):
     short: str
 
 
-class DimmingEntry(BaseModel):
-    time: str  # "HH:MM" format
-    brightness: int = Field(ge=0, le=255)
-
-    @field_validator("time")
-    @classmethod
-    def validate_time_format(cls, v):
-        if not re.match(r"^\d{2}:\d{2}$", v):
-            raise ValueError("time must be in HH:MM format")
-        h, m = v.split(":")
-        if not (0 <= int(h) <= 23 and 0 <= int(m) <= 59):
-            raise ValueError("time must be valid HH:MM (00:00-23:59)")
-        return v
-
-
 class TransitStop(BaseModel):
     stop_id: str
     time_offset: str = "0min"
@@ -186,9 +191,6 @@ class TransitTrackerSettings(BaseModel):
     base_url: str = Field(default="wss://tt.horner.tj/")
     time_display: str = Field(default="arrival")
     scroll_headsigns: bool = Field(default=False)
-    display_brightness: int = Field(default=128, ge=0, le=255)
-    device_ip: Optional[str] = None
-    dimming_schedule: List[DimmingEntry] = Field(default_factory=list)
     display_format: str = Field(default="{ROUTE}  {HEADSIGN}  {LIVE} {TIME}")
     stops: List[TransitStop] = Field(default_factory=list)
     abbreviations: List[Abbreviation] = Field(default_factory=list)
@@ -203,6 +205,9 @@ _LEGACY_TT_KEYS = {
     "panel_width",
     "panel_height",
     "arrival_threshold_minutes",
+    "display_brightness",
+    "device_ip",
+    "dimming_schedule",
 }
 
 # Keys that used to live at the root of the config YAML

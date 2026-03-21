@@ -94,8 +94,6 @@ def load_service_settings() -> ServiceSettings:
 
 def save_service_settings(settings: ServiceSettings):
     """Persist service settings to .local/service.yaml."""
-    if os.environ.get("TRANSIT_TRACKER_TESTING") == "1":
-        return
     settings_dir = os.path.dirname(SERVICE_SETTINGS_FILE)
     os.makedirs(settings_dir, exist_ok=True)
     data = settings.model_dump(exclude_none=True)
@@ -114,8 +112,6 @@ def get_last_config_path() -> Optional[str]:
 
 
 def set_last_config_path(path: str):
-    if os.environ.get("TRANSIT_TRACKER_TESTING") == "1":
-        return
     svc = load_service_settings()
     svc.last_config_path = os.path.abspath(path)
     save_service_settings(svc)

@@ -10,11 +10,10 @@ Transit Tracker is a macOS background daemon that proxies OneBusAway API data to
 
 ### Run tests
 ```bash
-TRANSIT_TRACKER_TESTING=1 uv run pytest -v              # all tests
-TRANSIT_TRACKER_TESTING=1 uv run pytest tests/test_config.py  # single file
-TRANSIT_TRACKER_TESTING=1 uv run pytest tests/test_config.py::test_load_config  # single test
+uv run pytest -v                                  # all tests
+uv run pytest tests/test_config.py                # single file
+uv run pytest tests/test_config.py::test_load_config  # single test
 ```
-Always set `TRANSIT_TRACKER_TESTING=1` — it prevents tests from writing to `~/.config/transit-tracker/`.
 
 ### Lint and format
 ```bash

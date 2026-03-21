@@ -48,8 +48,7 @@ def test_brightness_round_trip_service_settings(tmp_path):
     import os
 
     settings_file = tmp_path / "service.yaml"
-    with mock.patch("transit_tracker.config.SERVICE_SETTINGS_FILE", str(settings_file)), \
-         mock.patch.dict(os.environ, {"TRANSIT_TRACKER_TESTING": "0"}):
+    with mock.patch("transit_tracker.config.SERVICE_SETTINGS_FILE", str(settings_file)):
         svc = ServiceSettings(display_brightness=42)
         save_service_settings(svc)
         loaded = load_service_settings()

@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import json
 import os
 import random
@@ -6,9 +7,10 @@ import time
 from collections import defaultdict
 from typing import Any, Dict
 
+import httpx
 import websockets
 
-from ..config import TransitConfig, get_last_config_path
+from ..config import TransitConfig, evaluate_dimming_schedule, get_last_config_path
 from ..display import format_trip_line
 from ..gtfs_schedule import GTFSSchedule
 from ..logging import get_logger, is_message_logging_enabled
@@ -73,6 +75,9 @@ class TransitServer:
         self.messages_processed = 0
         self.start_time = time.time()
         self.last_broadcast_time = 0
+        self.display_brightness = self.config.transit_tracker.display_brightness
+        self.dimming_override = False
+        self.last_scheduled_brightness = None
 
         # Throttle metrics
         self.throttle_total = 0          # lifetime 429 count
@@ -283,6 +288,39 @@ class TransitServer:
                                  extra={"component": "server", "pairs": len(pairs)})
                         # Send immediate update from cache (or fetch if new)
                         await self.send_update(ws)
+
+                        # Push current brightness to newly connected client
+                        try:
+                            await ws.send(json.dumps({
+                                "event": "control:brightness",
+                                "data": {"value": self.display_brightness},
+                            }))
+                        except Exception:
+                            pass
+
+                elif event == "control:brightness":
+                    data = payload.get("data", {})
+                    value = data.get("value")
+                    if value is not None:
+                        try:
+                            b = int(value)
+                            if 0 <= b <= 255:
+                                self.display_brightness = b
+                                self.dimming_override = True
+                                msg = json.dumps({
+                                    "event": "control:brightness",
+                                    "data": {"value": b},
+                                })
+                                for client in list(self.clients):
+                                    if client != ws:
+                                        try:
+                                            await client.send(msg)
+                                        except Exception:
+                                            pass
+                                log.info("Brightness set to %d", b, extra={"component": "server"})
+                        except (ValueError, TypeError):
+                            pass
+
         except websockets.exceptions.ConnectionClosed:
             pass
         finally:
@@ -509,6 +547,69 @@ class TransitServer:
         except Exception:
             pass
 
+    async def _apply_dimming_schedule(self, http_client: httpx.AsyncClient):
+        """Single iteration of dimming schedule check. Returns True if brightness changed."""
+        schedule = self.config.transit_tracker.dimming_schedule
+        device_ip = self.config.transit_tracker.device_ip
+
+        if not schedule:
+            return False
+
+        now_time = datetime.datetime.now().time()
+        target = evaluate_dimming_schedule(schedule, now_time)
+
+        if target is None:
+            return False
+
+        # Detect schedule transition: clear override when target changes
+        if target != self.last_scheduled_brightness:
+            self.dimming_override = False
+            self.last_scheduled_brightness = target
+
+        # Skip if manually overridden (until next schedule transition)
+        if self.dimming_override:
+            return False
+
+        # Only act if brightness actually needs to change
+        if target == self.display_brightness:
+            return False
+
+        self.display_brightness = target
+        log.info("Dimming schedule: brightness -> %d", target, extra={"component": "server"})
+
+        # POST to ESPHome REST API
+        if device_ip:
+            try:
+                url = f"http://{device_ip}/number/display_brightness"
+                await http_client.post(url, json={"value": target})
+                log.info("ESPHome brightness set to %d", target, extra={"component": "server"})
+            except Exception as e:
+                log.warning("ESPHome brightness POST failed: %s", e, extra={"component": "server"})
+
+        # Broadcast to all WS clients
+        msg = json.dumps({"event": "control:brightness", "data": {"value": target}})
+        for client in list(self.clients):
+            try:
+                await client.send(msg)
+            except Exception:
+                pass
+
+        self.sync_state()
+        return True
+
+    async def dimming_loop(self):
+        """Background task that applies time-based brightness schedule."""
+        http_client = httpx.AsyncClient(timeout=5.0)
+        try:
+            while True:
+                try:
+                    await self._apply_dimming_schedule(http_client)
+                except Exception as e:
+                    log.error("Dimming loop error: %s", e, extra={"component": "server"})
+                await asyncio.sleep(60)
+        finally:
+            await http_client.aclose()
+
     async def data_refresh_loop(self):
         """Background task that keeps the shared cache fresh with exponential backoff."""
         while True:
@@ -557,8 +658,8 @@ async def run_server(host: str = "0.0.0.0", port: int = 8000, config: TransitCon
     log.info("Starting Transit Tracker API on %s:%d", host, port, extra={"component": "server"})
 
     async with websockets.serve(server.register, host, port):
-        # Run both the refresh and broadcast loops concurrently
         await asyncio.gather(
             server.data_refresh_loop(),
-            server.broadcast_loop()
+            server.broadcast_loop(),
+            server.dimming_loop(),
         )

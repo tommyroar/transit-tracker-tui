@@ -1,3 +1,4 @@
+import datetime
 import os
 import re
 import tempfile
@@ -146,6 +147,21 @@ class Abbreviation(BaseModel):
     short: str
 
 
+class DimmingEntry(BaseModel):
+    time: str  # "HH:MM" format
+    brightness: int = Field(ge=0, le=255)
+
+    @field_validator("time")
+    @classmethod
+    def validate_time_format(cls, v):
+        if not re.match(r"^\d{2}:\d{2}$", v):
+            raise ValueError("time must be in HH:MM format")
+        h, m = v.split(":")
+        if not (0 <= int(h) <= 23 and 0 <= int(m) <= 59):
+            raise ValueError("time must be valid HH:MM (00:00-23:59)")
+        return v
+
+
 class TransitStop(BaseModel):
     stop_id: str
     time_offset: str = "0min"
@@ -170,6 +186,9 @@ class TransitTrackerSettings(BaseModel):
     base_url: str = Field(default="wss://tt.horner.tj/")
     time_display: str = Field(default="arrival")
     scroll_headsigns: bool = Field(default=False)
+    display_brightness: int = Field(default=128, ge=0, le=255)
+    device_ip: Optional[str] = None
+    dimming_schedule: List[DimmingEntry] = Field(default_factory=list)
     display_format: str = Field(default="{ROUTE}  {HEADSIGN}  {LIVE} {TIME}")
     stops: List[TransitStop] = Field(default_factory=list)
     abbreviations: List[Abbreviation] = Field(default_factory=list)
@@ -302,3 +321,28 @@ class TransitConfig(BaseModel):
         }
         with open(path, "w") as f:
             yaml.safe_dump(data, f, sort_keys=False)
+
+
+def evaluate_dimming_schedule(
+    schedule: List[DimmingEntry], now_time: datetime.time
+) -> Optional[int]:
+    """Find the brightness from the most recent past schedule entry.
+
+    Returns None if schedule is empty.
+    Handles midnight wraparound: if current time is before all entries,
+    uses the last entry from the sorted list (active from "yesterday").
+    """
+    if not schedule:
+        return None
+
+    sorted_entries = sorted(schedule, key=lambda e: e.time)
+    # Walk backwards to find the latest entry at or before now
+    result = None
+    for entry in sorted_entries:
+        entry_time = datetime.time(int(entry.time[:2]), int(entry.time[3:]))
+        if entry_time <= now_time:
+            result = entry.brightness
+    # If no entry is at or before now, wrap around to the last entry
+    if result is None:
+        result = sorted_entries[-1].brightness
+    return result

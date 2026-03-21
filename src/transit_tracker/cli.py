@@ -251,6 +251,10 @@ def main():
     elif primary_cmd == "simulator":
         from .simulator import run_simulator
         run_simulator(config, force_live=True)
+    elif primary_cmd == "monitor":
+        from .monitor import run_monitor
+        use_ws = "--ws" in sys.argv
+        asyncio.run(run_monitor(config, use_ws=use_ws))
     elif primary_cmd == "web":
         from .web import run_web
         asyncio.run(run_web(config))

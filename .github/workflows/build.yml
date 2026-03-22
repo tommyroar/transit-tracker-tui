@@ -25,23 +25,15 @@ jobs:
         run: uv sync --all-extras --dev
 
       - name: Unit Tests (branch coverage)
-        env:
-          TRANSIT_TRACKER_TESTING: "1"
         run: uv run pytest -v -m "unit" --cov --cov-branch --cov-report=term-missing
 
       - name: Integration Tests
-        env:
-          TRANSIT_TRACKER_TESTING: "1"
         run: uv run pytest -v -m "integration"
 
       - name: Contract Tests
-        env:
-          TRANSIT_TRACKER_TESTING: "1"
         run: uv run pytest -v -m "contract"
 
       - name: Mutation Tests (core modules)
-        env:
-          TRANSIT_TRACKER_TESTING: "1"
         run: |
           uv run mutmut run || true
           echo ""

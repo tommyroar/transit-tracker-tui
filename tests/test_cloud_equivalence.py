@@ -1,16 +1,14 @@
 """Integration test: local proxy vs cloud endpoint structural equivalence.
 
-
 Connects to both wss://tt.horner.tj (cloud) and ws://localhost:8000 (local)
 with the same subscriptions, and verifies the response schema and trip data
 are structurally identical.
 
-Requires both the local proxy and internet access. Skipped when
-TRANSIT_TRACKER_TESTING=1 (unit test / CI mode).
+Requires both the local proxy and internet access. Marked as e2e — excluded
+from CI unit/integration runs via ``-m "not e2e"``.
 """
 
 import json
-import os
 import time
 
 import pytest
@@ -57,13 +55,6 @@ def local_response():
     return _cache["local"]
 
 
-skip_if_testing = pytest.mark.skipif(
-    os.environ.get("TRANSIT_TRACKER_TESTING") == "1",
-    reason="Integration test requires live endpoints; skipped in unit test mode"
-)
-
-
-@skip_if_testing
 def test_local_proxy_responds(local_response):
     """Local proxy must return a schedule event."""
     assert local_response is not None, "Local proxy at ws://localhost:8000 did not respond"
@@ -72,14 +63,14 @@ def test_local_proxy_responds(local_response):
     assert "trips" in local_response["data"]
 
 
-@skip_if_testing
+
 def test_cloud_proxy_responds(cloud_response):
     """Cloud proxy must return a schedule event."""
     assert cloud_response is not None, "Cloud proxy at wss://tt.horner.tj did not respond"
     assert cloud_response["event"] == "schedule"
 
 
-@skip_if_testing
+
 def test_top_level_schema_matches(local_response, cloud_response):
     """The top-level response structure must match between cloud and local."""
     if not cloud_response or not local_response:
@@ -89,7 +80,7 @@ def test_top_level_schema_matches(local_response, cloud_response):
     )
 
 
-@skip_if_testing
+
 def test_trip_schema_matches(local_response, cloud_response):
     """Every trip object must have the same set of keys."""
     if not cloud_response or not local_response:
@@ -115,7 +106,7 @@ def test_trip_schema_matches(local_response, cloud_response):
         print(f"Note: local trips have extra fields not in cloud: {extra}")
 
 
-@skip_if_testing
+
 def test_trip_field_types_match(local_response, cloud_response):
     """Trip field value types must match between cloud and local."""
     if not cloud_response or not local_response:
@@ -143,7 +134,7 @@ def test_trip_field_types_match(local_response, cloud_response):
     assert not mismatches, f"Type mismatches: {mismatches}"
 
 
-@skip_if_testing
+
 def test_trips_sorted_by_arrival(local_response):
     """Local proxy trips must be sorted by arrivalTime."""
     if not local_response:
@@ -157,7 +148,7 @@ def test_trips_sorted_by_arrival(local_response):
     assert times == sorted(times), f"Trips not sorted: {times}"
 
 
-@skip_if_testing
+
 def test_arrival_times_are_plausible(local_response):
     """Local proxy arrival times should be within a reasonable window."""
     if not local_response:
@@ -177,7 +168,7 @@ def test_arrival_times_are_plausible(local_response):
         )
 
 
-@skip_if_testing
+
 def test_shared_trips_have_same_route_data(local_response, cloud_response):
     """Trips for the same tripId should have matching route metadata."""
     if not cloud_response or not local_response:

@@ -8,7 +8,7 @@ echo "--- 🛠️  Installing/Syncing Dependencies ---"
 uv sync --all-extras --dev
 
 echo "--- 🧪 Running Pytest (including Capture Validation) ---"
-TRANSIT_TRACKER_TESTING=1 uv run pytest -v -m "not docker"
+uv run pytest -v -m "not docker and not e2e"
 
 echo "--- 🚀 Verifying CLI Launch ---"
 uv run python scripts/verify_launch.py

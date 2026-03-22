@@ -92,7 +92,7 @@ The GUI tray icon is a subprocess of the service (`run_full_service()` in `cli.p
 - Profile `.yaml` files can live in project root or `.local/`
 
 ### Integration testing
-`tests/test_cloud_equivalence.py` connects to both `wss://tt.horner.tj` (cloud) and `ws://localhost:8000` (local) with identical subscriptions and compares response schema, trip field types, sort order, and route metadata. Skipped in CI mode (`TRANSIT_TRACKER_TESTING=1`). Run without the env var to exercise live.
+`tests/test_cloud_equivalence.py` connects to both `wss://tt.horner.tj` (cloud) and `ws://localhost:8000` (local) with identical subscriptions and compares response schema, trip field types, sort order, and route metadata. Marked `e2e` — excluded from CI via `-m "not e2e"`. Run with `uv run pytest -m e2e` to exercise live.
 
 ## Service management
 

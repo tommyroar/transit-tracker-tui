@@ -9,7 +9,7 @@ def verify_launch():
     # Set PYTHONPATH to include src
     env = os.environ.copy()
     env["PYTHONPATH"] = "src"
-    env["TRANSIT_TRACKER_TESTING"] = "1"
+    # No special env vars needed — test isolation handled by pytest markers
     
     # Start the CLI in a way that we can kill it
     # We use --help as a simple smoke test that doesn't require interaction

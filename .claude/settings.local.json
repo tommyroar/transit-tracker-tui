@@ -1,10 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(TRANSIT_TRACKER_TESTING=1 uv run pytest tests/test_dimming.py tests/test_brightness.py -v 2>&1)",
-      "Bash(TRANSIT_TRACKER_TESTING=1 uv run pytest tests/test_brightness.py tests/test_dimming.py tests/test_config.py -v 2>&1)",
+      "Bash(uv run pytest:*)",
+      "Bash(uv run mutmut:*)",
+      "Bash(uv run ruff:*)",
       "Bash(pkill -f \"transit_tracker.cli service\")",
       "Bash(scripts/start_container.sh --detach)",
+      "Bash(rm -rf mutants/ .mutmut-cache)",
       "WebFetch(domain:api.github.com)"
     ]
   },

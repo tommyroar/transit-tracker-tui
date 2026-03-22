@@ -57,6 +57,7 @@ if [ "$DETACH" = true ]; then
     docker run -d \
         --name "$CONTAINER_NAME" \
         --restart=always \
+        -l dev.orbstack.http-port="$HTTP_PORT" \
         -p "$WS_PORT:$WS_PORT" \
         -p "$HTTP_PORT:$HTTP_PORT" \
         -v "$PROFILES_DIR:/config/profiles:ro" \

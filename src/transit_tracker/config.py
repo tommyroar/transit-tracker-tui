@@ -62,7 +62,7 @@ class ServiceSettings(BaseModel):
 
     # Service mode
     use_local_api: bool = Field(default=False)
-    auto_launch_gui: bool = Field(default=True)
+    auto_launch_gui: bool = Field(default=False)  # deprecated: use web UI at /dashboard
 
     # Display brightness / scheduled dimming
     display_brightness: int = Field(default=128, ge=0, le=255)

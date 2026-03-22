@@ -168,12 +168,14 @@ async def run_full_service():
         config = TransitConfig.load()
 
     tasks = []
-    gui_proc = None
 
-    # GUI is tied to service lifecycle
+    # GUI tray app is deprecated — use web UI at /dashboard and /monitor
     if sys.platform == "darwin" and config.service.auto_launch_gui:
-        log.info("Starting GUI tray icon", extra={"component": "service"})
-        gui_proc = subprocess.Popen([sys.executable, "-m", "transit_tracker.cli", "gui"])
+        log.warning(
+            "auto_launch_gui is deprecated — use the web UI at /dashboard instead. "
+            "Set auto_launch_gui: false in service.yaml to silence this warning.",
+            extra={"component": "service"},
+        )
 
     # Always start the local proxy server (for hardware/monitors)
     tasks.append(run_server(config=config))
@@ -189,16 +191,7 @@ async def run_full_service():
     # Notification client connects to configured target (Cloud or Local)
     tasks.append(run_client(config=config))
 
-    try:
-        await asyncio.gather(*tasks)
-    finally:
-        if gui_proc:
-            log.info("Cleaning up GUI tray icon", extra={"component": "service"})
-            gui_proc.terminate()
-            try:
-                gui_proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                gui_proc.kill()
+    await asyncio.gather(*tasks)
 
 def main():
     # Use saved config path if available

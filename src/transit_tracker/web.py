@@ -1382,7 +1382,7 @@ function renderTopo() {
   var upH = state.uptime_hours || 0;
   var upStr = upH >= 1 ? upH.toFixed(1) + 'h' : Math.round(upH * 60) + 'm';
   var rows = Math.max(cc, 1);
-  var simH = simActive ? 105 : 0;
+  var simH = simActive ? 90 : 0;
   var svgH = 290 + rows * 56 + simH;
   svg.setAttribute('viewBox', '0 0 600 ' + svgH);
 
@@ -1433,71 +1433,101 @@ function renderTopo() {
   var clientBoxW = 240;
   var clientBoxH = 40;
   var clientSpacing = 52;
+  var simEmbedH = 75;
+  var simEmbedW = 300;
 
-  /* Total nodes = real clients + simulator (if active) */
-  var totalNodes = clients.length + (simActive ? 1 : 0);
+  /* Find which client index hosts the simulator (first WebSimulator when active) */
+  var simHostIdx = -1;
+  if (simActive) {
+    for (var si = 0; si < clients.length; si++) {
+      if ((clients[si].name || '') === 'WebSimulator') { simHostIdx = si; break; }
+    }
+  }
 
-  if (totalNodes === 0) {
+  if (clients.length === 0 && !simActive) {
     h += '<line x1="300" y1="' + (sy + 90) + '" x2="300" y2="' + cStartY + '" stroke="#1a1e35" stroke-width="1" stroke-dasharray="3,4"/>';
     h += '<text x="300" y="' + (cStartY + 16) + '" text-anchor="middle" fill="#353850" font-size="10.5" font-style="italic">No clients connected</text>';
   } else {
-    /* Calculate last node Y for trunk length */
-    var simNodeIdx = clients.length;
-    var simBoxH = 75;
+    /* Calculate Y positions accounting for expanded sim host */
+    var nodeYs = [];
+    var curY = cStartY;
+    for (var i = 0; i < clients.length; i++) {
+      nodeYs.push(curY);
+      if (i === simHostIdx) {
+        curY += clientBoxH + simEmbedH + 6 + clientSpacing - clientBoxH;
+      } else {
+        curY += clientSpacing;
+      }
+    }
+    /* If sim is active but no WebSimulator client yet, add a standalone sim node */
+    var standaloneSimY = -1;
+    if (simActive && simHostIdx < 0) {
+      standaloneSimY = curY;
+      curY += simEmbedH + clientSpacing - clientBoxH;
+    }
+
+    /* Trunk endpoint */
     var lastNodeBottomY;
-    if (simActive) {
-      var simCy = cStartY + simNodeIdx * clientSpacing;
-      lastNodeBottomY = simCy + simBoxH / 2;
+    if (standaloneSimY >= 0) {
+      lastNodeBottomY = standaloneSimY + simEmbedH / 2;
+    } else if (simHostIdx >= 0) {
+      lastNodeBottomY = nodeYs[simHostIdx] + clientBoxH + 3 + simEmbedH / 2;
     } else {
-      lastNodeBottomY = cStartY + (clients.length - 1) * clientSpacing + clientBoxH / 2;
+      lastNodeBottomY = nodeYs[nodeYs.length - 1] + clientBoxH / 2;
     }
 
     /* Connector: server bottom center to trunk top */
     h += '<line x1="300" y1="' + (sy + 90) + '" x2="' + trunkX + '" y2="' + (sy + 90) + '" stroke="#40b868" stroke-width="1.5" stroke-dasharray="5,4"/>';
 
-    /* Vertical trunk from server level down to last node midpoint */
+    /* Vertical trunk */
     h += '<line x1="' + trunkX + '" y1="' + (sy + 90) + '" x2="' + trunkX + '" y2="' + lastNodeBottomY + '" stroke="#40b868" stroke-width="1.5" stroke-dasharray="5,4">';
     h += '<animate attributeName="stroke-dashoffset" from="0" to="-18" dur="1.2s" repeatCount="indefinite"/>';
     h += '</line>';
 
-    /* Real client nodes */
+    /* Client nodes */
     for (var i = 0; i < clients.length; i++) {
       var c = clients[i];
-      var cy = cStartY + i * clientSpacing;
+      var cy = nodeYs[i];
       var branchY = cy + clientBoxH / 2;
       var name = c.name || 'Unknown';
       var addr = (c.address || '?').split(':')[0];
       var subs = c.subscriptions || 0;
       var isLocal = addr === '127.0.0.1' || addr === 'localhost';
       var icon = isLocal ? '\uD83D\uDDA5\uFE0F' : '\uD83D\uDCFA';
+      var isSimHost = (i === simHostIdx);
 
-      /* Horizontal branch: trunk to client box */
+      /* Horizontal branch */
       h += '<line x1="' + trunkX + '" y1="' + branchY + '" x2="' + clientBoxX + '" y2="' + branchY + '" stroke="#40b868" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#ag)">';
       h += '<animate attributeName="stroke-dashoffset" from="0" to="-18" dur="1.2s" repeatCount="indefinite"/>';
       h += '</line>';
 
-      /* Client box */
-      h += '<rect x="' + clientBoxX + '" y="' + cy + '" width="' + clientBoxW + '" height="' + clientBoxH + '" rx="6" fill="#0c0f1a" stroke="#1a1e35" stroke-width="1"/>';
+      /* Client info box */
+      var boxW = isSimHost ? simEmbedW : clientBoxW;
+      var boxStroke = isSimHost ? '#e8a830' : '#1a1e35';
+      var boxStrokeW = isSimHost ? '2' : '1';
+      h += '<rect x="' + clientBoxX + '" y="' + cy + '" width="' + boxW + '" height="' + clientBoxH + '" rx="6" fill="#0c0f1a" stroke="' + boxStroke + '" stroke-width="' + boxStrokeW + '"/>';
       h += '<text x="' + (clientBoxX + 17) + '" y="' + (cy + 16) + '" fill="#eae8e4" font-size="13">' + icon + '</text>';
       h += '<text x="' + (clientBoxX + 39) + '" y="' + (cy + 16) + '" fill="#eae8e4" font-size="10.5" font-weight="600">' + esc(name) + '</text>';
       h += '<text x="' + (clientBoxX + 39) + '" y="' + (cy + 30) + '" fill="#353850" font-size="9.5">' + esc(addr) + ' \u00b7 ' + subs + ' subs</text>';
+
+      /* Simulator canvas nested inside this client */
+      if (isSimHost) {
+        var simY = cy + clientBoxH + 3;
+        h += '<rect x="' + clientBoxX + '" y="' + simY + '" width="' + simEmbedW + '" height="' + simEmbedH + '" rx="5" fill="#000" stroke="#e8a830" stroke-width="3" id="sim-placeholder"/>';
+        h += '<rect x="' + clientBoxX + '" y="' + simY + '" width="' + simEmbedW + '" height="' + simEmbedH + '" rx="5" fill="none" stroke="#e8a830" stroke-width="2" opacity="0.15" filter="url(#glow)"/>';
+        /* Vertical connector from client box to sim display */
+        h += '<line x1="' + (clientBoxX + simEmbedW / 2) + '" y1="' + (cy + clientBoxH) + '" x2="' + (clientBoxX + simEmbedW / 2) + '" y2="' + simY + '" stroke="#e8a830" stroke-width="1.5"/>';
+      }
     }
 
-    /* Simulator node — embedded as foreignObject on the bus */
-    if (simActive) {
-      var simCy = cStartY + simNodeIdx * clientSpacing;
-      var simBranchY = simCy + simBoxH / 2;
-      var simBoxW = 300;
-      var simBoxX = clientBoxX;
-
-      /* Horizontal branch: trunk to simulator */
-      h += '<line x1="' + trunkX + '" y1="' + simBranchY + '" x2="' + simBoxX + '" y2="' + simBranchY + '" stroke="#e8a830" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#ag)">';
+    /* Standalone sim node if no WebSimulator client exists yet */
+    if (standaloneSimY >= 0) {
+      var sby = standaloneSimY + simEmbedH / 2;
+      h += '<line x1="' + trunkX + '" y1="' + sby + '" x2="' + clientBoxX + '" y2="' + sby + '" stroke="#e8a830" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#ag)">';
       h += '<animate attributeName="stroke-dashoffset" from="0" to="-18" dur="1.2s" repeatCount="indefinite"/>';
       h += '</line>';
-
-      /* Simulator container — thick amber border */
-      h += '<rect x="' + simBoxX + '" y="' + simCy + '" width="' + simBoxW + '" height="' + simBoxH + '" rx="5" fill="#000" stroke="#e8a830" stroke-width="3" id="sim-placeholder"/>';
-      h += '<rect x="' + simBoxX + '" y="' + simCy + '" width="' + simBoxW + '" height="' + simBoxH + '" rx="5" fill="none" stroke="#e8a830" stroke-width="2" opacity="0.15" filter="url(#glow)"/>';
+      h += '<rect x="' + clientBoxX + '" y="' + standaloneSimY + '" width="' + simEmbedW + '" height="' + simEmbedH + '" rx="5" fill="#000" stroke="#e8a830" stroke-width="3" id="sim-placeholder"/>';
+      h += '<rect x="' + clientBoxX + '" y="' + standaloneSimY + '" width="' + simEmbedW + '" height="' + simEmbedH + '" rx="5" fill="none" stroke="#e8a830" stroke-width="2" opacity="0.15" filter="url(#glow)"/>';
     }
   }
 

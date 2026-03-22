@@ -16,6 +16,63 @@ from .transit_api import TransitAPI
 log = get_logger("transit_tracker.web")
 
 
+# -- Shared API helpers (used by both legacy HTTPServer and websockets paths) --
+
+def _handle_profiles_list() -> dict:
+    """Return profiles list and active profile as a dict."""
+    from .config import get_last_config_path, list_profiles
+    active = get_last_config_path()
+    profiles = [
+        {"name": os.path.basename(p), "path": p, "active": p == active}
+        for p in list_profiles()
+    ]
+    return {"profiles": profiles, "active": active}
+
+
+def _handle_profile_activate(query: dict) -> tuple:
+    """Activate a profile by name. Returns (status_code, response_dict)."""
+    from .config import list_profiles, set_last_config_path
+    name = query.get("name", [None])[0]
+    if not name:
+        return (400, {"error": "Missing 'name' query parameter"})
+    all_profiles = list_profiles()
+    match = next((p for p in all_profiles if os.path.basename(p) == name), None)
+    if not match:
+        available = [os.path.basename(p) for p in all_profiles]
+        return (404, {"error": f"Profile '{name}' not found", "available": available})
+    log.info("REST profile switch to %s", name, extra={"component": "web", "profile": match})
+    set_last_config_path(match)
+    return (200, {"status": "ok", "profile": name, "path": match,
+                  "message": "Profile activated. Server will hot-reload within 30 seconds."})
+
+
+def _handle_dimming_set(query: dict) -> tuple:
+    """Update dimming settings from query params. Returns (status_code, response_dict)."""
+    from .config import DimmingEntry, load_service_settings, save_service_settings
+    log.info("REST dimming update: %s", {k: v for k, v in query.items() if k != "device_ip"},
+             extra={"component": "web"})
+    settings = load_service_settings()
+    raw_entries = query.get("schedule", [])
+    if raw_entries:
+        entries = []
+        for entry in raw_entries:
+            time_str, brightness_str = entry.split(",", 1)
+            entries.append(DimmingEntry(time=time_str.strip(), brightness=int(brightness_str.strip())))
+        settings.dimming_schedule = entries
+    if "brightness" in query:
+        settings.display_brightness = int(query["brightness"][0])
+    if "device_ip" in query:
+        settings.device_ip = query["device_ip"][0]
+    save_service_settings(settings)
+    return (200, {
+        "status": "ok",
+        "dimming_schedule": [e.model_dump() for e in settings.dimming_schedule],
+        "display_brightness": settings.display_brightness,
+        "device_ip": settings.device_ip,
+        "message": "Dimming settings saved. Will take effect within 60 seconds.",
+    })
+
+
 async def resolve_stop_coordinates(config: TransitConfig) -> List[Dict[str, Any]]:
     """Fetch lat/lon for all configured stops from the OBA API."""
     api = TransitAPI(oba_api_key=config.service.oba_api_key)
@@ -583,8 +640,22 @@ class TransitWebHandler(BaseHTTPRequestHandler):
             if path == "/api/dimming":
                 self._serve_dimming_get()
                 return
+            if path == "/api/dimming/set":
+                try:
+                    status, resp = _handle_dimming_set(query)
+                    self._json_response(json.dumps(resp), status)
+                except Exception as e:
+                    self._json_error(400, str(e))
+                return
             if path == "/simulator":
                 self._serve_simulator()
+                return
+            if path == "/api/profiles":
+                self._json_response(json.dumps(_handle_profiles_list()))
+                return
+            if path == "/api/profile/activate":
+                status, resp = _handle_profile_activate(query)
+                self._json_response(json.dumps(resp), status)
                 return
 
         content = self.routes.get(path)
@@ -626,8 +697,8 @@ class TransitWebHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         log.debug("%s", args[0], extra={"component": "web"})
 
-    def _json_response(self, body: str):
-        self.send_response(200)
+    def _json_response(self, body: str, status: int = 200):
+        self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
@@ -818,6 +889,8 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
     }
     dynamic_routes = {
         "/api/status", "/api/metrics", "/api/logs", "/api/dimming",
+        "/api/dimming/set",
+        "/api/profiles", "/api/profile/activate",
         "/dashboard", "/monitor", "/simulator",
     }
 
@@ -860,6 +933,20 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
                 "display_brightness": settings.display_brightness,
                 "device_ip": settings.device_ip,
             }))
+
+        if path == "/api/dimming/set":
+            try:
+                status, resp = _handle_dimming_set(query)
+                return (status, "application/json", json.dumps(resp))
+            except Exception as e:
+                return (400, "application/json", json.dumps({"error": str(e)}))
+
+        if path == "/api/profiles":
+            return (200, "application/json", json.dumps(_handle_profiles_list()))
+
+        if path == "/api/profile/activate":
+            status, resp = _handle_profile_activate(query)
+            return (status, "application/json", json.dumps(resp))
 
         if path == "/dashboard":
             return (200, "text/html", generate_dashboard_html())
@@ -1349,6 +1436,17 @@ async function poll() {
     prevState = {...state};
     state = cur;
 
+    // API key & profile cards
+    const keyEl = document.getElementById('s-apikey');
+    const key = cur.oba_api_key || 'TEST';
+    keyEl.textContent = key;
+    keyEl.className = 'stat-value ' + (key === 'TEST' ? 'orange' : 'green');
+    document.getElementById('s-apikey-sub').textContent = key === 'TEST' ? 'rate-limited public key' : 'configured';
+    const profEl = document.getElementById('s-profile');
+    const profPath = cur.config_path || '—';
+    profEl.textContent = profPath.split('/').pop();
+    document.getElementById('s-profile-sub').textContent = profPath;
+
     renderTopo();
     renderTrips();
     renderFeed();
@@ -1665,6 +1763,19 @@ def generate_dashboard_html() -> str:
       <div class="stat-label">Cache Size</div>
       <div class="stat-value" id="s-cache">0</div>
       <div class="stat-sub">stops cached</div>
+    </div>
+  </div>
+
+  <div class="grid grid-2">
+    <div class="stat-card">
+      <div class="stat-label">OBA API Key</div>
+      <div class="stat-value" id="s-apikey" style="font-size:14px">—</div>
+      <div class="stat-sub" id="s-apikey-sub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Active Profile</div>
+      <div class="stat-value" id="s-profile" style="font-size:14px">—</div>
+      <div class="stat-sub" id="s-profile-sub"></div>
     </div>
   </div>
 

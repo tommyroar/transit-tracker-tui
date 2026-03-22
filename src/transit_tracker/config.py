@@ -8,6 +8,10 @@ from typing import Any, Dict, List, Optional
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .logging import get_logger
+
+log = get_logger("transit_tracker.config")
+
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SERVICE_SETTINGS_FILE = os.path.join(_PROJECT_ROOT, ".local", "service.yaml")
 
@@ -97,16 +101,46 @@ def load_service_settings() -> ServiceSettings:
 
 
 def save_service_settings(settings: ServiceSettings):
-    """Persist service settings to the resolved service.yaml path."""
+    """Persist service settings to the resolved service.yaml path.
+
+    Merges the in-memory model onto the existing file so that fields not
+    present in the model (e.g. oba_api_key, device_ip set via REST) are
+    preserved rather than silently dropped.
+    """
     path = _resolve_settings_path()
+    log.info("Saving service settings to %s", path, extra={"component": "config"})
     settings_dir = os.path.dirname(path)
     os.makedirs(settings_dir, exist_ok=True)
+    # Read existing file to preserve fields not in the in-memory model
+    existing = {}
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                existing = yaml.safe_load(f) or {}
+        except Exception:
+            pass
     data = settings.model_dump(exclude_none=True)
-    fd, tmp_path = tempfile.mkstemp(dir=settings_dir, suffix=".yaml")
+    # Only merge explicitly-set fields when there's existing data on disk,
+    # so default values (e.g. dimming_schedule=[]) don't clobber fields
+    # that were set via a different code path (REST, another process).
+    if existing and settings.model_fields_set:
+        data = {k: v for k, v in data.items() if k in settings.model_fields_set}
+    existing.update(data)
+    # Use settings_dir for tempfile when possible; fall back to /tmp for
+    # container environments where the parent dir may be read-only.
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=settings_dir, suffix=".yaml")
+    except PermissionError:
+        fd, tmp_path = tempfile.mkstemp(suffix=".yaml")
     try:
         with os.fdopen(fd, "w") as f:
-            yaml.safe_dump(data, f)
+            yaml.safe_dump(existing, f)
         os.replace(tmp_path, path)
+    except OSError:
+        # os.replace fails across filesystems; fall back to copy
+        import shutil
+        shutil.copy2(tmp_path, path)
+        os.unlink(tmp_path)
     except Exception:
         os.unlink(tmp_path)
         raise
@@ -117,13 +151,53 @@ def get_last_config_path() -> Optional[str]:
 
 
 def set_last_config_path(path: str):
-    svc = load_service_settings()
-    svc.last_config_path = os.path.abspath(path)
-    save_service_settings(svc)
+    """Update only the last_config_path field without disturbing other settings."""
+    settings_path = _resolve_settings_path()
+    log.info("Switching active profile to %s", os.path.basename(path),
+             extra={"component": "config", "profile": path, "settings_path": settings_path})
+    existing = {}
+    if os.path.exists(settings_path):
+        try:
+            with open(settings_path, "r") as f:
+                existing = yaml.safe_load(f) or {}
+        except Exception:
+            pass
+    existing["last_config_path"] = os.path.abspath(path)
+    settings_dir = os.path.dirname(settings_path)
+    os.makedirs(settings_dir, exist_ok=True)
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=settings_dir, suffix=".yaml")
+    except PermissionError:
+        fd, tmp_path = tempfile.mkstemp(suffix=".yaml")
+    try:
+        with os.fdopen(fd, "w") as f:
+            yaml.safe_dump(existing, f)
+        os.replace(tmp_path, settings_path)
+    except OSError:
+        import shutil
+        shutil.copy2(tmp_path, settings_path)
+        os.unlink(tmp_path)
+    except Exception:
+        os.unlink(tmp_path)
+        raise
 
 
 def list_profiles() -> List[str]:
-    """Lists available .yaml config files in project root and .local/."""
+    """Lists available .yaml config files in project root and .local/.
+
+    When PROFILES_DIR is set (e.g. inside a Docker container), scans that
+    directory instead of the project tree.
+    """
+    _EXCLUDE = {"service.yaml", "test_isolation_config.yaml"}
+
+    profiles_dir = os.environ.get("PROFILES_DIR")
+    if profiles_dir and os.path.isdir(profiles_dir):
+        profiles = []
+        for f in os.listdir(profiles_dir):
+            if f.endswith(".yaml") and f not in _EXCLUDE:
+                profiles.append(os.path.abspath(os.path.join(profiles_dir, f)))
+        return sorted(profiles)
+
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     profiles = []
 
@@ -131,10 +205,7 @@ def list_profiles() -> List[str]:
     local_dir = os.path.join(project_root, ".local")
     if os.path.exists(local_dir):
         for f in os.listdir(local_dir):
-            if f.endswith(".yaml") and f not in [
-                "service_state.json",
-                "accurate_config.yaml",
-            ]:
+            if f.endswith(".yaml") and f not in _EXCLUDE and f != "accurate_config.yaml":
                 profiles.append(os.path.abspath(os.path.join(local_dir, f)))
 
     # Check project root

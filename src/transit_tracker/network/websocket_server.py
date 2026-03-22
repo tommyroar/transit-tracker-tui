@@ -3,6 +3,7 @@ import datetime
 import json
 import os
 import random
+import re
 import time
 from collections import defaultdict
 from typing import Any, Dict
@@ -60,6 +61,7 @@ class TransitServer:
         self.config_path = get_last_config_path()
         self.api = TransitAPI(oba_api_key=config.service.oba_api_key)
         self.clients = set()
+        self.default_clients = set()  # Clients using server-default subscriptions
         self.subscriptions = {} # ws -> List[Dict] (pairs)
         self.client_names = {} # ws -> str
         self.client_limits = {} # ws -> int
@@ -149,6 +151,9 @@ class TransitServer:
 
             if self.config_path:
                 state["config_path"] = self.config_path
+
+            key = self.config.service.oba_api_key or os.environ.get("OBA_API_KEY") or "TEST"
+            state["oba_api_key"] = key[:8] + "…" if len(key) > 8 else key
 
             os.makedirs(os.path.dirname(SERVICE_STATE_FILE), exist_ok=True)
             with open(SERVICE_STATE_FILE, "w") as f:
@@ -278,10 +283,10 @@ class TransitServer:
                                 pairs.append({"routeId": r_id, "stopId": s_id, "offset": offset})
                     elif pairs_str == "":
                         log.info("Client sent empty routeStopPairs, using server defaults", extra={"component": "server"})
+                        self.default_clients.add(ws)
                         for sub in self.config.subscriptions:
                             off_sec = 0
                             try:
-                                import re
                                 match = re.search(r"(-?\d+)", str(sub.time_offset))
                                 if match: off_sec = int(match.group(1)) * 60
                             except: pass
@@ -335,6 +340,7 @@ class TransitServer:
             pass
         finally:
             if ws in self.clients: self.clients.remove(ws)
+            self.default_clients.discard(ws)
             self.subscriptions.pop(ws, None)
             self.client_names.pop(ws, None)
             self.client_limits.pop(ws, None)
@@ -647,7 +653,21 @@ class TransitServer:
                     log.info("Config path changed: %s — reloading", current_path, extra={"component": "server"})
                     self.config = TransitConfig.load(current_path)
                     self.config_path = current_path
-                    self.cache.clear() # Clear cache on config change to avoid stale data for new stops
+                    self.cache.clear()
+                    # Re-subscribe clients that were using server defaults
+                    for ws in list(self.default_clients):
+                        pairs = []
+                        for sub in self.config.subscriptions:
+                            off_sec = 0
+                            try:
+                                match = re.search(r"(-?\d+)", str(sub.time_offset))
+                                if match: off_sec = int(match.group(1)) * 60
+                            except Exception: pass
+                            pairs.append({"routeId": sub.route, "stopId": sub.stop, "offset": off_sec})
+                        if pairs:
+                            self.subscriptions[ws] = pairs
+                            log.info("Re-subscribed default client %s to %d pairs", ws.remote_address, len(pairs),
+                                     extra={"component": "server"})
 
                 await self.refresh_all_data()
             except Exception as e:

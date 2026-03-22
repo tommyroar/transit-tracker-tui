@@ -17,6 +17,7 @@ from transit_tracker.config import (
     _migrate_legacy_fields,
     load_service_settings,
     save_service_settings,
+    set_last_config_path,
 )
 
 
@@ -90,6 +91,72 @@ def test_service_settings_roundtrip(tmp_path):
         assert loaded.check_interval_seconds == 45
         assert loaded.num_panels == 3
         assert loaded.last_config_path == "/some/path.yaml"
+
+
+def test_set_last_config_path_preserves_dimming(tmp_path):
+    """set_last_config_path must not overwrite dimming schedule or device_ip."""
+    import unittest.mock as mock
+    from transit_tracker.config import DimmingEntry
+
+    settings_file = tmp_path / "service.yaml"
+    with mock.patch(
+        "transit_tracker.config._resolve_settings_path",
+        return_value=str(settings_file),
+    ):
+        # Set up dimming schedule
+        svc = ServiceSettings(
+            device_ip="192.168.5.248",
+            display_brightness=0,
+            dimming_schedule=[
+                DimmingEntry(time="07:00", brightness=255),
+                DimmingEntry(time="19:00", brightness=0),
+            ],
+        )
+        save_service_settings(svc)
+
+        # Switch profile — this was previously wiping dimming
+        set_last_config_path("/config/profiles/adventure.yaml")
+
+        loaded = load_service_settings()
+        assert loaded.device_ip == "192.168.5.248"
+        assert loaded.display_brightness == 0
+        assert len(loaded.dimming_schedule) == 2
+        assert loaded.dimming_schedule[0].brightness == 255
+        assert loaded.dimming_schedule[1].brightness == 0
+        assert loaded.last_config_path == "/config/profiles/adventure.yaml"
+
+
+def test_save_service_settings_preserves_external_fields(tmp_path):
+    """save_service_settings must merge with disk, not overwrite externally-set fields."""
+    import unittest.mock as mock
+    from transit_tracker.config import DimmingEntry
+    import yaml
+
+    settings_file = tmp_path / "service.yaml"
+    with mock.patch(
+        "transit_tracker.config._resolve_settings_path",
+        return_value=str(settings_file),
+    ):
+        # Write initial settings with API key and dimming via REST-like path
+        full = ServiceSettings(
+            oba_api_key="real-key-abc",
+            device_ip="192.168.5.248",
+            dimming_schedule=[DimmingEntry(time="07:00", brightness=255)],
+        )
+        save_service_settings(full)
+
+        # Simulate a TUI wizard that only knows about a subset of fields
+        partial = ServiceSettings(num_panels=3, check_interval_seconds=45)
+        save_service_settings(partial)
+
+        loaded = load_service_settings()
+        # TUI fields updated
+        assert loaded.num_panels == 3
+        assert loaded.check_interval_seconds == 45
+        # REST-set fields preserved
+        assert loaded.oba_api_key == "real-key-abc"
+        assert loaded.device_ip == "192.168.5.248"
+        assert len(loaded.dimming_schedule) == 1
 
 
 def test_migrate_legacy_fields():

@@ -581,30 +581,48 @@ def generate_spec_html(spec_json: str) -> str:
 
 def generate_index_html(pages: List[Dict[str, str]]) -> str:
     """Generate an index page listing available web pages."""
-    links = "".join(
-        f'<li><a href="{p["path"]}">{p["name"]}</a> — {p["description"]}</li>'
+    cards = "".join(
+        '<a href="' + p["path"] + '" class="card"><h2>' + p["name"] + '</h2><p>' + p["description"] + '</p></a>'
         for p in pages
     )
-    return f"""<!DOCTYPE html>
-<html>
+    return """<!DOCTYPE html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>Transit Tracker</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='3' rx='1.5' fill='%23e8a830'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-         max-width: 600px; margin: 60px auto; padding: 0 20px; color: #1a202c; }}
-  h1 {{ margin-bottom: 8px; }}
-  p {{ color: #666; margin-bottom: 24px; }}
-  ul {{ list-style: none; padding: 0; }}
-  li {{ margin-bottom: 12px; }}
-  a {{ color: #f58220; text-decoration: none; font-weight: 600; font-size: 18px; }}
-  a:hover {{ text-decoration: underline; }}
+:root { --bg:#06080e;--bg1:#0c0f1a;--border:#1a1e35;--text0:#eae8e4;--text2:#5c6080;--amber:#e8a830;--amber-bg:rgba(232,168,48,0.08); }
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Outfit',system-ui,sans-serif;background:var(--bg);color:var(--text0);display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:40px 20px}
+body::after{content:'';position:fixed;inset:0;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");opacity:0.018;pointer-events:none;z-index:9999}
+.brand{font-weight:700;font-size:12px;letter-spacing:2.5px;text-transform:uppercase;color:var(--amber);display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.brand svg{opacity:0.8}
+p.sub{color:var(--text2);font-size:13px;margin-bottom:28px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;max-width:600px;width:100%}
+.card{display:block;text-decoration:none;color:var(--text0);background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:14px 16px;transition:border-color 0.2s,transform 0.15s}
+.card:hover{border-color:var(--amber);transform:translateY(-2px)}
+.card h2{font-size:14px;font-weight:600;margin-bottom:3px;color:var(--amber)}
+.card p{font-size:11.5px;color:var(--text2);line-height:1.4}
+@keyframes fi{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.card{animation:fi 0.4s cubic-bezier(0.22,1,0.36,1) both}
+.card:nth-child(1){animation-delay:.04s}.card:nth-child(2){animation-delay:.08s}.card:nth-child(3){animation-delay:.12s}
+.card:nth-child(4){animation-delay:.16s}.card:nth-child(5){animation-delay:.2s}.card:nth-child(6){animation-delay:.24s}
+.card:nth-child(7){animation-delay:.28s}.card:nth-child(8){animation-delay:.32s}.card:nth-child(9){animation-delay:.36s}
 </style>
 </head>
 <body>
-  <h1>Transit Tracker</h1>
-  <p>Available pages:</p>
-  <ul>{links}</ul>
+  <div class="brand">
+    <svg width="18" height="13" viewBox="0 0 18 13" fill="none"><rect width="18" height="2.4" rx="1.2" fill="currentColor"/><rect y="5" width="12" height="2.4" rx="1.2" fill="currentColor" opacity="0.55"/><rect y="10" width="7" height="2.4" rx="1.2" fill="currentColor" opacity="0.25"/></svg>
+    Transit Tracker
+  </div>
+  <p class="sub">Available pages</p>
+  <div class="grid">""" + cards + """</div>
 </body>
 </html>"""
 
@@ -1030,130 +1048,241 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
         await asyncio.Future()  # Run forever
 
 
+
 def generate_monitor_html() -> str:
-    """Generate a live network topology monitor page."""
-    return """\
+    """Generate the network monitor page."""
+    return r"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>Transit Tracker — Network Monitor</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='3' rx='1.5' fill='%23e8a830'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg: #0f1219;
-  --bg-card: #171d2e;
-  --border: #252d44;
-  --text: #dde1ed;
-  --text2: #8891b0;
-  --muted: #505872;
-  --green: #00c853;
-  --blue: #448aff;
-  --purple: #7c4dff;
-  --orange: #ff9100;
-  --red: #ff1744;
-  --teal: #00bfa5;
-  --cyan: #00e5ff;
+  --bg-0: #06080e;
+  --bg-1: #0c0f1a;
+  --bg-2: #141828;
+  --bg-3: #1c2038;
+  --border: #1a1e35;
+  --border-hover: #282e4a;
+  --text-0: #eae8e4;
+  --text-1: #9498b0;
+  --text-2: #5c6080;
+  --text-3: #353850;
+  --amber: #e8a830;
+  --amber-bg: rgba(232,168,48,0.08);
+  --cyan: #3d80d0;
+  --cyan-bg: rgba(61,128,208,0.08);
+  --green: #40b868;
+  --green-bg: rgba(64,184,104,0.08);
+  --red: #d84050;
+  --red-bg: rgba(216,64,80,0.08);
+  --purple: #9060c0;
+  --purple-bg: rgba(144,96,192,0.08);
 }
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: 'SF Mono','Menlo','Consolas',monospace; background: var(--bg); color: var(--text); }
-.header {
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+  background: var(--bg-0);
+  color: var(--text-0);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  opacity: 0.018;
+  pointer-events: none;
+  z-index: 9999;
+}
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── Nav ── */
+.nav {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--bg-card);
+  padding: 0 28px; height: 50px;
+  background: var(--bg-1); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 100;
 }
-.header h1 { font-size: 15px; font-weight: 600; }
-.header h1 span { color: var(--purple); }
-.header-right { display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--text2); }
-.dot-live { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--green); animation: pulse 2s infinite; }
-.dot-live.off { background:var(--red); animation:none; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+.nav-left { display: flex; align-items: center; gap: 24px; }
+.nav-brand {
+  font-weight: 700; font-size: 12px; letter-spacing: 2.5px;
+  text-transform: uppercase; color: var(--amber);
+  display: flex; align-items: center; gap: 10px;
+  white-space: nowrap;
+}
+.nav-brand svg { flex-shrink: 0; }
+.nav-links { display: flex; gap: 2px; }
+.nav-link {
+  font-size: 12.5px; font-weight: 500; color: var(--text-2);
+  text-decoration: none; padding: 5px 12px; border-radius: 5px;
+  transition: all 0.2s;
+}
+.nav-link:hover { color: var(--text-0); background: var(--bg-2); }
+.nav-link.active { color: var(--amber); background: var(--amber-bg); }
+.nav-right { display: flex; align-items: center; gap: 14px; }
+.live-badge {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px; font-weight: 500; color: var(--green);
+}
+.live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px rgba(64,184,104,0.5);
+  animation: pulse 2.5s ease-in-out infinite;
+}
+.live-dot.off { background: var(--red); box-shadow: 0 0 8px rgba(216,64,80,0.4); animation: none; }
+@keyframes pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
 
-.main { display: grid; grid-template-columns: 1fr 1fr; gap: 0; height: calc(100vh - 49px); }
-.col-topo { border-right: 1px solid var(--border); display:flex; flex-direction:column; }
-.col-feed { display:flex; flex-direction:column; overflow:hidden; }
+/* ── Layout ── */
+.main {
+  display: grid; grid-template-columns: 1.15fr 1fr;
+  gap: 0; height: calc(100vh - 50px);
+}
+.col-left { border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+.col-right { display: flex; flex-direction: column; overflow: hidden; }
 
-.section-header {
-  padding: 10px 20px; font-size: 11px; text-transform: uppercase; letter-spacing: .8px;
-  color: var(--muted); border-bottom: 1px solid var(--border); background: var(--bg-card);
+.section-hdr {
+  padding: 9px 18px; font-size: 10px; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--text-2); font-weight: 600;
+  border-bottom: 1px solid var(--border); background: var(--bg-1);
   display: flex; align-items: center; gap: 8px;
 }
-.section-header .indicator { width: 6px; height: 6px; border-radius: 50%; }
-
-/* Topology */
-.topo-container { flex: 1; position: relative; overflow: hidden; }
-svg.topo { width: 100%; height: 100%; }
-.topo text { font-family: 'SF Mono','Menlo','Consolas',monospace; }
-
-/* Trip table */
-.trips-section { border-top: 1px solid var(--border); }
-.trip-table { width:100%; border-collapse:collapse; font-size:12px; }
-.trip-table th { text-align:left; padding:6px 12px; color:var(--muted); font-weight:500; font-size:10px;
-  text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid var(--border); }
-.trip-table td { padding:5px 12px; border-bottom:1px solid #1a2035; }
-.trip-table tr:hover td { background: #1c2340; }
-.rt-dot { font-size: 14px; }
-.rt-dot.live { color: var(--green); }
-.rt-dot.sched { color: var(--muted); }
-.route-badge { display:inline-block; padding:1px 8px; border-radius:3px; font-weight:600; font-size:11px; }
-
-/* Message feed */
-.feed-list { flex:1; overflow-y:auto; font-size:12px; }
-.feed-entry {
-  display: grid; grid-template-columns: 70px 1fr; gap: 0;
-  padding: 4px 16px; border-bottom: 1px solid #151a2c;
-  transition: background .1s;
+.section-hdr .dot { width: 5px; height: 5px; border-radius: 50%; }
+.section-hdr .meta {
+  margin-left: auto; font-size: 10px; text-transform: none;
+  letter-spacing: 0; color: var(--text-3);
+  font-family: 'IBM Plex Mono', monospace;
 }
-.feed-entry:hover { background: #1a2040; }
-.feed-ts { color: var(--muted); white-space: nowrap; padding-right: 10px; }
+
+/* ── Topology ── */
+.topo-wrap { flex: 1; position: relative; overflow: hidden; }
+svg.topo { width: 100%; height: 100%; }
+svg.topo text { font-family: 'IBM Plex Mono', monospace; }
+
+/* ── Trip table ── */
+.trip-section { border-top: 1px solid var(--border); }
+.trip-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 11.5px; font-family: 'IBM Plex Mono', monospace;
+}
+.trip-table th {
+  text-align: left; padding: 5px 14px; color: var(--text-3);
+  font-weight: 500; font-size: 9px; text-transform: uppercase;
+  letter-spacing: 0.8px; border-bottom: 1px solid var(--border);
+  font-family: 'Outfit', sans-serif;
+}
+.trip-table td { padding: 4px 14px; border-bottom: 1px solid rgba(20,24,40,0.5); }
+.trip-table tr:hover td { background: var(--bg-2); }
+.rt-dot { font-size: 12px; }
+.rt-dot.live { color: var(--green); }
+.rt-dot.sched { color: var(--text-3); }
+.route-badge {
+  display: inline-block; padding: 1px 7px; border-radius: 3px;
+  font-weight: 600; font-size: 10.5px;
+}
+
+/* ── Feed ── */
+.feed-list {
+  flex: 1; overflow-y: auto;
+  font-size: 11.5px; font-family: 'IBM Plex Mono', monospace;
+}
+.feed-entry {
+  display: grid; grid-template-columns: 66px 1fr; gap: 0;
+  padding: 3px 16px; border-bottom: 1px solid rgba(20,24,40,0.5);
+  transition: background 0.1s;
+}
+.feed-entry:hover { background: var(--bg-2); }
+.feed-ts { color: var(--text-3); white-space: nowrap; font-size: 10.5px; }
 .feed-body { display: flex; flex-direction: column; gap: 1px; }
-.feed-dir { font-weight: 600; }
-.feed-detail { color: var(--text2); }
-.feed-json { color: var(--muted); font-size: 11px; max-height: 60px; overflow: hidden;
+.feed-dir { font-weight: 600; font-size: 11.5px; }
+.feed-detail { color: var(--text-1); font-size: 11.5px; }
+.feed-json {
+  color: var(--text-3); font-size: 10px; max-height: 48px; overflow: hidden;
   text-overflow: ellipsis; white-space: pre-wrap; word-break: break-all;
-  margin-top: 2px; padding: 3px 6px; background: #111622; border-radius: 3px; }
+  margin-top: 2px; padding: 3px 6px; background: var(--bg-0); border-radius: 3px;
+}
 .dir-send { color: var(--cyan); }
 .dir-recv { color: var(--green); }
 .dir-err { color: var(--red); }
-.dir-throttle { color: var(--orange); }
-.dir-connect { color: var(--blue); }
-.dir-heartbeat { color: var(--muted); }
-
-/* Toggle */
-.toggle-json { font-size: 11px; cursor: pointer; color: var(--purple); padding: 0 6px; }
+.dir-throttle { color: var(--amber); }
+.dir-connect { color: var(--cyan); }
+.dir-heartbeat { color: var(--text-3); }
+.toggle-json { font-size: 10px; cursor: pointer; color: var(--purple); padding: 0 4px; }
 .toggle-json:hover { text-decoration: underline; }
+
+/* ── Sim checkbox ── */
+.sim-label {
+  display: flex; align-items: center; gap: 5px;
+  cursor: pointer; font-size: 11.5px; color: var(--text-2);
+  font-weight: 500;
+}
+.sim-label input { accent-color: var(--amber); }
+
+/* ── Sim panel ── */
+#sim-panel { display: none; border-top: 1px solid var(--border); background: #000; }
 
 @media (max-width: 800px) {
   .main { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-  .col-topo { border-right: none; border-bottom: 1px solid var(--border); max-height: 50vh; }
+  .col-left { border-right: none; border-bottom: 1px solid var(--border); max-height: 50vh; }
+  .nav-links { display: none; }
 }
 </style>
 </head>
 <body>
-<div class="header">
-  <h1><span>Transit Tracker</span> &mdash; Network Monitor</h1>
-  <div class="header-right">
-    <span><span class="dot-live" id="live-dot"></span> <span id="conn-label">Connecting</span></span>
-    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;color:var(--text2);">
-      <input type="checkbox" id="sim-toggle" style="accent-color:var(--purple);"> LED Simulator
-    </label>
-    <a href="/dashboard" style="color:var(--purple);text-decoration:none;font-size:12px;">Dashboard &rarr;</a>
+
+<nav class="nav">
+  <div class="nav-left">
+    <div class="nav-brand">
+      <svg width="18" height="13" viewBox="0 0 18 13" fill="none">
+        <rect width="18" height="2.4" rx="1.2" fill="currentColor"/>
+        <rect y="5" width="12" height="2.4" rx="1.2" fill="currentColor" opacity="0.55"/>
+        <rect y="10" width="7" height="2.4" rx="1.2" fill="currentColor" opacity="0.25"/>
+      </svg>
+      Transit Tracker
+    </div>
+    <div class="nav-links">
+      <a href="/dashboard" class="nav-link">Dashboard</a>
+      <a href="/monitor" class="nav-link active">Monitor</a>
+      <a href="/simulator" class="nav-link">Simulator</a>
+      <a href="/spec" class="nav-link">API</a>
+    </div>
   </div>
-</div>
+  <div class="nav-right">
+    <label class="sim-label">
+      <input type="checkbox" id="sim-toggle"> LED Simulator
+    </label>
+    <div class="live-badge">
+      <span class="live-dot" id="live-dot"></span>
+      <span id="conn-label">Connecting</span>
+    </div>
+  </div>
+</nav>
 
 <div class="main">
-  <div class="col-topo">
-    <div class="section-header">
-      <span class="indicator" style="background:var(--blue)"></span> Network Topology
+  <div class="col-left">
+    <div class="section-hdr">
+      <span class="dot" style="background:var(--cyan)"></span> Network Topology
     </div>
-    <div class="topo-container">
+    <div class="topo-wrap">
       <svg class="topo" id="topo-svg" viewBox="0 0 600 500" preserveAspectRatio="xMidYMid meet"></svg>
     </div>
-    <div class="trips-section">
-      <div class="section-header">
-        <span class="indicator" style="background:var(--green)"></span> Last Schedule Push
-        <span id="trip-age" style="margin-left:auto;color:var(--muted);font-size:10px;text-transform:none;letter-spacing:0"></span>
+    <div class="trip-section">
+      <div class="section-hdr">
+        <span class="dot" style="background:var(--green)"></span> Last Schedule Push
+        <span class="meta" id="trip-age"></span>
       </div>
-      <div style="max-height:200px;overflow-y:auto;">
+      <div style="max-height:200px;overflow-y:auto">
         <table class="trip-table">
           <thead><tr><th>Route</th><th>Headsign</th><th style="text-align:right">ETA</th><th>RT</th><th>Stop</th></tr></thead>
           <tbody id="trip-body"></tbody>
@@ -1162,321 +1291,283 @@ svg.topo { width: 100%; height: 100%; }
     </div>
   </div>
 
-  <div class="col-feed">
-    <div class="section-header">
-      <span class="indicator" style="background:var(--purple)"></span> Message Flow
-      <span id="msg-count" style="margin-left:auto;color:var(--muted);font-size:10px;text-transform:none;letter-spacing:0">0 events</span>
+  <div class="col-right">
+    <div class="section-hdr">
+      <span class="dot" style="background:var(--amber)"></span> Message Flow
+      <span class="meta" id="msg-count">0 events</span>
     </div>
     <div class="feed-list" id="feed-list"></div>
   </div>
 </div>
 
-<div id="sim-panel" style="display:none;border-top:1px solid var(--border);background:#000;">
-  <iframe id="sim-iframe" style="width:100%;height:360px;border:none;" src="about:blank"></iframe>
+<div id="sim-panel">
+  <iframe id="sim-iframe" style="width:100%;height:360px;border:none" src="about:blank"></iframe>
 </div>
 
 <script>
 (function() {
-  const toggle = document.getElementById('sim-toggle');
-  const panel = document.getElementById('sim-panel');
-  const iframe = document.getElementById('sim-iframe');
-  toggle.addEventListener('change', function() {
-    if (this.checked) {
-      panel.style.display = 'block';
-      if (iframe.src === 'about:blank') iframe.src = '/simulator';
-    } else {
-      panel.style.display = 'none';
-    }
-  });
-})();
-</script>
+'use strict';
 
-<script>
-// ── state ──
-let state = {};
-let prevState = {};
-let events = [];
-let showJson = {};
-const MAX_EVENTS = 200;
+/* ── Simulator toggle ── */
+var simToggle = document.getElementById('sim-toggle');
+var simPanel = document.getElementById('sim-panel');
+var simIframe = document.getElementById('sim-iframe');
+simToggle.addEventListener('change', function() {
+  if (this.checked) {
+    simPanel.style.display = 'block';
+    if (simIframe.src === 'about:blank') simIframe.src = '/simulator';
+  } else {
+    simPanel.style.display = 'none';
+  }
+});
 
-// ── helpers ──
-function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+/* ── State ── */
+var state = {}, prevState = {}, events = [];
+var showJson = {};
+var MAX_EVENTS = 200;
+
+/* ── Helpers ── */
+function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function ago(ts) {
   if (!ts) return 'never';
-  const d = (Date.now()/1000) - ts;
+  var d = (Date.now() / 1000) - ts;
   if (d < 2) return 'just now';
   if (d < 60) return Math.floor(d) + 's ago';
-  if (d < 3600) return Math.floor(d/60) + 'm ago';
-  return (d/3600).toFixed(1) + 'h ago';
+  if (d < 3600) return Math.floor(d / 60) + 'm ago';
+  return (d / 3600).toFixed(1) + 'h ago';
 }
 function fmtTime(ts) {
-  return new Date(ts*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
-function mins(arrTs) {
-  const d = (arrTs - Date.now()/1000) / 60;
+function mins(at) {
+  var d = (at - Date.now() / 1000) / 60;
   if (d <= 0) return 'Now';
   return Math.ceil(d) + 'm';
 }
 
-// ── events ──
+/* ── Events ── */
 function addEvent(kind, dir, detail, jsonPayload) {
-  events.push({ ts: Date.now()/1000, kind, dir, detail, json: jsonPayload || null });
+  events.push({ ts: Date.now() / 1000, kind: kind, dir: dir, detail: detail, json: jsonPayload || null });
   if (events.length > MAX_EVENTS) events = events.slice(-MAX_EVENTS);
 }
 
 function detectChanges(cur, prev) {
-  // Schedule push
-  const lu = cur.last_update || 0;
-  const plu = prev.last_update || 0;
+  var lu = cur.last_update || 0, plu = prev.last_update || 0;
   if (lu && lu !== plu) {
-    const lm = cur.last_message || {};
-    const trips = (lm.data || {}).trips || [];
-    addEvent('send', 'server \\u2192 clients', trips.length + ' trips pushed',
+    var lm = cur.last_message || {};
+    var trips = ((lm.data || {}).trips) || [];
+    addEvent('send', 'server \u2192 clients', trips.length + ' trips pushed',
       JSON.stringify(lm, null, 2));
   }
-  // Client changes
-  const cc = cur.client_count || 0;
-  const pc = prev.client_count || 0;
-  if (cc > pc) addEvent('connect', '+' + (cc-pc) + ' client(s)', 'connected (total ' + cc + ')',
-    JSON.stringify(cur.clients||[], null, 2));
-  if (cc < pc) addEvent('err', '-' + (pc-cc) + ' client(s)', 'disconnected (total ' + cc + ')');
-
-  // Throttle
-  const rl = cur.is_rate_limited;
-  const prl = prev.is_rate_limited;
-  if (rl && !prl) addEvent('throttle', 'OBA \\u2192 server', '429 rate limited');
-  if (prl && !rl) addEvent('recv', 'OBA \\u2192 server', 'Rate limit cleared');
-
-  // API calls
-  const ac = cur.api_calls_total || 0;
-  const pac = prev.api_calls_total || 0;
-  if (ac > pac) addEvent('recv', 'server \\u2192 OBA', (ac-pac) + ' API call(s) (total ' + ac + ')');
-
-  // Heartbeat
-  const hb = cur.heartbeat || 0;
-  const phb = prev.heartbeat || 0;
-  if (hb && hb !== phb) addEvent('heartbeat', 'server \\u2192 clients', 'heartbeat');
+  var cc = cur.client_count || 0, pc = prev.client_count || 0;
+  if (cc > pc) addEvent('connect', '+' + (cc - pc) + ' client(s)', 'connected (total ' + cc + ')',
+    JSON.stringify(cur.clients || [], null, 2));
+  if (cc < pc) addEvent('err', '-' + (pc - cc) + ' client(s)', 'disconnected (total ' + cc + ')');
+  var rl = cur.is_rate_limited, prl = prev.is_rate_limited;
+  if (rl && !prl) addEvent('throttle', 'OBA \u2192 server', '429 rate limited');
+  if (prl && !rl) addEvent('recv', 'OBA \u2192 server', 'Rate limit cleared');
+  var ac = cur.api_calls_total || 0, pac = prev.api_calls_total || 0;
+  if (ac > pac) addEvent('recv', 'server \u2192 OBA', (ac - pac) + ' API call(s) (total ' + ac + ')');
+  var hb = cur.heartbeat || 0, phb = prev.heartbeat || 0;
+  if (hb && hb !== phb) addEvent('heartbeat', 'server \u2192 clients', 'heartbeat');
 }
 
-// ── SVG topology ──
+/* ── SVG Topology ── */
 function renderTopo() {
-  const svg = document.getElementById('topo-svg');
-  const clients = state.clients || [];
-  const cc = state.client_count || 0;
-  const running = state.status === 'active';
-  const rl = state.is_rate_limited;
-  const apiCalls = state.api_calls_total || 0;
-  const throttle = state.throttle_total || 0;
-  const refresh = state.refresh_interval || 30;
-  const msgs = state.messages_processed || 0;
-  const upH = state.uptime_hours || 0;
-  const upStr = upH >= 1 ? upH.toFixed(1) + 'h' : Math.round(upH*60) + 'm';
-
-  // Adjust viewBox height based on client count
-  const clientRows = Math.max(cc, 1);
-  const svgH = 300 + clientRows * 60;
+  var svg = document.getElementById('topo-svg');
+  var clients = state.clients || [];
+  var cc = state.client_count || 0;
+  var running = state.status === 'active';
+  var rl = state.is_rate_limited;
+  var apiCalls = state.api_calls_total || 0;
+  var throttle = state.throttle_total || 0;
+  var refresh = state.refresh_interval || 30;
+  var msgs = state.messages_processed || 0;
+  var upH = state.uptime_hours || 0;
+  var upStr = upH >= 1 ? upH.toFixed(1) + 'h' : Math.round(upH * 60) + 'm';
+  var rows = Math.max(cc, 1);
+  var svgH = 290 + rows * 56;
   svg.setAttribute('viewBox', '0 0 600 ' + svgH);
 
-  let h = '';
+  var h = '';
 
-  // ── defs for animated dashes ──
+  /* Defs */
   h += '<defs>';
-  h += '<marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#448aff"/></marker>';
-  h += '<marker id="arrow-green" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#00c853"/></marker>';
-  h += '<marker id="arrow-red" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#ff1744"/></marker>';
+  h += '<marker id="a" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#3d80d0"/></marker>';
+  h += '<marker id="ag" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#40b868"/></marker>';
+  h += '<filter id="glow"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>';
   h += '</defs>';
 
-  // ── OBA API box ──
-  const obaY = 20;
-  h += '<rect x="180" y="' + obaY + '" width="240" height="80" rx="8" fill="#1a1f36" stroke="' + (rl ? '#ff9100' : '#2d3555') + '" stroke-width="' + (rl ? 2 : 1) + '"/>';
-  h += '<text x="300" y="' + (obaY+24) + '" text-anchor="middle" fill="#ff9100" font-size="13" font-weight="600">OneBusAway API</text>';
-  h += '<text x="300" y="' + (obaY+44) + '" text-anchor="middle" fill="' + (rl ? '#ff1744' : '#00c853') + '" font-size="11" font-weight="600">' + (rl ? 'THROTTLED' : 'HEALTHY') + '</text>';
-  h += '<text x="300" y="' + (obaY+62) + '" text-anchor="middle" fill="#505872" font-size="10">Calls: ' + apiCalls + '  429s: ' + throttle + '</text>';
+  /* OBA API node */
+  var oy = 18;
+  h += '<rect x="185" y="' + oy + '" width="230" height="72" rx="8" fill="#0c0f1a" stroke="' + (rl ? '#e8a830' : '#1a1e35') + '" stroke-width="' + (rl ? 2 : 1) + '"/>';
+  h += '<text x="300" y="' + (oy + 21) + '" text-anchor="middle" fill="#e8a830" font-size="11.5" font-weight="700">OneBusAway API</text>';
+  h += '<text x="300" y="' + (oy + 40) + '" text-anchor="middle" fill="' + (rl ? '#d84050' : '#40b868') + '" font-size="10.5" font-weight="600">' + (rl ? 'THROTTLED' : 'HEALTHY') + '</text>';
+  h += '<text x="300" y="' + (oy + 57) + '" text-anchor="middle" fill="#353850" font-size="9.5">Calls: ' + apiCalls + '  \u00b7  429s: ' + throttle + '</text>';
 
-  // ── OBA → Server connection ──
-  const wireY1 = obaY + 80;
-  const wireY2 = obaY + 140;
+  /* Wire: OBA -> Server */
+  var wy1 = oy + 72, wy2 = oy + 128;
   if (rl) {
-    h += '<line x1="300" y1="' + wireY1 + '" x2="300" y2="' + wireY2 + '" stroke="#ff1744" stroke-width="2" stroke-dasharray="6,4"/>';
-    h += '<text x="320" y="' + (wireY1+30) + '" fill="#ff1744" font-size="10">429 BLOCKED</text>';
+    h += '<line x1="300" y1="' + wy1 + '" x2="300" y2="' + wy2 + '" stroke="#d84050" stroke-width="1.5" stroke-dasharray="5,4"/>';
+    h += '<text x="316" y="' + (wy1 + 26) + '" fill="#d84050" font-size="9.5" font-weight="600">429 BLOCKED</text>';
   } else {
-    h += '<line x1="300" y1="' + wireY1 + '" x2="300" y2="' + wireY2 + '" stroke="#448aff" stroke-width="1.5" stroke-dasharray="6,4" marker-end="url(#arrow)">';
-    h += '<animate attributeName="stroke-dashoffset" from="20" to="0" dur="1s" repeatCount="indefinite"/>';
+    h += '<line x1="300" y1="' + wy1 + '" x2="300" y2="' + wy2 + '" stroke="#3d80d0" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#a)">';
+    h += '<animate attributeName="stroke-dashoffset" from="18" to="0" dur="0.8s" repeatCount="indefinite"/>';
     h += '</line>';
-    h += '<text x="320" y="' + (wireY1+30) + '" fill="#505872" font-size="10">arrivals / ' + refresh + 's</text>';
+    h += '<text x="316" y="' + (wy1 + 26) + '" fill="#353850" font-size="9.5">arrivals / ' + refresh + 's</text>';
   }
 
-  // ── Proxy Server box ──
-  const srvY = wireY2;
-  h += '<rect x="160" y="' + srvY + '" width="280" height="100" rx="8" fill="#1a1f36" stroke="' + (running ? '#00e5ff' : '#ff1744') + '" stroke-width="' + (running ? 1.5 : 2) + '"/>';
-  h += '<circle cx="190" cy="' + (srvY+22) + '" r="5" fill="' + (running ? '#00c853' : '#ff1744') + '"/>';
-  h += '<text x="200" y="' + (srvY+26) + '" fill="' + (running ? '#00c853' : '#ff1744') + '" font-size="13" font-weight="700"> ' + (running ? 'RUNNING' : 'STOPPED') + '</text>';
-  h += '<text x="180" y="' + (srvY+46) + '" fill="#00e5ff" font-size="11">Transit Proxy :8000</text>';
-  h += '<text x="180" y="' + (srvY+64) + '" fill="#505872" font-size="10">Up: ' + esc(upStr) + '  Msgs: ' + msgs + '</text>';
-  h += '<text x="180" y="' + (srvY+80) + '" fill="#505872" font-size="10">Refresh: ' + refresh + 's  Clients: ' + cc + '</text>';
+  /* Server node */
+  var sy = wy2;
+  h += '<rect x="165" y="' + sy + '" width="270" height="90" rx="8" fill="#0c0f1a" stroke="' + (running ? '#3d80d0' : '#d84050') + '" stroke-width="' + (running ? 1.5 : 2) + '"/>';
+  if (running) {
+    h += '<rect x="165" y="' + sy + '" width="270" height="90" rx="8" fill="none" stroke="#3d80d0" stroke-width="1" opacity="0.12" filter="url(#glow)"/>';
+  }
+  h += '<circle cx="184" cy="' + (sy + 18) + '" r="3.5" fill="' + (running ? '#40b868' : '#d84050') + '"/>';
+  h += '<text x="193" y="' + (sy + 22) + '" fill="' + (running ? '#40b868' : '#d84050') + '" font-size="11" font-weight="700">' + (running ? 'RUNNING' : 'STOPPED') + '</text>';
+  h += '<text x="182" y="' + (sy + 40) + '" fill="#3d80d0" font-size="10.5">Transit Proxy :8000</text>';
+  h += '<text x="182" y="' + (sy + 57) + '" fill="#353850" font-size="9.5">Up: ' + esc(upStr) + '  \u00b7  Msgs: ' + msgs + '</text>';
+  h += '<text x="182" y="' + (sy + 72) + '" fill="#353850" font-size="9.5">Refresh: ' + refresh + 's  \u00b7  Clients: ' + cc + '</text>';
 
-  // ── Server → Clients connections ──
-  const clientStartY = srvY + 100 + 30;
+  /* Clients */
+  var cStartY = sy + 90 + 26;
   if (clients.length === 0) {
-    h += '<line x1="300" y1="' + (srvY+100) + '" x2="300" y2="' + clientStartY + '" stroke="#252d44" stroke-width="1" stroke-dasharray="4,4"/>';
-    h += '<text x="300" y="' + (clientStartY + 20) + '" text-anchor="middle" fill="#505872" font-size="11" font-style="italic">No clients connected</text>';
+    h += '<line x1="300" y1="' + (sy + 90) + '" x2="300" y2="' + cStartY + '" stroke="#1a1e35" stroke-width="1" stroke-dasharray="3,4"/>';
+    h += '<text x="300" y="' + (cStartY + 16) + '" text-anchor="middle" fill="#353850" font-size="10.5" font-style="italic">No clients connected</text>';
   } else {
-    for (let i = 0; i < clients.length; i++) {
-      const c = clients[i];
-      const cy = clientStartY + i * 60;
-      const name = c.name || 'Unknown';
-      const addr = (c.address || '?').split(':')[0];
-      const subs = c.subscriptions || 0;
-      const isLocal = addr === '127.0.0.1' || addr === 'localhost';
-      const icon = isLocal ? '\\u{1F5A5}' : '\\u{1F4FA}';
+    for (var i = 0; i < clients.length; i++) {
+      var c = clients[i];
+      var cy = cStartY + i * 52;
+      var name = c.name || 'Unknown';
+      var addr = (c.address || '?').split(':')[0];
+      var subs = c.subscriptions || 0;
+      var isLocal = addr === '127.0.0.1' || addr === 'localhost';
+      var icon = isLocal ? '\uD83D\uDDA5\uFE0F' : '\uD83D\uDCFA';
 
-      // Connection line
-      h += '<line x1="300" y1="' + (srvY+100) + '" x2="300" y2="' + cy + '" stroke="#00c853" stroke-width="1.5" stroke-dasharray="6,4" marker-end="url(#arrow-green)">';
-      h += '<animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/>';
+      h += '<line x1="300" y1="' + (sy + 90) + '" x2="300" y2="' + cy + '" stroke="#40b868" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#ag)">';
+      h += '<animate attributeName="stroke-dashoffset" from="0" to="-18" dur="1.2s" repeatCount="indefinite"/>';
       h += '</line>';
 
-      // Client box
-      h += '<rect x="170" y="' + cy + '" width="260" height="44" rx="6" fill="#1a1f36" stroke="#2d3555" stroke-width="1"/>';
-      h += '<text x="188" y="' + (cy+18) + '" fill="#dde1ed" font-size="14">' + icon + '</text>';
-      h += '<text x="210" y="' + (cy+18) + '" fill="#dde1ed" font-size="12" font-weight="600">' + esc(name) + '</text>';
-      h += '<text x="210" y="' + (cy+34) + '" fill="#505872" font-size="10">' + esc(addr) + ' &middot; ' + subs + ' subscriptions</text>';
+      h += '<rect x="175" y="' + cy + '" width="250" height="40" rx="6" fill="#0c0f1a" stroke="#1a1e35" stroke-width="1"/>';
+      h += '<text x="192" y="' + (cy + 16) + '" fill="#eae8e4" font-size="13">' + icon + '</text>';
+      h += '<text x="214" y="' + (cy + 16) + '" fill="#eae8e4" font-size="10.5" font-weight="600">' + esc(name) + '</text>';
+      h += '<text x="214" y="' + (cy + 30) + '" fill="#353850" font-size="9.5">' + esc(addr) + ' \u00b7 ' + subs + ' subs</text>';
     }
   }
 
   svg.innerHTML = h;
 }
 
-// ── Trip table ──
+/* ── Trip table ── */
 function renderTrips() {
-  const lm = state.last_message || {};
-  const trips = (lm.data || {}).trips || [];
-  const body = document.getElementById('trip-body');
-  const ageEl = document.getElementById('trip-age');
+  var lm = state.last_message || {};
+  var trips = ((lm.data || {}).trips) || [];
+  var body = document.getElementById('trip-body');
+  var ageEl = document.getElementById('trip-age');
 
   if (!trips.length) {
-    body.innerHTML = '<tr><td colspan="5" style="color:var(--muted);font-style:italic;padding:12px">Waiting for data...</td></tr>';
+    body.innerHTML = '<tr><td colspan="5" style="color:var(--text-3);font-style:italic;padding:12px">Waiting for data\u2026</td></tr>';
     ageEl.textContent = '';
     return;
   }
-
   ageEl.textContent = ago(state.last_update);
 
-  body.innerHTML = trips.slice(0, 10).map(t => {
-    const rt = t.isRealtime;
-    const at = t.arrivalTime > 1e12 ? t.arrivalTime / 1000 : t.arrivalTime;
-    const color = t.routeColor ? '#' + t.routeColor : 'var(--cyan)';
+  body.innerHTML = trips.slice(0, 10).map(function(t) {
+    var rt = t.isRealtime;
+    var at = t.arrivalTime > 1e12 ? t.arrivalTime / 1000 : t.arrivalTime;
+    var color = t.routeColor ? '#' + t.routeColor : 'var(--cyan)';
     return '<tr>' +
-      '<td><span class="route-badge" style="background:' + color + '22;color:' + color + '">' + esc(t.routeName||'?') + '</span></td>' +
-      '<td>' + esc(t.headsign||'') + '</td>' +
+      '<td><span class="route-badge" style="background:' + color + '15;color:' + color + '">' + esc(t.routeName || '?') + '</span></td>' +
+      '<td>' + esc(t.headsign || '') + '</td>' +
       '<td style="text-align:right;font-weight:600">' + mins(at) + '</td>' +
-      '<td><span class="rt-dot ' + (rt?'live':'sched') + '">' + (rt?'\\u25C9':'\\u25CB') + '</span></td>' +
-      '<td style="color:var(--muted)">' + esc(t.stopId||'') + '</td>' +
-      '</tr>';
+      '<td><span class="rt-dot ' + (rt ? 'live' : 'sched') + '">' + (rt ? '\u25C9' : '\u25CB') + '</span></td>' +
+      '<td style="color:var(--text-3)">' + esc(t.stopId || '') + '</td></tr>';
   }).join('');
 }
 
-// ── Message feed ──
+/* ── Message feed ── */
 function renderFeed() {
-  const list = document.getElementById('feed-list');
+  var list = document.getElementById('feed-list');
   document.getElementById('msg-count').textContent = events.length + ' events';
 
-  const wasAtBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
-  const visible = events.slice(-100);
+  var atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+  var vis = events.slice(-100);
 
-  list.innerHTML = visible.map((ev, i) => {
-    const idx = events.length - visible.length + i;
-    const ts = fmtTime(ev.ts);
-    let dirClass = 'dir-send';
-    if (ev.kind === 'recv') dirClass = 'dir-recv';
-    else if (ev.kind === 'err') dirClass = 'dir-err';
-    else if (ev.kind === 'throttle') dirClass = 'dir-throttle';
-    else if (ev.kind === 'connect') dirClass = 'dir-connect';
-    else if (ev.kind === 'heartbeat') dirClass = 'dir-heartbeat';
+  list.innerHTML = vis.map(function(ev, i) {
+    var idx = events.length - vis.length + i;
+    var ts = fmtTime(ev.ts);
+    var dc = 'dir-send';
+    if (ev.kind === 'recv') dc = 'dir-recv';
+    else if (ev.kind === 'err') dc = 'dir-err';
+    else if (ev.kind === 'throttle') dc = 'dir-throttle';
+    else if (ev.kind === 'connect') dc = 'dir-connect';
+    else if (ev.kind === 'heartbeat') dc = 'dir-heartbeat';
 
-    let jsonHtml = '';
+    var jh = '';
     if (ev.json) {
-      const visible = showJson[idx];
-      jsonHtml = '<span class="toggle-json" onclick="toggleJson(' + idx + ')">' + (visible ? '[-]' : '[json]') + '</span>';
-      if (visible) {
-        jsonHtml += '<div class="feed-json">' + esc(ev.json.substring(0, 800)) + '</div>';
+      var isVisible = showJson[idx];
+      jh = '<span class="toggle-json" onclick="window._toggleJson(' + idx + ')">' + (isVisible ? '[\u2212]' : '[json]') + '</span>';
+      if (isVisible) {
+        jh += '<div class="feed-json">' + esc(ev.json.substring(0, 800)) + '</div>';
       }
     }
 
     return '<div class="feed-entry">' +
       '<span class="feed-ts">' + ts + '</span>' +
       '<div class="feed-body">' +
-        '<div><span class="feed-dir ' + dirClass + '">' + esc(ev.dir) + '</span> ' +
-        '<span class="feed-detail">' + esc(ev.detail) + '</span>' + jsonHtml + '</div>' +
-      '</div>' +
-    '</div>';
+        '<div><span class="feed-dir ' + dc + '">' + esc(ev.dir) + '</span> ' +
+        '<span class="feed-detail">' + esc(ev.detail) + '</span>' + jh + '</div>' +
+      '</div></div>';
   }).join('');
 
-  if (wasAtBottom) list.scrollTop = list.scrollHeight;
+  if (atBottom) list.scrollTop = list.scrollHeight;
 }
 
-function toggleJson(idx) {
-  showJson[idx] = !showJson[idx];
-  renderFeed();
-}
+window._toggleJson = function(idx) { showJson[idx] = !showJson[idx]; renderFeed(); };
 
-// ── polling ──
-async function poll() {
-  try {
-    const res = await fetch('/api/status?full=1');
-    const cur = await res.json();
+/* ── Polling ── */
+var lastLogTs = 0;
+
+function poll() {
+  fetch('/api/status?full=1').then(function(r) { return r.json(); }).then(function(cur) {
     if (cur.status === 'unavailable' || cur.status === 'error') {
-      document.getElementById('live-dot').className = 'dot-live off';
+      document.getElementById('live-dot').className = 'live-dot off';
       document.getElementById('conn-label').textContent = 'Unavailable';
       return;
     }
-    document.getElementById('live-dot').className = 'dot-live';
+    document.getElementById('live-dot').className = 'live-dot';
     document.getElementById('conn-label').textContent = 'Live';
 
     detectChanges(cur, prevState);
-    prevState = {...state};
+    prevState = Object.assign({}, state);
     state = cur;
-
-    // API key & profile cards
-    const keyEl = document.getElementById('s-apikey');
-    const key = cur.oba_api_key || 'TEST';
-    keyEl.textContent = key;
-    keyEl.className = 'stat-value ' + (key === 'TEST' ? 'orange' : 'green');
-    document.getElementById('s-apikey-sub').textContent = key === 'TEST' ? 'rate-limited public key' : 'configured';
-    const profEl = document.getElementById('s-profile');
-    const profPath = cur.config_path || '—';
-    profEl.textContent = profPath.split('/').pop();
-    document.getElementById('s-profile-sub').textContent = profPath;
 
     renderTopo();
     renderTrips();
     renderFeed();
-  } catch (e) {
-    document.getElementById('live-dot').className = 'dot-live off';
+  }).catch(function() {
+    document.getElementById('live-dot').className = 'live-dot off';
     document.getElementById('conn-label').textContent = 'Error';
-  }
+  });
 }
 
-// Also poll logs for richer message feed
-let lastLogTs = 0;
-async function pollLogs() {
-  try {
-    const res = await fetch('/api/logs?since=' + lastLogTs + '&limit=50');
-    const data = await res.json();
+function pollLogs() {
+  fetch('/api/logs?since=' + lastLogTs + '&limit=50').then(function(r) { return r.json(); }).then(function(data) {
     if (data.logs && data.logs.length) {
-      for (const entry of data.logs) {
-        const comp = entry.component || entry.logger || '';
-        const msg = entry.msg || '';
-        const level = entry.level || 'INFO';
+      for (var j = 0; j < data.logs.length; j++) {
+        var entry = data.logs[j];
+        var comp = entry.component || entry.logger || '';
+        var msg = entry.msg || '';
+        var level = entry.level || 'INFO';
 
-        // Classify interesting log events into the message feed
-        if (msg.includes('429') || msg.includes('rate limit')) {
-          addEvent('throttle', 'OBA \\u2192 server', msg);
-        } else if (msg.includes('connected') && comp.includes('server')) {
-          addEvent('connect', 'client \\u2192 server', msg);
-        } else if (msg.includes('disconnect') && comp.includes('server')) {
-          addEvent('err', 'server \\u2715 client', msg);
-        } else if (msg.includes('subscribe') || msg.includes('subscription')) {
-          addEvent('recv', 'client \\u2192 server', msg,
+        if (msg.indexOf('429') >= 0 || msg.indexOf('rate limit') >= 0) {
+          addEvent('throttle', 'OBA \u2192 server', msg);
+        } else if (msg.indexOf('connected') >= 0 && comp.indexOf('server') >= 0) {
+          addEvent('connect', 'client \u2192 server', msg);
+        } else if (msg.indexOf('disconnect') >= 0 && comp.indexOf('server') >= 0) {
+          addEvent('err', 'server \u2715 client', msg);
+        } else if (msg.indexOf('subscribe') >= 0) {
+          addEvent('recv', 'client \u2192 server', msg,
             entry.pairs ? '{"pairs":' + entry.pairs + '}' : null);
         } else if (level === 'ERROR') {
           addEvent('err', comp, msg);
@@ -1485,326 +1576,403 @@ async function pollLogs() {
       lastLogTs = data.logs[data.logs.length - 1].ts + 0.001;
       renderFeed();
     }
-  } catch(e) {}
+  }).catch(function() {});
 }
 
-// ── boot ──
+/* ── Boot ── */
 poll();
 pollLogs();
 setInterval(poll, 2000);
 setInterval(pollLogs, 3000);
+
+})();
 </script>
 </body>
-</html>"""
+</html>
+"""
 
 
 def generate_dashboard_html() -> str:
-    """Generate a Datadog-inspired observability dashboard (single-page, dark theme)."""
-    return """<!DOCTYPE html>
+    """Generate the observability dashboard."""
+    return r"""
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>Transit Tracker — Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='3' rx='1.5' fill='%23e8a830'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg-primary: #131826;
-    --bg-card: #1a1f36;
-    --bg-card-hover: #232942;
-    --border: #2d3555;
-    --text-primary: #e4e7f1;
-    --text-secondary: #8891b0;
-    --text-muted: #5a6384;
-    --accent-purple: #7c4dff;
-    --accent-blue: #448aff;
-    --accent-green: #00c853;
-    --accent-orange: #ff9100;
-    --accent-red: #ff1744;
-    --accent-teal: #00bfa5;
-    --accent-pink: #f50057;
-    --chart-grid: #252b45;
-    --scrollbar-bg: #1a1f36;
-    --scrollbar-thumb: #3d4570;
-  }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    line-height: 1.5;
-    min-height: 100vh;
-  }
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: var(--scrollbar-bg); }
-  ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+:root {
+  --bg-0: #06080e;
+  --bg-1: #0c0f1a;
+  --bg-2: #141828;
+  --bg-3: #1c2038;
+  --border: #1a1e35;
+  --border-hover: #282e4a;
+  --text-0: #eae8e4;
+  --text-1: #9498b0;
+  --text-2: #5c6080;
+  --text-3: #353850;
+  --amber: #e8a830;
+  --amber-bg: rgba(232,168,48,0.08);
+  --cyan: #3d80d0;
+  --cyan-bg: rgba(61,128,208,0.08);
+  --green: #40b868;
+  --green-bg: rgba(64,184,104,0.08);
+  --red: #d84050;
+  --red-bg: rgba(216,64,80,0.08);
+  --purple: #9060c0;
+  --purple-bg: rgba(144,96,192,0.08);
+}
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+  background: var(--bg-0);
+  color: var(--text-0);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  opacity: 0.018;
+  pointer-events: none;
+  z-index: 9999;
+}
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
-  /* Header */
-  .header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 24px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-card);
-  }
-  .header h1 { font-size: 18px; font-weight: 600; }
-  .header h1 span { color: var(--accent-purple); }
-  .header-right { display: flex; align-items: center; gap: 16px; }
-  .status-dot {
-    display: inline-block;
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: var(--accent-green);
-    animation: pulse 2s infinite;
-  }
-  .status-dot.error { background: var(--accent-red); }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-  }
-  .time-range {
-    display: flex;
-    background: var(--bg-primary);
-    border-radius: 6px;
-    overflow: hidden;
-    border: 1px solid var(--border);
-  }
-  .time-range button {
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    padding: 4px 12px;
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .time-range button.active {
-    background: var(--accent-purple);
-    color: white;
-  }
-  .time-range button:hover:not(.active) { color: var(--text-primary); }
+/* ── Nav ── */
+.nav {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 28px; height: 50px;
+  background: var(--bg-1); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 100;
+}
+.nav-left { display: flex; align-items: center; gap: 24px; }
+.nav-brand {
+  font-weight: 700; font-size: 12px; letter-spacing: 2.5px;
+  text-transform: uppercase; color: var(--amber);
+  display: flex; align-items: center; gap: 10px;
+  white-space: nowrap;
+}
+.nav-brand svg { flex-shrink: 0; }
+.nav-links { display: flex; gap: 2px; }
+.nav-link {
+  font-size: 12.5px; font-weight: 500; color: var(--text-2);
+  text-decoration: none; padding: 5px 12px; border-radius: 5px;
+  transition: all 0.2s;
+}
+.nav-link:hover { color: var(--text-0); background: var(--bg-2); }
+.nav-link.active { color: var(--amber); background: var(--amber-bg); }
+.nav-right { display: flex; align-items: center; gap: 16px; }
+.live-badge {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px; font-weight: 500; color: var(--green);
+}
+.live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px rgba(64,184,104,0.5);
+  animation: pulse 2.5s ease-in-out infinite;
+}
+.live-dot.off { background: var(--red); box-shadow: 0 0 8px rgba(216,64,80,0.4); animation: none; }
+@keyframes pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
+.time-range { display: flex; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
+.time-range button {
+  background: none; border: none; color: var(--text-2);
+  padding: 3px 10px; font-size: 11px; font-weight: 600;
+  cursor: pointer; transition: all 0.15s;
+  font-family: 'Outfit', sans-serif; letter-spacing: 0.3px;
+}
+.time-range button:hover:not(.active) { color: var(--text-0); }
+.time-range button.active { background: var(--amber); color: #080a10; }
+.time-range button + button { border-left: 1px solid var(--border); }
 
-  /* Layout */
-  .container { padding: 20px 24px; }
-  .grid { display: grid; gap: 16px; margin-bottom: 16px; }
-  .grid-4 { grid-template-columns: repeat(4, 1fr); }
-  .grid-2 { grid-template-columns: repeat(2, 1fr); }
-  .grid-1 { grid-template-columns: 1fr; }
+/* ── Info strip ── */
+.info-strip {
+  display: flex; align-items: center; gap: 16px;
+  padding: 8px 28px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px; color: var(--text-2);
+  background: var(--bg-1);
+}
+.info-chip {
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 10px; border-radius: 4px;
+  background: var(--bg-2); border: 1px solid var(--border);
+}
+.info-chip .label { color: var(--text-2); font-weight: 400; }
+.info-chip .val {
+  color: var(--text-0); font-weight: 600;
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+}
+.info-chip .val.amber { color: var(--amber); }
+.info-chip .val.green { color: var(--green); }
 
-  /* Stat cards */
-  .stat-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 16px 20px;
-    transition: border-color 0.15s;
-  }
-  .stat-card:hover { border-color: var(--accent-purple); }
-  .stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-bottom: 4px; }
-  .stat-value { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .stat-sub { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
-  .stat-value.green { color: var(--accent-green); }
-  .stat-value.orange { color: var(--accent-orange); }
-  .stat-value.red { color: var(--accent-red); }
-  .stat-value.blue { color: var(--accent-blue); }
-  .stat-value.purple { color: var(--accent-purple); }
+/* ── Container ── */
+.container { padding: 18px 28px; max-width: 1440px; margin: 0 auto; }
 
-  /* Chart cards */
-  .chart-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 16px 20px;
-  }
-  .chart-card h3 {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-secondary);
-    margin-bottom: 12px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .chart-card h3 .dot {
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    display: inline-block;
-  }
-  canvas { width: 100% !important; height: 160px !important; }
+/* ── Stat grid ── */
+.stat-grid {
+  display: grid; gap: 10px; margin-bottom: 14px;
+  grid-template-columns: repeat(6, 1fr);
+}
+.stat-card {
+  background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: 8px; padding: 14px 16px;
+  position: relative; overflow: hidden;
+  transition: border-color 0.2s, transform 0.15s;
+}
+.stat-card:hover { border-color: var(--border-hover); transform: translateY(-1px); }
+.stat-card::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+  width: 3px; border-radius: 3px 0 0 3px;
+}
+.stat-card[data-accent="amber"]::before { background: var(--amber); }
+.stat-card[data-accent="cyan"]::before { background: var(--cyan); }
+.stat-card[data-accent="green"]::before { background: var(--green); }
+.stat-card[data-accent="red"]::before { background: var(--red); }
+.stat-card[data-accent="purple"]::before { background: var(--purple); }
+.stat-label {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--text-2); font-weight: 600; margin-bottom: 6px;
+}
+.stat-value {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 24px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.stat-sub { font-size: 10.5px; color: var(--text-2); margin-top: 4px; }
+.stat-value.amber { color: var(--amber); }
+.stat-value.cyan { color: var(--cyan); }
+.stat-value.green { color: var(--green); }
+.stat-value.red { color: var(--red); }
+.stat-value.purple { color: var(--purple); }
 
-  /* Log panel */
-  .log-panel {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    overflow: hidden;
-  }
-  .log-panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 20px;
-    border-bottom: 1px solid var(--border);
-  }
-  .log-panel-header h3 { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
-  .log-filters {
-    display: flex;
-    gap: 6px;
-  }
-  .log-filters button {
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    color: var(--text-secondary);
-    padding: 2px 10px;
-    border-radius: 4px;
-    font-size: 11px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .log-filters button.active { background: var(--accent-purple); border-color: var(--accent-purple); color: white; }
-  .log-filters button:hover:not(.active) { border-color: var(--text-muted); }
-  .log-list {
-    max-height: 360px;
-    overflow-y: auto;
-    font-family: 'SFMono-Regular', 'Menlo', 'Consolas', monospace;
-    font-size: 12px;
-    line-height: 1.7;
-  }
-  .log-entry {
-    padding: 2px 20px;
-    border-bottom: 1px solid #1e2340;
-    display: flex;
-    gap: 12px;
-    transition: background 0.1s;
-  }
-  .log-entry:hover { background: var(--bg-card-hover); }
-  .log-ts { color: var(--text-muted); white-space: nowrap; min-width: 80px; }
-  .log-level {
-    font-weight: 600;
-    min-width: 44px;
-    text-align: center;
-    border-radius: 3px;
-    padding: 0 4px;
-  }
-  .log-level.DEBUG { color: var(--text-muted); }
-  .log-level.INFO { color: var(--accent-blue); }
-  .log-level.WARNING { color: var(--accent-orange); }
-  .log-level.ERROR { color: var(--accent-red); }
-  .log-component { color: var(--accent-teal); min-width: 60px; }
-  .log-msg { color: var(--text-primary); flex: 1; word-break: break-all; }
+/* ── Charts ── */
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.chart-card {
+  background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: 8px; padding: 14px 16px; overflow: hidden;
+}
+.chart-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.chart-title {
+  font-size: 11.5px; font-weight: 600; color: var(--text-1);
+  display: flex; align-items: center; gap: 7px;
+}
+.chart-title .dot { width: 5px; height: 5px; border-radius: 50%; }
+.chart-latest {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px; font-weight: 600;
+}
+canvas { width: 100% !important; height: 130px !important; display: block; }
 
-  @media (max-width: 900px) {
-    .grid-4 { grid-template-columns: repeat(2, 1fr); }
-    .grid-2 { grid-template-columns: 1fr; }
-  }
-  @media (max-width: 500px) {
-    .grid-4 { grid-template-columns: 1fr; }
-    .container { padding: 12px; }
-  }
+/* ── Log panel ── */
+.log-panel {
+  background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+.log-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
+}
+.log-title { font-size: 12px; font-weight: 600; color: var(--text-1); }
+.log-count {
+  font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+  color: var(--text-3); margin-left: 8px; font-weight: 400;
+}
+.log-filters { display: flex; gap: 3px; }
+.log-filters button {
+  background: var(--bg-2); border: 1px solid var(--border);
+  color: var(--text-2); padding: 2px 9px; border-radius: 4px;
+  font-size: 10.5px; font-weight: 500; cursor: pointer;
+  font-family: 'Outfit', sans-serif; transition: all 0.15s;
+}
+.log-filters button.active { background: var(--amber); border-color: var(--amber); color: #080a10; }
+.log-filters button:hover:not(.active) { border-color: var(--text-2); }
+.log-list {
+  max-height: 320px; overflow-y: auto;
+  font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; line-height: 1.7;
+}
+.log-entry {
+  padding: 1px 16px; border-bottom: 1px solid rgba(20,24,40,0.6);
+  display: flex; gap: 10px; transition: background 0.1s;
+}
+.log-entry:hover { background: var(--bg-2); }
+.log-ts { color: var(--text-3); white-space: nowrap; min-width: 70px; }
+.log-level { font-weight: 600; min-width: 40px; text-align: center; }
+.log-level.DEBUG { color: var(--text-3); }
+.log-level.INFO { color: var(--cyan); }
+.log-level.WARNING { color: var(--amber); }
+.log-level.ERROR { color: var(--red); }
+.log-comp { color: var(--purple); min-width: 48px; opacity: 0.6; }
+.log-msg { color: var(--text-1); flex: 1; word-break: break-all; }
+
+/* ── Responsive ── */
+@media (max-width: 1100px) {
+  .stat-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 900px) {
+  .chart-grid { grid-template-columns: 1fr; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .info-strip { flex-wrap: wrap; gap: 8px; }
+}
+@media (max-width: 500px) {
+  .container { padding: 12px; }
+  .nav { padding: 0 14px; }
+  .stat-grid { grid-template-columns: 1fr; }
+  .stat-value { font-size: 20px; }
+  .nav-links { display: none; }
+}
+
+/* ── Animations ── */
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.stat-card, .chart-card, .log-panel { animation: fadeSlideIn 0.5s cubic-bezier(0.22,1,0.36,1) both; }
+.stat-card:nth-child(1) { animation-delay: 0.04s; }
+.stat-card:nth-child(2) { animation-delay: 0.08s; }
+.stat-card:nth-child(3) { animation-delay: 0.12s; }
+.stat-card:nth-child(4) { animation-delay: 0.16s; }
+.stat-card:nth-child(5) { animation-delay: 0.20s; }
+.stat-card:nth-child(6) { animation-delay: 0.24s; }
+.chart-card:nth-child(1) { animation-delay: 0.30s; }
+.chart-card:nth-child(2) { animation-delay: 0.34s; }
+.chart-card:nth-child(3) { animation-delay: 0.38s; }
+.chart-card:nth-child(4) { animation-delay: 0.42s; }
+.log-panel { animation-delay: 0.48s; }
 </style>
 </head>
 <body>
 
-<div class="header">
-  <h1><span>Transit Tracker</span> &mdash; Dashboard</h1>
-  <div class="header-right">
+<nav class="nav">
+  <div class="nav-left">
+    <div class="nav-brand">
+      <svg width="18" height="13" viewBox="0 0 18 13" fill="none">
+        <rect width="18" height="2.4" rx="1.2" fill="currentColor"/>
+        <rect y="5" width="12" height="2.4" rx="1.2" fill="currentColor" opacity="0.55"/>
+        <rect y="10" width="7" height="2.4" rx="1.2" fill="currentColor" opacity="0.25"/>
+      </svg>
+      Transit Tracker
+    </div>
+    <div class="nav-links">
+      <a href="/dashboard" class="nav-link active">Dashboard</a>
+      <a href="/monitor" class="nav-link">Monitor</a>
+      <a href="/simulator" class="nav-link">Simulator</a>
+      <a href="/spec" class="nav-link">API</a>
+    </div>
+  </div>
+  <div class="nav-right">
     <div class="time-range">
       <button class="active" data-range="300">5m</button>
       <button data-range="900">15m</button>
       <button data-range="1800">30m</button>
       <button data-range="0">All</button>
     </div>
-    <span id="conn-status"><span class="status-dot"></span> Live</span>
+    <div class="live-badge">
+      <span class="live-dot" id="live-dot"></span>
+      <span id="live-label">Live</span>
+    </div>
+  </div>
+</nav>
+
+<div class="info-strip">
+  <div class="info-chip">
+    <span class="label">Profile</span>
+    <span class="val amber" id="i-profile">&mdash;</span>
+  </div>
+  <div class="info-chip">
+    <span class="label">API Key</span>
+    <span class="val" id="i-apikey">&mdash;</span>
+  </div>
+  <div class="info-chip">
+    <span class="label">Refresh</span>
+    <span class="val" id="i-refresh">&mdash;</span>
   </div>
 </div>
 
 <div class="container">
-  <!-- Stat cards -->
-  <div class="grid grid-4">
-    <div class="stat-card">
+  <div class="stat-grid">
+    <div class="stat-card" data-accent="green">
       <div class="stat-label">Uptime</div>
-      <div class="stat-value green" id="s-uptime">—</div>
+      <div class="stat-value green" id="s-uptime">&mdash;</div>
       <div class="stat-sub" id="s-uptime-sub"></div>
     </div>
-    <div class="stat-card">
+    <div class="stat-card" data-accent="cyan">
       <div class="stat-label">Active Clients</div>
-      <div class="stat-value blue" id="s-clients">0</div>
+      <div class="stat-value cyan" id="s-clients">0</div>
       <div class="stat-sub" id="s-clients-sub"></div>
     </div>
-    <div class="stat-card">
+    <div class="stat-card" data-accent="purple">
       <div class="stat-label">Messages Sent</div>
       <div class="stat-value purple" id="s-msgs">0</div>
       <div class="stat-sub" id="s-msgs-sub"></div>
     </div>
-    <div class="stat-card">
+    <div class="stat-card" data-accent="amber">
       <div class="stat-label">API Calls</div>
-      <div class="stat-value" id="s-api">0</div>
+      <div class="stat-value amber" id="s-api">0</div>
       <div class="stat-sub" id="s-api-sub"></div>
     </div>
-  </div>
-
-  <div class="grid grid-4">
-    <div class="stat-card">
-      <div class="stat-label">Throttle Events (429s)</div>
+    <div class="stat-card" data-accent="amber">
+      <div class="stat-label">429 Throttles</div>
       <div class="stat-value" id="s-throttle">0</div>
       <div class="stat-sub" id="s-throttle-sub"></div>
     </div>
-    <div class="stat-card">
+    <div class="stat-card" data-accent="red">
       <div class="stat-label">API Errors</div>
       <div class="stat-value" id="s-errors">0</div>
       <div class="stat-sub" id="s-errors-sub"></div>
     </div>
-    <div class="stat-card">
-      <div class="stat-label">Refresh Interval</div>
-      <div class="stat-value" id="s-interval">—</div>
-      <div class="stat-sub" id="s-interval-sub"></div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Cache Size</div>
-      <div class="stat-value" id="s-cache">0</div>
-      <div class="stat-sub">stops cached</div>
-    </div>
   </div>
 
-  <div class="grid grid-2">
-    <div class="stat-card">
-      <div class="stat-label">OBA API Key</div>
-      <div class="stat-value" id="s-apikey" style="font-size:14px">—</div>
-      <div class="stat-sub" id="s-apikey-sub"></div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Active Profile</div>
-      <div class="stat-value" id="s-profile" style="font-size:14px">—</div>
-      <div class="stat-sub" id="s-profile-sub"></div>
-    </div>
-  </div>
-
-  <!-- Charts -->
-  <div class="grid grid-2">
+  <div class="chart-grid">
     <div class="chart-card">
-      <h3><span class="dot" style="background:var(--accent-blue)"></span>API Latency (ms)</h3>
+      <div class="chart-header">
+        <div class="chart-title"><span class="dot" style="background:var(--cyan)"></span>API Latency</div>
+        <span class="chart-latest" id="cl-latency" style="color:var(--cyan)">&mdash;</span>
+      </div>
       <canvas id="chart-latency"></canvas>
     </div>
     <div class="chart-card">
-      <h3><span class="dot" style="background:var(--accent-green)"></span>Active Clients</h3>
+      <div class="chart-header">
+        <div class="chart-title"><span class="dot" style="background:var(--green)"></span>Active Clients</div>
+        <span class="chart-latest" id="cl-clients" style="color:var(--green)">&mdash;</span>
+      </div>
       <canvas id="chart-clients"></canvas>
     </div>
-  </div>
-  <div class="grid grid-2">
     <div class="chart-card">
-      <h3><span class="dot" style="background:var(--accent-purple)"></span>Refresh Interval (s)</h3>
+      <div class="chart-header">
+        <div class="chart-title"><span class="dot" style="background:var(--purple)"></span>Refresh Interval</div>
+        <span class="chart-latest" id="cl-interval" style="color:var(--purple)">&mdash;</span>
+      </div>
       <canvas id="chart-interval"></canvas>
     </div>
     <div class="chart-card">
-      <h3><span class="dot" style="background:var(--accent-orange)"></span>Throttle Rate (%)</h3>
+      <div class="chart-header">
+        <div class="chart-title"><span class="dot" style="background:var(--amber)"></span>Throttle Rate</div>
+        <span class="chart-latest" id="cl-throttle" style="color:var(--amber)">&mdash;</span>
+      </div>
       <canvas id="chart-throttle"></canvas>
     </div>
   </div>
 
-  <!-- Logs -->
   <div class="log-panel">
-    <div class="log-panel-header">
-      <h3>Event Log</h3>
+    <div class="log-header">
+      <div class="log-title">Event Log <span class="log-count" id="log-count"></span></div>
       <div class="log-filters">
         <button class="active" data-level="all">All</button>
         <button data-level="ERROR">Error</button>
@@ -1818,8 +1986,11 @@ def generate_dashboard_html() -> str:
 </div>
 
 <script>
-// ---- Minimal chart renderer (no external deps) ----
-class MiniChart {
+(function() {
+'use strict';
+
+/* ── Smooth Chart Renderer ── */
+class Chart {
   constructor(canvas, color) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
@@ -1829,244 +2000,244 @@ class MiniChart {
     window.addEventListener('resize', () => this._resize());
   }
   _resize() {
-    const r = this.canvas.parentElement.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
+    var r = this.canvas.parentElement.getBoundingClientRect();
+    var dpr = window.devicePixelRatio || 1;
     this.canvas.width = r.width * dpr;
-    this.canvas.height = 160 * dpr;
-    this.ctx.scale(dpr, dpr);
+    this.canvas.height = 130 * dpr;
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.w = r.width;
-    this.h = 160;
+    this.h = 130;
     this.draw();
   }
-  setData(points) { this.data = points; this.draw(); }
+  setData(pts) { this.data = pts; this.draw(); }
   draw() {
-    const ctx = this.ctx, w = this.w, h = this.h, d = this.data;
+    var ctx = this.ctx, w = this.w, h = this.h, d = this.data;
     ctx.clearRect(0, 0, w, h);
     if (d.length < 2) {
-      ctx.fillStyle = '#3d4570';
-      ctx.font = '12px sans-serif';
+      ctx.fillStyle = '#353850';
+      ctx.font = '500 11px Outfit, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('Waiting for data...', w/2, h/2);
+      ctx.fillText('Awaiting data\u2026', w / 2, h / 2);
       return;
     }
-    // Grid lines
-    ctx.strokeStyle = '#252b45';
+    /* Grid */
+    ctx.strokeStyle = '#111428';
     ctx.lineWidth = 1;
-    for (let i = 1; i < 4; i++) {
-      const y = (h / 4) * i;
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    for (var g = 1; g < 4; g++) {
+      var gy = (h / 4) * g;
+      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke();
     }
-    // Data
-    const vals = d.map(p => p[1]);
-    let min = Math.min(...vals), max = Math.max(...vals);
-    if (max === min) { max = min + 1; }
-    const pad = 8;
-    const innerH = h - pad * 2;
-    const xStep = w / (d.length - 1);
-    // Area fill
+    var vals = d.map(function(p) { return p[1]; });
+    var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+    if (max === min) max = min + 1;
+    var pad = 4, ih = h - pad * 2;
+    var xStep = w / (d.length - 1);
+    /* Build points */
+    var pts = [];
+    for (var i = 0; i < d.length; i++) {
+      pts.push({ x: i * xStep, y: pad + ih - ((vals[i] - min) / (max - min)) * ih });
+    }
+    /* Area fill with bezier */
     ctx.beginPath();
     ctx.moveTo(0, h);
-    for (let i = 0; i < d.length; i++) {
-      const x = i * xStep;
-      const y = pad + innerH - ((vals[i] - min) / (max - min)) * innerH;
-      ctx.lineTo(x, y);
+    ctx.lineTo(pts[0].x, pts[0].y);
+    for (var i = 1; i < pts.length; i++) {
+      var cpx = (pts[i - 1].x + pts[i].x) / 2;
+      ctx.bezierCurveTo(cpx, pts[i - 1].y, cpx, pts[i].y, pts[i].x, pts[i].y);
     }
     ctx.lineTo(w, h);
     ctx.closePath();
-    const grad = ctx.createLinearGradient(0, 0, 0, h);
-    grad.addColorStop(0, this.color + '40');
-    grad.addColorStop(1, this.color + '05');
+    var grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, this.color + '25');
+    grad.addColorStop(1, this.color + '02');
     ctx.fillStyle = grad;
     ctx.fill();
-    // Line
+    /* Stroke with bezier */
     ctx.beginPath();
-    for (let i = 0; i < d.length; i++) {
-      const x = i * xStep;
-      const y = pad + innerH - ((vals[i] - min) / (max - min)) * innerH;
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (var i = 1; i < pts.length; i++) {
+      var cpx = (pts[i - 1].x + pts[i].x) / 2;
+      ctx.bezierCurveTo(cpx, pts[i - 1].y, cpx, pts[i].y, pts[i].x, pts[i].y);
     }
     ctx.strokeStyle = this.color;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1.5;
     ctx.stroke();
-    // Labels
-    ctx.fillStyle = '#5a6384';
-    ctx.font = '10px sans-serif';
+    /* End dot */
+    var last = pts[pts.length - 1];
+    ctx.beginPath();
+    ctx.arc(last.x, last.y, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = this.color;
+    ctx.fill();
+    /* Y scale labels */
+    ctx.fillStyle = '#2a2e48';
+    ctx.font = '10px IBM Plex Mono, monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(max.toFixed(1), 4, pad + 10);
-    ctx.fillText(min.toFixed(1), 4, h - 4);
-    // Latest value
-    if (d.length > 0) {
-      const last = vals[vals.length - 1];
-      ctx.fillStyle = this.color;
-      ctx.font = 'bold 12px sans-serif';
-      ctx.textAlign = 'right';
-      ctx.fillText(last.toFixed(1), w - 4, pad + 10);
-    }
+    ctx.fillText(max.toFixed(1), 3, pad + 10);
+    ctx.fillText(min.toFixed(1), 3, h - 3);
   }
 }
 
-// ---- Init charts ----
-const charts = {
-  latency: new MiniChart(document.getElementById('chart-latency'), '#448aff'),
-  clients: new MiniChart(document.getElementById('chart-clients'), '#00c853'),
-  interval: new MiniChart(document.getElementById('chart-interval'), '#7c4dff'),
-  throttle: new MiniChart(document.getElementById('chart-throttle'), '#ff9100'),
+/* ── Init charts ── */
+var charts = {
+  latency: new Chart(document.getElementById('chart-latency'), '#3d80d0'),
+  clients: new Chart(document.getElementById('chart-clients'), '#40b868'),
+  interval: new Chart(document.getElementById('chart-interval'), '#9060c0'),
+  throttle: new Chart(document.getElementById('chart-throttle'), '#e8a830')
 };
 
-// ---- State ----
-let timeRange = 300; // seconds
-let logFilter = 'all';
-let lastLogTs = 0;
-let allLogs = [];
+var timeRange = 300;
+var logFilter = 'all';
+var lastLogTs = 0;
+var allLogs = [];
 
-// ---- Time range buttons ----
-document.querySelectorAll('.time-range button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.time-range button').forEach(b => b.classList.remove('active'));
+/* ── Time range buttons ── */
+document.querySelectorAll('.time-range button').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.time-range button').forEach(function(b) { b.classList.remove('active'); });
     btn.classList.add('active');
     timeRange = parseInt(btn.dataset.range);
     fetchMetrics();
   });
 });
 
-// ---- Log filter buttons ----
-document.querySelectorAll('.log-filters button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.log-filters button').forEach(b => b.classList.remove('active'));
+/* ── Log filter buttons ── */
+document.querySelectorAll('.log-filters button').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.log-filters button').forEach(function(b) { b.classList.remove('active'); });
     btn.classList.add('active');
     logFilter = btn.dataset.level;
     renderLogs();
   });
 });
 
-// ---- Formatting helpers ----
-function fmtUptime(s) {
+/* ── Helpers ── */
+function fmtUp(s) {
   if (s < 60) return Math.floor(s) + 's';
   if (s < 3600) return Math.floor(s / 60) + 'm';
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  return h + 'h ' + m + 'm';
+  var hh = Math.floor(s / 3600), mm = Math.floor((s % 3600) / 60);
+  return hh + 'h ' + mm + 'm';
 }
-function fmtNum(n) {
+function fmtN(n) {
   if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
   if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-  return n.toString();
+  return '' + n;
 }
-function fmtTime(ts) {
-  const d = new Date(ts * 1000);
-  return d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+function fmtT(ts) {
+  return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+/* ── Fetch status for info bar ── */
+function fetchStatus() {
+  fetch('/api/status').then(function(r) { return r.json(); }).then(function(s) {
+    if (s.status === 'unavailable' || s.status === 'error') return;
+    var prof = (s.config_path || '').split('/').pop() || '\u2014';
+    document.getElementById('i-profile').textContent = prof;
+    var key = s.oba_api_key || 'TEST';
+    var keyEl = document.getElementById('i-apikey');
+    keyEl.textContent = key;
+    keyEl.className = 'val ' + (key === 'TEST' ? '' : 'green');
+    document.getElementById('i-refresh').textContent = (s.refresh_interval || 30) + 's';
+  }).catch(function() {});
 }
 
-// ---- Fetch & render ----
-async function fetchMetrics() {
-  try {
-    const since = timeRange > 0 ? (Date.now() / 1000 - timeRange) : 0;
-    const res = await fetch('/api/metrics?since=' + since);
-    const m = await res.json();
+/* ── Fetch metrics ── */
+function fetchMetrics() {
+  var since = timeRange > 0 ? (Date.now() / 1000 - timeRange) : 0;
+  fetch('/api/metrics?since=' + since).then(function(r) { return r.json(); }).then(function(m) {
+    document.getElementById('live-dot').className = 'live-dot';
+    document.getElementById('live-label').textContent = 'Live';
 
-    // Stat cards
-    document.getElementById('s-uptime').textContent = fmtUptime(m.uptime_s);
-    const startDate = new Date((m.ts - m.uptime_s) * 1000);
-    document.getElementById('s-uptime-sub').textContent = 'since ' + startDate.toLocaleTimeString();
+    document.getElementById('s-uptime').textContent = fmtUp(m.uptime_s);
+    var t0 = new Date((m.ts - m.uptime_s) * 1000);
+    document.getElementById('s-uptime-sub').textContent = 'since ' + t0.toLocaleTimeString();
 
     document.getElementById('s-clients').textContent = m.gauges.active_clients;
-    document.getElementById('s-clients-sub').textContent =
-      fmtNum(m.counters.ws_connections) + ' total connections';
+    document.getElementById('s-clients-sub').textContent = fmtN(m.counters.ws_connections) + ' total connections';
 
-    document.getElementById('s-msgs').textContent = fmtNum(m.counters.messages_sent);
-    document.getElementById('s-msgs-sub').textContent =
-      fmtNum(m.counters.messages_received) + ' received';
+    document.getElementById('s-msgs').textContent = fmtN(m.counters.messages_sent);
+    document.getElementById('s-msgs-sub').textContent = fmtN(m.counters.messages_received) + ' received';
 
-    const apiCalls = m.counters.api_calls;
-    document.getElementById('s-api').textContent = fmtNum(apiCalls);
-    const errRate = apiCalls > 0 ? (m.counters.api_errors / apiCalls * 100).toFixed(1) : '0.0';
-    document.getElementById('s-api-sub').textContent = errRate + '% error rate';
+    var ac = m.counters.api_calls;
+    document.getElementById('s-api').textContent = fmtN(ac);
+    var errR = ac > 0 ? (m.counters.api_errors / ac * 100).toFixed(1) : '0.0';
+    document.getElementById('s-api-sub').textContent = errR + '% error rate';
 
-    const throttle = m.counters.throttle_events;
-    const tEl = document.getElementById('s-throttle');
-    tEl.textContent = fmtNum(throttle);
-    tEl.className = 'stat-value ' + (throttle > 0 ? 'orange' : 'green');
-    const throttleRate = apiCalls > 0 ? (throttle / apiCalls * 100).toFixed(1) : '0.0';
-    document.getElementById('s-throttle-sub').textContent = throttleRate + '% of API calls';
+    var thr = m.counters.throttle_events;
+    var thrEl = document.getElementById('s-throttle');
+    thrEl.textContent = fmtN(thr);
+    thrEl.className = 'stat-value ' + (thr > 0 ? 'amber' : 'green');
+    var thrR = ac > 0 ? (thr / ac * 100).toFixed(1) : '0.0';
+    document.getElementById('s-throttle-sub').textContent = thrR + '% of calls';
 
-    const errEl = document.getElementById('s-errors');
-    errEl.textContent = fmtNum(m.counters.api_errors);
+    var errEl = document.getElementById('s-errors');
+    errEl.textContent = fmtN(m.counters.api_errors);
     errEl.className = 'stat-value ' + (m.counters.api_errors > 0 ? 'red' : 'green');
-    document.getElementById('s-errors-sub').textContent =
-      fmtNum(m.counters.api_errors) + ' total errors';
+    document.getElementById('s-errors-sub').textContent = fmtN(m.counters.api_errors) + ' total';
 
-    const intEl = document.getElementById('s-interval');
-    intEl.textContent = m.gauges.refresh_interval_s + 's';
-    intEl.className = 'stat-value ' + (m.gauges.refresh_interval_s > 60 ? 'orange' : '');
-    document.getElementById('s-interval-sub').textContent = 'base: polling cycle';
-
-    document.getElementById('s-cache').textContent = m.gauges.cache_size;
-
-    // Charts
     charts.latency.setData(m.series.api_latency_ms);
     charts.clients.setData(m.series.active_clients);
     charts.interval.setData(m.series.refresh_interval_s);
     charts.throttle.setData(m.series.throttle_rate);
 
-    // Connection status
-    document.querySelector('.status-dot').className = 'status-dot';
-  } catch (e) {
-    document.querySelector('.status-dot').className = 'status-dot error';
-  }
+    function latest(arr) { return arr.length ? arr[arr.length - 1][1] : null; }
+    var ll = latest(m.series.api_latency_ms);
+    document.getElementById('cl-latency').textContent = ll !== null ? ll.toFixed(0) + ' ms' : '\u2014';
+    var lc = latest(m.series.active_clients);
+    document.getElementById('cl-clients').textContent = lc !== null ? Math.round(lc) + '' : '\u2014';
+    var li = latest(m.series.refresh_interval_s);
+    document.getElementById('cl-interval').textContent = li !== null ? li.toFixed(0) + 's' : '\u2014';
+    var lt = latest(m.series.throttle_rate);
+    document.getElementById('cl-throttle').textContent = lt !== null ? lt.toFixed(1) + '%' : '\u2014';
+  }).catch(function() {
+    document.getElementById('live-dot').className = 'live-dot off';
+    document.getElementById('live-label').textContent = 'Offline';
+  });
 }
 
-async function fetchLogs() {
-  try {
-    const res = await fetch('/api/logs?since=' + lastLogTs + '&limit=200');
-    const data = await res.json();
-    if (data.logs && data.logs.length > 0) {
+/* ── Fetch logs ── */
+function fetchLogs() {
+  fetch('/api/logs?since=' + lastLogTs + '&limit=200').then(function(r) { return r.json(); }).then(function(data) {
+    if (data.logs && data.logs.length) {
       allLogs = allLogs.concat(data.logs);
-      // Keep only last 500
       if (allLogs.length > 500) allLogs = allLogs.slice(-500);
       lastLogTs = data.logs[data.logs.length - 1].ts + 0.001;
       renderLogs();
     }
-  } catch (e) {}
+  }).catch(function() {});
 }
 
 function renderLogs() {
-  const list = document.getElementById('log-list');
-  let filtered = allLogs;
-  if (logFilter !== 'all') {
-    filtered = allLogs.filter(e => e.level === logFilter);
-  }
-  // Show latest 200
-  const visible = filtered.slice(-200);
-  list.innerHTML = visible.map(e => {
-    const ts = fmtTime(e.ts);
-    const level = e.level || 'INFO';
-    const component = e.component || e.logger || '';
-    const msg = e.msg || '';
-    return `<div class="log-entry">
-      <span class="log-ts">${ts}</span>
-      <span class="log-level ${level}">${level}</span>
-      <span class="log-component">${component}</span>
-      <span class="log-msg">${escHtml(msg)}</span>
-    </div>`;
+  var list = document.getElementById('log-list');
+  var f = allLogs;
+  if (logFilter !== 'all') f = allLogs.filter(function(e) { return e.level === logFilter; });
+  var vis = f.slice(-200);
+  document.getElementById('log-count').textContent = '(' + allLogs.length + ')';
+  list.innerHTML = vis.map(function(e) {
+    var lv = e.level || 'INFO';
+    var comp = e.component || e.logger || '';
+    return '<div class="log-entry">' +
+      '<span class="log-ts">' + fmtT(e.ts) + '</span>' +
+      '<span class="log-level ' + lv + '">' + lv + '</span>' +
+      '<span class="log-comp">' + esc(comp) + '</span>' +
+      '<span class="log-msg">' + esc(e.msg || '') + '</span></div>';
   }).join('');
-  // Auto-scroll to bottom
   list.scrollTop = list.scrollHeight;
 }
 
-function escHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
-}
-
-// ---- Poll loop ----
+/* ── Boot ── */
+fetchStatus();
 fetchMetrics();
 fetchLogs();
+setInterval(fetchStatus, 5000);
 setInterval(fetchMetrics, 2000);
 setInterval(fetchLogs, 2000);
+
+})();
 </script>
 </body>
-</html>"""
+</html>
+"""
 
 
 def generate_simulator_html() -> str:

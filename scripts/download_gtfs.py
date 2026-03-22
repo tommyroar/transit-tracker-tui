@@ -335,7 +335,7 @@ def main() -> None:
     for table, count in counts.items():
         print(f"  {table}: {count:,} rows")
 
-    print("\nRun `TRANSIT_TRACKER_TESTING=1 uv run pytest tests/test_gtfs.py -v` to verify.")
+    print("\nRun `uv run pytest tests/test_gtfs.py -v` to verify.")
 
 
 if __name__ == "__main__":

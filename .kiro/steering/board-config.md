@@ -101,6 +101,5 @@ auto_launch_gui: true
 
 ## Key Environment Variables
 
-- `TRANSIT_TRACKER_TESTING=1` — skips live cloud equivalence tests in CI (config isolation is handled by patching `SERVICE_SETTINGS_FILE` in tests)
 - `OBA_API_KEY` — OneBusAway API key (fallback when not set in service settings)
 - `PORT` — override HTTP web server port (default: 8080)

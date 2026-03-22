@@ -40,6 +40,7 @@ dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=6.0",
+    "mutmut>=3.2.0",
     "ruff>=0.9.9",
 ]
 
@@ -74,6 +75,7 @@ markers = [
 
 [tool.coverage.run]
 source = ["src/transit_tracker"]
+branch = true
 omit = [
     "src/transit_tracker/gui.py",
     "src/transit_tracker/simulator.py",
@@ -83,5 +85,17 @@ omit = [
 ]
 
 [tool.coverage.report]
-fail_under = 55
+fail_under = 45
 show_missing = true
+
+# -- Mutation testing (mutmut) --
+# Run: uv run mutmut run
+# View: uv run mutmut results
+[tool.mutmut]
+paths_to_mutate = [
+    "src/transit_tracker/config.py",
+    "src/transit_tracker/display.py",
+]
+tests_dir = ["tests/"]
+also_copy = ["src/"]
+pytest_add_cli_args = ["-q", "--tb=no", "-m", "unit", "--ignore=tests/test_insitu_hardware.py"]

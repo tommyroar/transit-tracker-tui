@@ -281,4 +281,4 @@ Separate from unit/property tests, these require Docker:
 - Property-based testing library: `hypothesis`
 - Minimum iterations: 100 per property (`@settings(max_examples=100)`)
 - Container tests marked with `@pytest.mark.docker` for selective execution
-- Equivalence tests marked with `@pytest.mark.integration` and skipped when `TRANSIT_TRACKER_TESTING=1`
+- Equivalence tests marked with `@pytest.mark.e2e` — excluded from CI via marker selection

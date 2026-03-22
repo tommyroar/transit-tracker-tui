@@ -21,7 +21,10 @@ from transit_tracker.transit_api import TransitAPI
 from transit_tracker.web import (
     TransitWebHandler,
     generate_api_spec,
+    generate_dashboard_html,
     generate_index_html,
+    generate_monitor_html,
+    generate_simulator_html,
     resolve_stop_coordinates,
 )
 
@@ -404,3 +407,109 @@ def _make_handler(method, path):
     handler.do_GET()
     handler._body = handler.wfile.getvalue()
     return handler
+
+
+# --- Simulator HTML generation ---
+
+
+def test_simulator_html_has_canvas():
+    html = generate_simulator_html()
+    assert "<canvas" in html
+    assert "led-canvas" in html
+
+
+def test_simulator_html_has_glyphs():
+    html = generate_simulator_html()
+    assert "GLYPHS" in html
+    assert "REALTIME_ICON" in html
+
+
+def test_simulator_html_has_subscribe_payload():
+    html = generate_simulator_html()
+    assert "SUBSCRIBE_PAYLOAD" in html
+    assert "schedule:subscribe" in html
+
+
+def test_simulator_html_has_ws_proxy_url():
+    """Simulator should connect via /ws proxy, not direct :8000."""
+    html = generate_simulator_html()
+    assert "/ws" in html
+    assert "getWsUrl" in html
+
+
+def test_simulator_html_protocol_detection():
+    """Simulator should auto-detect wss:// vs ws:// based on page protocol."""
+    html = generate_simulator_html()
+    assert "location.protocol" in html
+    assert "wss://" in html
+
+
+def test_simulator_html_endpoint_selector():
+    html = generate_simulator_html()
+    assert "endpoint-select" in html
+    assert "Local" in html
+    assert "Cloud" in html
+    assert "Custom" in html
+
+
+# --- Monitor HTML generation ---
+
+
+def test_monitor_html_has_topology():
+    html = generate_monitor_html()
+    assert "topo-svg" in html
+    assert "Network Topology" in html
+
+
+def test_monitor_html_has_simulator_toggle():
+    html = generate_monitor_html()
+    assert "sim-toggle" in html
+    assert "LED Simulator" in html
+    assert "sim-iframe" in html
+
+
+def test_monitor_html_has_message_feed():
+    html = generate_monitor_html()
+    assert "feed-list" in html
+    assert "Message Flow" in html
+
+
+# --- Dashboard HTML generation ---
+
+
+def test_dashboard_html_has_metrics():
+    html = generate_dashboard_html()
+    assert "fetchMetrics" in html
+
+
+def test_dashboard_html_has_charts():
+    html = generate_dashboard_html()
+    assert "chart" in html.lower() or "metric" in html.lower()
+    assert "api_calls" in html or "apiCalls" in html
+
+
+def test_monitor_html_has_trip_table():
+    html = generate_monitor_html()
+    assert "trip-table" in html
+    assert "Route" in html
+    assert "Headsign" in html
+
+
+def test_monitor_html_has_status_polling():
+    html = generate_monitor_html()
+    assert "/api/status" in html
+    assert "setInterval" in html
+
+
+def test_simulator_html_has_pixel_rendering():
+    html = generate_simulator_html()
+    assert "PIXEL_SCALE" in html
+    assert "requestAnimationFrame" in html
+    assert "renderFrame" in html
+
+
+def test_simulator_html_has_trip_processing():
+    """Simulator JS should have client-side trip processing."""
+    html = generate_simulator_html()
+    assert "processDepartures" in html
+    assert "diversity" in html.lower() or "stop_id" in html

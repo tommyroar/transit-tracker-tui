@@ -270,7 +270,7 @@ class TransitConfig(BaseModel):
 
         # Compute api_url
         if svc.use_local_api:
-            self.api_url = f"ws://{socket.gethostname()}:8000/"
+            self.api_url = "ws://localhost:8000/"
         elif not self.api_url or tt.base_url != "wss://tt.horner.tj/":
             self.api_url = tt.base_url
 

@@ -8,7 +8,8 @@
 set -e
 
 CONFIG_PATH="/config/config.yaml"
-SERVICE_YAML="${SERVICE_SETTINGS_PATH:-/config/service.yaml}"
+export SERVICE_SETTINGS_PATH="${SERVICE_SETTINGS_PATH:-/config/service.yaml}"
+SERVICE_YAML="$SERVICE_SETTINGS_PATH"
 
 # ---- Config discovery ----
 # If a config file is mounted at /config/config.yaml, register it so the CLI
@@ -26,9 +27,18 @@ if [ -f "$CONFIG_PATH" ]; then
             rm "$TMP"
         fi
     else
-        cat > "$SERVICE_YAML" <<EOF
+        # Try to create service.yaml; fall back to /tmp if /config is read-only
+        if ! cat > "$SERVICE_YAML" 2>/dev/null <<EOF
 last_config_path: $CONFIG_PATH
 EOF
+        then
+            export SERVICE_SETTINGS_PATH="/tmp/service.yaml"
+            SERVICE_YAML="$SERVICE_SETTINGS_PATH"
+            cat > "$SERVICE_YAML" <<EOF2
+last_config_path: $CONFIG_PATH
+EOF2
+            echo "[ENTRYPOINT] /config not writable — using $SERVICE_YAML"
+        fi
     fi
 else
     echo "[ENTRYPOINT] No config mounted — using defaults (wss://tt.horner.tj/)"

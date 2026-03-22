@@ -6,6 +6,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Dict, List
 from urllib.parse import parse_qs, urlparse
 
+import websockets
+
 from .config import TransitConfig
 from .logging import get_logger
 from .metrics import metrics
@@ -581,6 +583,9 @@ class TransitWebHandler(BaseHTTPRequestHandler):
             if path == "/api/dimming":
                 self._serve_dimming_get()
                 return
+            if path == "/simulator":
+                self._serve_simulator()
+                return
 
         content = self.routes.get(path)
         if content is not None:
@@ -728,6 +733,15 @@ class TransitWebHandler(BaseHTTPRequestHandler):
             "message": "Schedule saved. Will take effect within 60 seconds.",
         }))
 
+    def _serve_simulator(self):
+        """Serve the web LED simulator HTML."""
+        html = generate_simulator_html()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(html.encode("utf-8"))
+
 
 async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None):
     """Start the Transit Tracker web server with API spec and stop data."""
@@ -747,6 +761,11 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
     spec_html = generate_spec_html(spec_json)
 
     pages = [
+        {
+            "path": "/simulator",
+            "name": "LED Simulator",
+            "description": "Browser-based HUB75 LED matrix emulator with live WebSocket data",
+        },
         {
             "path": "/dashboard",
             "name": "Dashboard",
@@ -790,26 +809,138 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
     ]
     index_html = generate_index_html(pages)
 
-    TransitWebHandler.routes = {
+    # -- Route tables for the dual HTTP+WS server --
+    static_routes = {
         "/": index_html,
         "/spec": spec_html,
         "/api/spec": spec_json,
         "/api/stops": stops_json,
     }
-    # Dynamic routes — served fresh on each request
-    TransitWebHandler.dynamic_routes = {"/api/status", "/api/metrics", "/api/logs", "/api/dimming", "/dashboard", "/monitor"}
+    dynamic_routes = {
+        "/api/status", "/api/metrics", "/api/logs", "/api/dimming",
+        "/dashboard", "/monitor", "/simulator",
+    }
 
-    server = HTTPServer((host, port), TransitWebHandler)
+    # -- Also configure the legacy HTTPServer routes (used by tests) --
+    TransitWebHandler.routes = static_routes
+    TransitWebHandler.dynamic_routes = dynamic_routes
+
+    def _serve_dynamic(path: str, query: dict) -> tuple:
+        """Serve a dynamic route, returning (status, content_type, body)."""
+        from .network.websocket_server import SERVICE_STATE_FILE
+
+        if path == "/api/status":
+            include_full = query.get("full", ["0"])[0] == "1"
+            try:
+                if os.path.exists(SERVICE_STATE_FILE):
+                    with open(SERVICE_STATE_FILE, "r") as f:
+                        state = json.load(f)
+                    if not include_full:
+                        state.pop("last_message", None)
+                    return (200, "application/json", json.dumps(state))
+                return (200, "application/json", json.dumps({"status": "unavailable"}))
+            except Exception:
+                return (200, "application/json", json.dumps({"status": "error"}))
+
+        if path == "/api/metrics":
+            since = float(query.get("since", [0])[0])
+            return (200, "application/json", json.dumps(metrics.snapshot(series_since=since)))
+
+        if path == "/api/logs":
+            since = float(query.get("since", [0])[0])
+            limit = int(query.get("limit", [200])[0])
+            entries = metrics.logs.snapshot(since=since, limit=limit)
+            return (200, "application/json", json.dumps({"logs": entries}))
+
+        if path == "/api/dimming":
+            from .config import load_service_settings
+            settings = load_service_settings()
+            return (200, "application/json", json.dumps({
+                "dimming_schedule": [e.model_dump() for e in settings.dimming_schedule],
+                "display_brightness": settings.display_brightness,
+                "device_ip": settings.device_ip,
+            }))
+
+        if path == "/dashboard":
+            return (200, "text/html", generate_dashboard_html())
+        if path == "/monitor":
+            return (200, "text/html", generate_monitor_html())
+        if path == "/simulator":
+            return (200, "text/html", generate_simulator_html())
+
+        return (404, "text/html", "<h1>404 Not Found</h1>")
+
+    def handle_http(path: str, query: dict) -> tuple:
+        """Return (status, headers_list, body_bytes) for an HTTP request."""
+        clean = path.rstrip("/") or "/"
+        headers = [("Access-Control-Allow-Origin", "*")]
+
+        if clean in dynamic_routes:
+            status, ct, body = _serve_dynamic(clean, query)
+            headers.append(("Content-Type", f"{ct}; charset=utf-8"))
+            if ct == "text/html":
+                headers.append(("Cache-Control", "no-cache"))
+            return (status, headers, body.encode("utf-8"))
+
+        content = static_routes.get(clean)
+        if content is not None:
+            ct = "application/json" if clean.startswith("/api/") else "text/html"
+            headers.append(("Content-Type", f"{ct}; charset=utf-8"))
+            return (200, headers, content.encode("utf-8"))
+
+        headers.append(("Content-Type", "text/html; charset=utf-8"))
+        return (404, headers, b"<h1>404 Not Found</h1>")
+
+    # -- WebSocket proxy: relay /ws connections to the internal WS server --
+    async def ws_proxy_handler(ws):
+        """Proxy a WebSocket connection to the internal server on :8000."""
+        try:
+            async with websockets.connect("ws://localhost:8000") as upstream:
+                async def client_to_upstream():
+                    async for msg in ws:
+                        await upstream.send(msg)
+
+                async def upstream_to_client():
+                    async for msg in upstream:
+                        await ws.send(msg)
+
+                await asyncio.gather(
+                    client_to_upstream(),
+                    upstream_to_client(),
+                )
+        except websockets.exceptions.ConnectionClosed:
+            pass
+        except Exception as e:
+            log.debug("WS proxy error: %s", e, extra={"component": "web"})
+
+    # -- process_request: HTTP responses for non-WS requests --
+    async def process_request(connection, request):
+        """Handle HTTP requests; return None to allow WS upgrade on /ws."""
+        path = request.path
+        parsed = urlparse(path)
+        clean = parsed.path.rstrip("/") or "/"
+
+        # Allow WebSocket upgrade on /ws
+        if clean == "/ws":
+            return None
+
+        query = parse_qs(parsed.query)
+        status, headers, body = handle_http(clean, query)
+        return websockets.http11.Response(
+            status, "", websockets.datastructures.Headers(headers), body,
+        )
+
     log.info("Transit Tracker web server at http://%s:%d", host, port, extra={"component": "web"})
+    log.info("  /ws         — WebSocket relay (for HTTPS clients)", extra={"component": "web"})
     log.info("  /dashboard  — observability dashboard", extra={"component": "web"})
+    log.info("  /simulator  — LED matrix simulator", extra={"component": "web"})
     log.info("  /spec       — API documentation page", extra={"component": "web"})
-    log.info("  /api/metrics — metrics JSON endpoint", extra={"component": "web"})
 
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        log.info("Shutting down...", extra={"component": "web"})
-        server.shutdown()
+    async with websockets.serve(
+        ws_proxy_handler, host, port,
+        process_request=process_request,
+    ):
+        await asyncio.Future()  # Run forever
 
 
 def generate_monitor_html() -> str:
@@ -915,6 +1046,9 @@ svg.topo { width: 100%; height: 100%; }
   <h1><span>Transit Tracker</span> &mdash; Network Monitor</h1>
   <div class="header-right">
     <span><span class="dot-live" id="live-dot"></span> <span id="conn-label">Connecting</span></span>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;color:var(--text2);">
+      <input type="checkbox" id="sim-toggle" style="accent-color:var(--purple);"> LED Simulator
+    </label>
     <a href="/dashboard" style="color:var(--purple);text-decoration:none;font-size:12px;">Dashboard &rarr;</a>
   </div>
 </div>
@@ -949,6 +1083,26 @@ svg.topo { width: 100%; height: 100%; }
     <div class="feed-list" id="feed-list"></div>
   </div>
 </div>
+
+<div id="sim-panel" style="display:none;border-top:1px solid var(--border);background:#000;">
+  <iframe id="sim-iframe" style="width:100%;height:360px;border:none;" src="about:blank"></iframe>
+</div>
+
+<script>
+(function() {
+  const toggle = document.getElementById('sim-toggle');
+  const panel = document.getElementById('sim-panel');
+  const iframe = document.getElementById('sim-iframe');
+  toggle.addEventListener('change', function() {
+    if (this.checked) {
+      panel.style.display = 'block';
+      if (iframe.src === 'about:blank') iframe.src = '/simulator';
+    } else {
+      panel.style.display = 'none';
+    }
+  });
+})();
+</script>
 
 <script>
 // ── state ──
@@ -1799,6 +1953,467 @@ fetchMetrics();
 fetchLogs();
 setInterval(fetchMetrics, 2000);
 setInterval(fetchLogs, 2000);
+</script>
+</body>
+</html>"""
+
+
+def generate_simulator_html() -> str:
+    """Generate a self-contained browser-based LED matrix simulator.
+
+    Connects to the WebSocket server client-side, renders a pixel-perfect
+    HUB75 LED matrix on an HTML5 Canvas, with MicroFont glyph data, realtime
+    icon animation, and headsign scrolling.
+    """
+    from .simulator import BaseSimulator, MicroFont
+
+    # Export glyph data as JSON for the JS renderer
+    glyphs_json = json.dumps({k: v for k, v in MicroFont.GLYPHS.items()})
+    icon_json = json.dumps(MicroFont.REALTIME_ICON)
+
+    # Build subscribe payload from current config so the web simulator
+    # sends real subscription data instead of relying on server defaults.
+    try:
+        from .config import TransitConfig, get_last_config_path, load_service_settings
+
+        svc = load_service_settings()
+        config_path = (
+            get_last_config_path()
+            or os.environ.get("CONFIG_PATH")
+            or ("/config/config.yaml" if os.path.exists("/config/config.yaml") else None)
+            or "config.yaml"
+        )
+        config = TransitConfig.load(config_path, service_settings=svc)
+
+        class _Stub(BaseSimulator):
+            async def run(self):
+                pass
+
+        stub = _Stub(config, force_live=True)
+        sub_payload = stub.build_subscribe_payload(
+            client_name="WebSimulator",
+            limit=10,
+        )
+        subscribe_json = json.dumps(sub_payload)
+    except Exception:
+        subscribe_json = json.dumps({
+            "event": "schedule:subscribe",
+            "client_name": "WebSimulator",
+            "data": {"routeStopPairs": "", "limit": 10},
+        })
+
+    return f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transit Tracker — LED Simulator</title>
+<style>
+:root {{
+  --bg: #0a0a0a;
+  --bg-card: #141418;
+  --border: #252530;
+  --text: #dde1ed;
+  --text2: #8891b0;
+  --muted: #505872;
+  --green: #00c853;
+  --red: #ff1744;
+  --purple: #7c4dff;
+}}
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ font-family: 'SF Mono','Menlo','Consolas',monospace; background: var(--bg); color: var(--text); }}
+.header {{
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--bg-card);
+}}
+.header h1 {{ font-size: 14px; font-weight: 600; }}
+.header h1 span {{ color: var(--purple); }}
+.controls {{
+  display: flex; align-items: center; gap: 16px; font-size: 12px; color: var(--text2);
+}}
+.controls select, .controls input {{
+  background: #1a1a24; border: 1px solid var(--border); color: var(--text);
+  padding: 4px 8px; border-radius: 4px; font-family: inherit; font-size: 12px;
+}}
+.status-dot {{
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--red); transition: background 0.3s;
+}}
+.status-dot.connected {{ background: var(--green); animation: pulse 2s infinite; }}
+@keyframes pulse {{ 0%,100%{{opacity:1}} 50%{{opacity:.4}} }}
+.sim-container {{
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: calc(100vh - 49px); padding: 40px;
+}}
+canvas {{
+  image-rendering: pixelated; border: 2px solid #333;
+  border-radius: 4px; background: #000;
+}}
+.info {{
+  margin-top: 16px; font-size: 11px; color: var(--muted); text-align: center;
+}}
+a {{ color: var(--purple); text-decoration: none; }}
+a:hover {{ text-decoration: underline; }}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1><span>Transit Tracker</span> &mdash; LED Simulator</h1>
+  <div class="controls">
+    <span><span class="status-dot" id="ws-dot"></span> <span id="ws-label">Disconnected</span></span>
+    <label>Endpoint:
+      <select id="endpoint-select">
+        <option value="local">Local (via /ws proxy)</option>
+        <option value="cloud">Cloud (tt.horner.tj)</option>
+        <option value="custom">Custom...</option>
+      </select>
+    </label>
+    <input type="text" id="custom-url" placeholder="ws://host:port" style="display:none;width:200px;">
+    <a href="/monitor">Monitor &rarr;</a>
+  </div>
+</div>
+<div class="sim-container">
+  <canvas id="led-canvas"></canvas>
+  <div class="info">
+    <div id="trip-info">Waiting for data...</div>
+    <div style="margin-top:8px;">Pixel scale: <input type="range" id="scale-range" min="2" max="12" value="6" style="vertical-align:middle;width:100px;">
+    <span id="scale-label">6x</span></div>
+  </div>
+</div>
+
+<script>
+// ---- Config ----
+const PANEL_W = 64, PANEL_H = 32, NUM_PANELS = 2;
+const DISPLAY_W = PANEL_W * NUM_PANELS;
+const DISPLAY_H = PANEL_H;
+let PIXEL_SCALE = 6;
+const PIXEL_GAP = 1;
+
+// ---- Glyph data from Python MicroFont ----
+const GLYPHS = {glyphs_json};
+const REALTIME_ICON = {icon_json};
+
+// ---- Subscribe payload from config ----
+const SUBSCRIBE_PAYLOAD = {subscribe_json};
+
+// ---- State ----
+let ws = null;
+let trips = [];
+let startTime = Date.now();
+let subscribePayload = null;
+
+// ---- Canvas setup ----
+const canvas = document.getElementById('led-canvas');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas() {{
+  canvas.width = DISPLAY_W * PIXEL_SCALE;
+  canvas.height = DISPLAY_H * PIXEL_SCALE;
+}}
+resizeCanvas();
+
+// ---- Scale slider ----
+const scaleRange = document.getElementById('scale-range');
+const scaleLabel = document.getElementById('scale-label');
+scaleRange.addEventListener('input', () => {{
+  PIXEL_SCALE = parseInt(scaleRange.value);
+  scaleLabel.textContent = PIXEL_SCALE + 'x';
+  resizeCanvas();
+}});
+
+// ---- Font rendering ----
+function getGlyphBitmap(ch) {{
+  const key = ch.toUpperCase();
+  const glyph = GLYPHS[key] || GLYPHS[ch] || GLYPHS['?'];
+  if (!glyph) return Array.from({{length:7}}, () => []);
+  const rows = [];
+  for (let i = 0; i < 7; i++) {{
+    const bits = glyph[i];
+    const row = [];
+    for (let b = 4; b >= 0; b--) {{
+      row.push((bits >> b) & 1);
+    }}
+    row.push(0); // gap
+    rows.push(row);
+  }}
+  return rows;
+}}
+
+function getTextBitmap(text) {{
+  const rows = Array.from({{length:7}}, () => []);
+  for (const ch of text) {{
+    const glyph = getGlyphBitmap(ch);
+    for (let i = 0; i < 7; i++) {{
+      rows[i].push(...glyph[i]);
+    }}
+  }}
+  return rows;
+}}
+
+function getIconFrame(elapsed) {{
+  const cycleMs = Math.floor(elapsed * 1000) % 4000;
+  let frame = 0;
+  if (cycleMs >= 3000) {{
+    frame = Math.min(Math.floor((cycleMs - 3000) / 200) + 1, 5);
+  }}
+  const rows = Array.from({{length:7}}, () => []);
+  for (let r = 0; r < 6; r++) {{
+    for (let c = 0; c < 6; c++) {{
+      const seg = REALTIME_ICON[r][c];
+      if (seg === 0) {{ rows[r].push(0); continue; }}
+      let lit = false;
+      if (seg === 1 && [1,2,3].includes(frame)) lit = true;
+      else if (seg === 2 && [2,3,4].includes(frame)) lit = true;
+      else if (seg === 3 && [3,4,5].includes(frame)) lit = true;
+      rows[r].push(lit ? 2 : 1);
+    }}
+  }}
+  rows[6] = [0,0,0,0,0,0];
+  return rows;
+}}
+
+// ---- Color helpers ----
+function parseColor(c) {{
+  if (!c) return '#cccc00';
+  if (c === 'hot_pink') return '#ff69b4';
+  if (c === 'yellow') return '#cccc00';
+  if (c === 'white') return '#ffffff';
+  if (c === 'bright_blue') return '#5599ff';
+  if (c === 'grey74') return '#bbbbbb';
+  if (c.startsWith('#')) return c;
+  return '#cccc00';
+}}
+
+function dimColor(c) {{
+  // Return a very dim version for the "dim segment" of the icon
+  return '#223366';
+}}
+
+// ---- Trip processing (mirrors BaseSimulator._process_trip) ----
+function processDepartures(rawTrips) {{
+  const now = Date.now();
+  const deps = [];
+  for (const trip of rawTrips) {{
+    const tripId = trip.tripId;
+    if (!tripId) continue;
+    let arrVal = trip.arrivalTime || trip.predictedArrivalTime || 0;
+    if (!arrVal) continue;
+    const baseMs = arrVal > 1e12 ? arrVal : arrVal * 1000;
+    const diffMin = Math.floor((baseMs - now) / 60000);
+    if (diffMin < -1) continue;
+
+    const routeName = trip.routeName || '?';
+    const headsign = trip.headsign || 'Transit';
+    const isLive = !!trip.isRealtime;
+    const colorHex = trip.routeColor;
+    let color = 'yellow';
+    if (routeName.includes('14')) color = 'hot_pink';
+    else if (colorHex) color = '#' + colorHex;
+
+    deps.push({{
+      trip_id: tripId,
+      diff: Math.max(0, diffMin),
+      route: routeName,
+      headsign: headsign,
+      color: color,
+      live: isLive,
+      stop_id: trip.stopId || '',
+    }});
+  }}
+  deps.sort((a,b) => a.diff - b.diff);
+  // Diversity cap: 1 per stop, then fill to 3
+  const final = [];
+  const seen = new Set();
+  for (const d of deps) {{
+    if (!seen.has(d.stop_id)) {{ final.push(d); seen.add(d.stop_id); }}
+    if (final.length >= 3) break;
+  }}
+  if (final.length < 3) {{
+    for (const d of deps) {{
+      if (!final.includes(d)) final.push(d);
+      if (final.length >= 3) break;
+    }}
+  }}
+  final.sort((a,b) => a.diff - b.diff);
+  return final;
+}}
+
+// ---- Render frame ----
+function renderFrame() {{
+  const elapsed = (Date.now() - startTime) / 1000;
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const deps = processDepartures(trips);
+
+  if (deps.length === 0) {{
+    const msg = trips.length === 0 ? 'Connecting...' : 'No Live Buses';
+    const bm = getTextBitmap(msg);
+    for (let r = 0; r < 7; r++) {{
+      for (let c = 0; c < bm[r].length; c++) {{
+        if (bm[r][c]) {{
+          ctx.fillStyle = '#00cccc';
+          ctx.fillRect(c * PIXEL_SCALE, r * PIXEL_SCALE,
+                       PIXEL_SCALE - PIXEL_GAP, PIXEL_SCALE - PIXEL_GAP);
+        }}
+      }}
+    }}
+    requestAnimationFrame(renderFrame);
+    return;
+  }}
+
+  let rowY = 0;
+  for (let di = 0; di < Math.min(deps.length, 3); di++) {{
+    const dep = deps[di];
+    const timeStr = dep.diff <= 0 ? 'Now' : dep.diff + 'm';
+    const routeColor = parseColor(dep.color);
+    const timeColor = dep.live ? '#5599ff' : '#bbbbbb';
+
+    // Compute segment widths
+    const routeBm = getTextBitmap(dep.route + '  ');
+    const headsignBm = getTextBitmap(dep.headsign);
+    const timeBm = getTextBitmap(' ' + timeStr);
+    const iconW = dep.live ? 8 : 0;
+    const fixedW = routeBm[0].length + timeBm[0].length + iconW;
+    const headsignAreaW = Math.max(0, DISPLAY_W - fixedW);
+
+    let x = 0;
+    // Route
+    for (let r = 0; r < 7; r++) {{
+      for (let c = 0; c < routeBm[r].length; c++) {{
+        if (routeBm[r][c]) {{
+          ctx.fillStyle = routeColor;
+          ctx.fillRect((x + c) * PIXEL_SCALE, (rowY + r) * PIXEL_SCALE,
+                       PIXEL_SCALE - PIXEL_GAP, PIXEL_SCALE - PIXEL_GAP);
+        }}
+      }}
+    }}
+    x += routeBm[0].length;
+
+    // Headsign (clipped to area)
+    for (let r = 0; r < 7; r++) {{
+      for (let c = 0; c < Math.min(headsignBm[r].length, headsignAreaW); c++) {{
+        if (headsignBm[r][c]) {{
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect((x + c) * PIXEL_SCALE, (rowY + r) * PIXEL_SCALE,
+                       PIXEL_SCALE - PIXEL_GAP, PIXEL_SCALE - PIXEL_GAP);
+        }}
+      }}
+    }}
+    x += headsignAreaW;
+
+    // Live icon
+    if (dep.live) {{
+      const icon = getIconFrame(elapsed);
+      const ix = x + 1;
+      for (let r = 0; r < 6; r++) {{
+        for (let c = 0; c < 6; c++) {{
+          const val = icon[r][c];
+          if (val === 2) {{
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect((ix + c) * PIXEL_SCALE, (rowY + r) * PIXEL_SCALE,
+                         PIXEL_SCALE - PIXEL_GAP, PIXEL_SCALE - PIXEL_GAP);
+          }} else if (val === 1) {{
+            ctx.fillStyle = dimColor();
+            ctx.fillRect((ix + c) * PIXEL_SCALE, (rowY + r) * PIXEL_SCALE,
+                         PIXEL_SCALE - PIXEL_GAP, PIXEL_SCALE - PIXEL_GAP);
+          }}
+        }}
+      }}
+      x += 8;
+    }}
+
+    // Time
+    for (let r = 0; r < 7; r++) {{
+      for (let c = 0; c < timeBm[r].length; c++) {{
+        if (timeBm[r][c]) {{
+          ctx.fillStyle = timeColor;
+          ctx.fillRect((x + c) * PIXEL_SCALE, (rowY + r) * PIXEL_SCALE,
+                       PIXEL_SCALE - PIXEL_GAP, PIXEL_SCALE - PIXEL_GAP);
+        }}
+      }}
+    }}
+
+    rowY += 11; // 7 rows + 4 spacer
+  }}
+
+  // Update info text
+  const infoEl = document.getElementById('trip-info');
+  const lines = deps.map(d => d.route + '  ' + d.headsign + '  ' + (d.live ? '\\u25c9' : '\\u25cb') + ' ' + (d.diff <= 0 ? 'Now' : d.diff + 'm'));
+  infoEl.textContent = lines.join('  |  ');
+
+  requestAnimationFrame(renderFrame);
+}}
+
+// ---- WebSocket ----
+function getWsUrl() {{
+  const sel = document.getElementById('endpoint-select').value;
+  const custom = document.getElementById('custom-url');
+  const wsProt = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  // Connect via /ws on the same origin (port 8080) — the web server
+  // proxies to the internal WS server on :8000.  This avoids mixed-content
+  // errors when the page is served over HTTPS (e.g. OrbStack .orb.local).
+  if (sel === 'local') return wsProt + location.host + '/ws';
+  if (sel === 'cloud') return 'wss://tt.horner.tj/';
+  return custom.value || (wsProt + location.host + '/ws');
+}}
+
+function connect() {{
+  const url = getWsUrl();
+  const dot = document.getElementById('ws-dot');
+  const label = document.getElementById('ws-label');
+
+  if (ws) {{ try {{ ws.close(); }} catch(e) {{}} }}
+  label.textContent = 'Connecting...';
+  dot.className = 'status-dot';
+
+  try {{
+    ws = new WebSocket(url);
+  }} catch(e) {{
+    label.textContent = 'Error: ' + e.message;
+    setTimeout(connect, 5000);
+    return;
+  }}
+
+  ws.onopen = () => {{
+    dot.className = 'status-dot connected';
+    label.textContent = 'Connected to ' + url.replace('wss://', '').replace('ws://', '').split('/')[0];
+    ws.send(JSON.stringify(SUBSCRIBE_PAYLOAD));
+  }};
+
+  ws.onmessage = (ev) => {{
+    try {{
+      const msg = JSON.parse(ev.data);
+      if (msg.event === 'schedule') {{
+        trips = (msg.data || {{}}).trips || [];
+      }}
+    }} catch(e) {{}}
+  }};
+
+  ws.onclose = () => {{
+    dot.className = 'status-dot';
+    label.textContent = 'Disconnected';
+    setTimeout(connect, 3000);
+  }};
+
+  ws.onerror = () => {{
+    dot.className = 'status-dot';
+    label.textContent = 'Connection error';
+  }};
+}}
+
+// ---- Endpoint selector ----
+document.getElementById('endpoint-select').addEventListener('change', (e) => {{
+  const custom = document.getElementById('custom-url');
+  custom.style.display = e.target.value === 'custom' ? 'inline-block' : 'none';
+  connect();
+}});
+document.getElementById('custom-url').addEventListener('change', connect);
+
+// ---- Start ----
+connect();
+requestAnimationFrame(renderFrame);
 </script>
 </body>
 </html>"""

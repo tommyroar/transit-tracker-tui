@@ -56,43 +56,45 @@ def build_context(repo, pr_number: int | None, event_name: str) -> str:
     return "(no additional context available)"
 
 
-def get_latest_pro_model(client: genai.Client) -> str:
-    """Return the model ID for the latest available Gemini Pro model.
-
-    Queries the API for all available models, filters to those whose name
-    contains 'pro' and supports 'generateContent', then prefers stable over
-    preview/experimental releases.  Fails loudly on any error so the Actions
-    job surfaces a red failure rather than silently using a stale model.
-    """
-    # Let any API exception propagate — don't swallow errors.
-    all_models = list(client.models.list())
-
-    def _is_pro(m) -> bool:
-        name = (m.name or "").lower()
-        supported = [a.lower() for a in (getattr(m, "supported_actions", None) or [])]
-        return "pro" in name and "generatecontent" in supported
-
-    pro_models = [m for m in all_models if _is_pro(m)]
-    if not pro_models:
-        print(
-            "ERROR: No Gemini Pro models available — check GEMINI_API_KEY and API quota.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # Prefer stable (no 'preview' or 'experimental') if any exist.
-    stable = [m for m in pro_models if "preview" not in m.name.lower() and "experimental" not in m.name.lower()]
-    candidates = stable if stable else pro_models
-
-    # Sort descending by name so the lexicographically latest version wins
-    # (e.g. "gemini-3.1-pro" > "gemini-3-pro" > "gemini-1.5-pro").
+def _pick_latest(models: list) -> str:
+    """From a list of models, return the name of the lexicographically latest stable one."""
+    stable = [m for m in models if "preview" not in m.name.lower() and "experimental" not in m.name.lower()]
+    candidates = stable if stable else models
     candidates.sort(key=lambda m: m.name, reverse=True)
     chosen = candidates[0].name
-    # The API returns names like "models/gemini-3.1-pro"; strip the prefix.
     if chosen.startswith("models/"):
         chosen = chosen[len("models/"):]
-    print(f"Selected model: {chosen}")
     return chosen
+
+
+def get_best_model(client: genai.Client, prefer_pro: bool = True) -> str:
+    """Return the model ID for the best available Gemini model.
+
+    Prefers a Pro model when prefer_pro=True, falling back to Flash if none
+    are available.  Fails loudly only if no suitable model is found at all.
+    """
+    all_models = list(client.models.list())
+
+    def _supports_generate(m) -> bool:
+        supported = [a.lower() for a in (getattr(m, "supported_actions", None) or [])]
+        return "generatecontent" in supported
+
+    if prefer_pro:
+        pro_models = [m for m in all_models if "pro" in (m.name or "").lower() and _supports_generate(m)]
+        if pro_models:
+            chosen = _pick_latest(pro_models)
+            print(f"Selected model: {chosen}")
+            return chosen
+        print("No Pro models available, falling back to Flash.", file=sys.stderr)
+
+    flash_models = [m for m in all_models if "flash" in (m.name or "").lower() and _supports_generate(m)]
+    if flash_models:
+        chosen = _pick_latest(flash_models)
+        print(f"Selected model (flash fallback): {chosen}")
+        return chosen
+
+    print("ERROR: No suitable Gemini models available — check GEMINI_API_KEY.", file=sys.stderr)
+    sys.exit(1)
 
 
 def strip_mention(text: str) -> str:
@@ -138,15 +140,30 @@ def main() -> None:
 
     # Call Gemini
     client = genai.Client(api_key=gemini_api_key)
-    model = get_latest_pro_model(client)
+    model = get_best_model(client, prefer_pro=True)
     user_message = f"{instruction}\n\n---\n\n{context}"
-    response = client.models.generate_content(
-        model=model,
-        contents=user_message,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-        ),
-    )
+    try:
+        response = client.models.generate_content(
+            model=model,
+            contents=user_message,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+            ),
+        )
+    except Exception as e:
+        err = str(e).lower()
+        if "quota" in err or "429" in err or "resource_exhausted" in err:
+            print(f"Quota exceeded on {model}, falling back to Flash: {e}", file=sys.stderr)
+            model = get_best_model(client, prefer_pro=False)
+            response = client.models.generate_content(
+                model=model,
+                contents=user_message,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                ),
+            )
+        else:
+            raise
     review_text = response.text.strip()
 
     # Post reply as a comment

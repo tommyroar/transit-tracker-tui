@@ -583,6 +583,32 @@ class TransitWebHandler(BaseHTTPRequestHandler):
             if path == "/api/dimming":
                 self._serve_dimming_get()
                 return
+            if path == "/api/dimming/set":
+                from .config import DimmingEntry, load_service_settings, save_service_settings
+                try:
+                    settings = load_service_settings()
+                    raw_entries = query.get("schedule", [])
+                    if raw_entries:
+                        entries = []
+                        for entry in raw_entries:
+                            time_str, brightness_str = entry.split(",", 1)
+                            entries.append(DimmingEntry(time=time_str.strip(), brightness=int(brightness_str.strip())))
+                        settings.dimming_schedule = entries
+                    if "brightness" in query:
+                        settings.display_brightness = int(query["brightness"][0])
+                    if "device_ip" in query:
+                        settings.device_ip = query["device_ip"][0]
+                    save_service_settings(settings)
+                    self._json_response(json.dumps({
+                        "status": "ok",
+                        "dimming_schedule": [e.model_dump() for e in settings.dimming_schedule],
+                        "display_brightness": settings.display_brightness,
+                        "device_ip": settings.device_ip,
+                        "message": "Dimming settings saved. Will take effect within 60 seconds.",
+                    }))
+                except Exception as e:
+                    self._json_error(400, str(e))
+                return
             if path == "/simulator":
                 self._serve_simulator()
                 return
@@ -848,6 +874,7 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
     }
     dynamic_routes = {
         "/api/status", "/api/metrics", "/api/logs", "/api/dimming",
+        "/api/dimming/set",
         "/api/profiles", "/api/profile/activate",
         "/dashboard", "/monitor", "/simulator",
     }
@@ -891,6 +918,33 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
                 "display_brightness": settings.display_brightness,
                 "device_ip": settings.device_ip,
             }))
+
+        if path == "/api/dimming/set":
+            from .config import DimmingEntry, load_service_settings, save_service_settings
+            try:
+                settings = load_service_settings()
+                # Parse schedule from query: schedule=07:00,255&schedule=19:00,1
+                raw_entries = query.get("schedule", [])
+                if raw_entries:
+                    entries = []
+                    for entry in raw_entries:
+                        time_str, brightness_str = entry.split(",", 1)
+                        entries.append(DimmingEntry(time=time_str.strip(), brightness=int(brightness_str.strip())))
+                    settings.dimming_schedule = entries
+                if "brightness" in query:
+                    settings.display_brightness = int(query["brightness"][0])
+                if "device_ip" in query:
+                    settings.device_ip = query["device_ip"][0]
+                save_service_settings(settings)
+                return (200, "application/json", json.dumps({
+                    "status": "ok",
+                    "dimming_schedule": [e.model_dump() for e in settings.dimming_schedule],
+                    "display_brightness": settings.display_brightness,
+                    "device_ip": settings.device_ip,
+                    "message": "Dimming settings saved. Will take effect within 60 seconds.",
+                }))
+            except Exception as e:
+                return (400, "application/json", json.dumps({"error": str(e)}))
 
         if path == "/api/profiles":
             from .config import get_last_config_path, list_profiles

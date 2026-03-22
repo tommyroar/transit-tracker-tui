@@ -1851,11 +1851,42 @@ def generate_simulator_html() -> str:
     HUB75 LED matrix on an HTML5 Canvas, with MicroFont glyph data, realtime
     icon animation, and headsign scrolling.
     """
-    from .simulator import MicroFont
+    from .simulator import BaseSimulator, MicroFont
 
     # Export glyph data as JSON for the JS renderer
     glyphs_json = json.dumps({k: v for k, v in MicroFont.GLYPHS.items()})
     icon_json = json.dumps(MicroFont.REALTIME_ICON)
+
+    # Build subscribe payload from current config so the web simulator
+    # sends real subscription data instead of relying on server defaults.
+    try:
+        from .config import TransitConfig, get_last_config_path, load_service_settings
+
+        svc = load_service_settings()
+        config_path = (
+            get_last_config_path()
+            or os.environ.get("CONFIG_PATH")
+            or ("/config/config.yaml" if os.path.exists("/config/config.yaml") else None)
+            or "config.yaml"
+        )
+        config = TransitConfig.load(config_path, service_settings=svc)
+
+        class _Stub(BaseSimulator):
+            async def run(self):
+                pass
+
+        stub = _Stub(config, force_live=True)
+        sub_payload = stub.build_subscribe_payload(
+            client_name="WebSimulator",
+            limit=10,
+        )
+        subscribe_json = json.dumps(sub_payload)
+    except Exception:
+        subscribe_json = json.dumps({
+            "event": "schedule:subscribe",
+            "client_name": "WebSimulator",
+            "data": {"routeStopPairs": "", "limit": 10},
+        })
 
     return f"""\
 <!DOCTYPE html>
@@ -1948,6 +1979,9 @@ const PIXEL_GAP = 1;
 // ---- Glyph data from Python MicroFont ----
 const GLYPHS = {glyphs_json};
 const REALTIME_ICON = {icon_json};
+
+// ---- Subscribe payload from config ----
+const SUBSCRIBE_PAYLOAD = {subscribe_json};
 
 // ---- State ----
 let ws = null;
@@ -2227,13 +2261,7 @@ function connect() {{
   ws.onopen = () => {{
     dot.className = 'status-dot connected';
     label.textContent = 'Connected to ' + url.replace('wss://', '').replace('ws://', '').split('/')[0];
-    // Send subscribe — request all trips the server knows about
-    const payload = {{
-      event: 'schedule:subscribe',
-      client_name: 'WebSimulator',
-      data: {{ routeStopPairs: '', limit: 10 }}
-    }};
-    ws.send(JSON.stringify(payload));
+    ws.send(JSON.stringify(SUBSCRIBE_PAYLOAD));
   }};
 
   ws.onmessage = (ev) => {{

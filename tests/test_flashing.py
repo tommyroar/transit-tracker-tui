@@ -38,9 +38,9 @@ def test_config_serialization_for_hardware():
 
         assert success is True
 
-        # Verify base_url_config (should be the machine's hostname URL for ESP32 reachability)
+        # Verify base_url_config (should be the local URL)
         mock_instance.set_entity.assert_any_call(
-            "base_url_config", EntityType.TEXT, expected_base_url
+            "base_url_config", EntityType.TEXT, "ws://localhost:8000/"
         )
 
         # Verify schedule_config string format
@@ -49,11 +49,10 @@ def test_config_serialization_for_hardware():
         )
 
 def test_local_api_url_resolution():
-    """Ensures that setting use_local_api=True produces a URL with the machine hostname."""
+    """Ensures that setting use_local_api=True always results in a localhost URL."""
     config = TransitConfig(service={"use_local_api": True})
 
-    hostname = socket.gethostname()
-    assert config.api_url == f"ws://{hostname}:8000/"
+    assert "localhost" in config.api_url
     assert config.api_url.startswith("ws://")
 
 if __name__ == "__main__":

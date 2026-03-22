@@ -1,8 +1,15 @@
 import asyncio
-import cv2
-import numpy as np
 import os
 import sys
+
+try:
+    import cv2
+    import numpy as np
+except ImportError:
+    raise ImportError(
+        "capture requires opencv and numpy. "
+        "Install with: uv pip install transit-tracker[capture]"
+    )
 from datetime import datetime
 from typing import Tuple, Optional
 

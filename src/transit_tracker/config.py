@@ -162,6 +162,40 @@ class TransitSubscription(BaseModel):
     direction: Optional[str] = None
     time_offset: str = "0min"
 
+    @property
+    def route_id_qualified(self) -> str:
+        """Route ID with feed prefix if not already present."""
+        return self.route if ":" in self.route else f"{self.feed}:{self.route}"
+
+    @property
+    def stop_id_qualified(self) -> str:
+        """Stop ID with feed prefix if not already present."""
+        return self.stop if ":" in self.stop else f"{self.feed}:{self.stop}"
+
+    @property
+    def time_offset_seconds(self) -> int:
+        """Extract time offset in seconds from time_offset string."""
+        try:
+            match = re.search(r"(-?\d+)", str(self.time_offset))
+            if match:
+                return int(match.group(1)) * 60
+        except Exception:
+            pass
+        return 0
+
+
+def build_route_stop_pairs(subscriptions: List[TransitSubscription]) -> str:
+    """Build protocol-compatible routeStopPairs string.
+
+    Format: ``route_id,stop_id,offset_sec;route_id,stop_id,offset_sec;...``
+    """
+    parts = []
+    for sub in subscriptions:
+        parts.append(
+            f"{sub.route_id_qualified},{sub.stop_id_qualified},{sub.time_offset_seconds}"
+        )
+    return ";".join(parts)
+
 
 class Abbreviation(BaseModel):
     original: str

@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import subprocess
 import threading
 import time
@@ -14,6 +13,7 @@ import websockets.sync.client
 from .cli import PLIST_NAME, get_service_status
 from .config import (
     TransitConfig,
+    build_route_stop_pairs,
     get_last_config_path,
     list_profiles,
     set_last_config_path,
@@ -173,23 +173,14 @@ class TransitTrackerApp(rumps.App):
             return
 
         self.display_format = cfg.transit_tracker.display_format
-        pairs = []
-        for sub in cfg.subscriptions:
-            r_id = sub.route if ":" in sub.route else f"{sub.feed}:{sub.route}"
-            s_id = sub.stop if ":" in sub.stop else f"{sub.feed}:{sub.stop}"
-            off_sec = 0
-            try:
-                match = re.search(r"(-?\d+)", str(sub.time_offset))
-                if match:
-                    off_sec = int(match.group(1)) * 60
-            except Exception:
-                pass
-            pairs.append(f"{r_id},{s_id},{off_sec}")
 
         sub_payload = {
             "event": "schedule:subscribe",
             "client_name": "BackgroundMonitor",
-            "data": {"routeStopPairs": ";".join(pairs), "limit": 6}
+            "data": {
+                "routeStopPairs": build_route_stop_pairs(cfg.subscriptions),
+                "limit": 6,
+            },
         }
 
         try:
@@ -211,23 +202,13 @@ class TransitTrackerApp(rumps.App):
         if not cfg.subscriptions:
             return
 
-        pairs = []
-        for sub in cfg.subscriptions:
-            r_id = sub.route if ":" in sub.route else f"{sub.feed}:{sub.route}"
-            s_id = sub.stop if ":" in sub.stop else f"{sub.feed}:{sub.stop}"
-            off_sec = 0
-            try:
-                match = re.search(r"(-?\d+)", str(sub.time_offset))
-                if match:
-                    off_sec = int(match.group(1)) * 60
-            except Exception:
-                pass
-            pairs.append(f"{r_id},{s_id},{off_sec}")
-
         sub_payload = {
             "event": "schedule:subscribe",
             "client_name": "ProfilePreview",
-            "data": {"routeStopPairs": ";".join(pairs), "limit": 6},
+            "data": {
+                "routeStopPairs": build_route_stop_pairs(cfg.subscriptions),
+                "limit": 6,
+            },
         }
 
         endpoint = cfg.transit_tracker.base_url

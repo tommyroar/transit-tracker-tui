@@ -3,7 +3,7 @@ import json
 
 import websockets
 
-from ..config import TransitConfig
+from ..config import TransitConfig, build_route_stop_pairs
 from ..logging import get_logger, is_message_logging_enabled
 from ..metrics import metrics
 
@@ -40,18 +40,14 @@ async def run_service(config: TransitConfig = None):
                 log.info("Connected to %s", api_url, extra={"component": "client"})
 
                 # Build TJ Horner style routeStopPairs string for all subscriptions
-                pairs = []
-                for sub in config.subscriptions:
-                    r_id = f"{sub.feed}:{sub.route}" if ":" not in sub.route else sub.route
-                    s_id = f"{sub.feed}:{sub.stop}" if ":" not in sub.stop else sub.stop
-                    pairs.append(f"{r_id},{s_id}")
+                pairs_str = build_route_stop_pairs(config.subscriptions)
 
-                if pairs:
+                if pairs_str:
                     sub_msg = json.dumps({
                         "event": "schedule:subscribe",
                         "client_name": "BackgroundMonitor",
                         "data": {
-                            "routeStopPairs": ";".join(pairs)
+                            "routeStopPairs": pairs_str
                         }
                     })
                     await ws.send(sub_msg)

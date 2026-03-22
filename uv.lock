@@ -917,13 +917,9 @@ name = "transit-tracker"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "astral" },
     { name = "bdfparser" },
     { name = "esptool" },
     { name = "httpx" },
-    { name = "numpy" },
-    { name = "opencv-python" },
-    { name = "opencv-python-headless" },
     { name = "pillow" },
     { name = "pydantic" },
     { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'" },
@@ -933,6 +929,16 @@ dependencies = [
     { name = "rich" },
     { name = "rumps", marker = "sys_platform == 'darwin'" },
     { name = "websockets" },
+]
+
+[package.optional-dependencies]
+capture = [
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "opencv-python-headless" },
+]
+scripts = [
+    { name = "astral" },
 ]
 
 [package.dev-dependencies]
@@ -945,13 +951,13 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "astral", specifier = ">=3.2" },
+    { name = "astral", marker = "extra == 'scripts'", specifier = ">=3.2" },
     { name = "bdfparser", specifier = ">=2.2.0" },
     { name = "esptool", specifier = ">=5.2.0" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "numpy", specifier = ">=2.4.3" },
-    { name = "opencv-python", specifier = ">=4.13.0.92" },
-    { name = "opencv-python-headless", specifier = ">=4.13.0.92" },
+    { name = "numpy", marker = "extra == 'capture'", specifier = ">=2.4.3" },
+    { name = "opencv-python", marker = "extra == 'capture'", specifier = ">=4.13.0.92" },
+    { name = "opencv-python-headless", marker = "extra == 'capture'", specifier = ">=4.13.0.92" },
     { name = "pillow", specifier = ">=12.1.1" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'", specifier = ">=12.1" },
@@ -962,6 +968,7 @@ requires-dist = [
     { name = "rumps", marker = "sys_platform == 'darwin'", specifier = ">=0.4.0" },
     { name = "websockets", specifier = ">=16.0" },
 ]
+provides-extras = ["capture", "scripts"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -23,7 +23,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from .config import TransitConfig, get_last_config_path
+from .config import TransitConfig, build_route_stop_pairs, get_last_config_path
 from .logging import get_logger
 from .network.websocket_server import get_service_state
 
@@ -472,25 +472,14 @@ async def run_monitor(config: TransitConfig = None, use_ws: bool = False):
                         f"Subscribed to {url}",
                     )
                     # Send subscribe
-                    pairs = []
-                    for sub in config.subscriptions:
-                        r = (
-                            sub.route
-                            if ":" in sub.route
-                            else f"{sub.feed}:{sub.route}"
-                        )
-                        s = (
-                            sub.stop
-                            if ":" in sub.stop
-                            else f"{sub.feed}:{sub.stop}"
-                        )
-                        pairs.append(f"{r},{s}")
                     sub_msg = json.dumps(
                         {
                             "event": "schedule:subscribe",
                             "client_name": "LiveMonitor",
                             "data": {
-                                "routeStopPairs": ";".join(pairs)
+                                "routeStopPairs": build_route_stop_pairs(
+                                    config.subscriptions
+                                ),
                             },
                             "limit": 8,
                         }
@@ -499,7 +488,7 @@ async def run_monitor(config: TransitConfig = None, use_ws: bool = False):
                     ms._add_event(
                         "subscribe",
                         "monitor → server",
-                        f"Subscribed {len(pairs)} pairs",
+                        f"Subscribed {len(config.subscriptions)} pairs",
                     )
                     async for raw in conn:
                         ms.ingest_ws_message(raw)

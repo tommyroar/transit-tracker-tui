@@ -8,13 +8,9 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
-    "astral>=3.2",
     "bdfparser>=2.2.0",
     "esptool>=5.2.0",
     "httpx>=0.28.1",
-    "numpy>=2.4.3",
-    "opencv-python>=4.13.0.92",
-    "opencv-python-headless>=4.13.0.92",
     "pillow>=12.1.1",
     "pydantic>=2.12.5",
     "pyobjc-framework-quartz>=12.1; sys_platform == 'darwin'",
@@ -24,6 +20,16 @@ dependencies = [
     "rich>=14.3.3",
     "rumps>=0.4.0; sys_platform == 'darwin'",
     "websockets>=16.0",
+]
+
+[project.optional-dependencies]
+capture = [
+    "numpy>=2.4.3",
+    "opencv-python>=4.13.0.92",
+    "opencv-python-headless>=4.13.0.92",
+]
+scripts = [
+    "astral>=3.2",
 ]
 
 [project.scripts]
@@ -54,8 +60,9 @@ select = ["E", "F", "I", "B"]
 ignore = []
 
 [tool.ruff.lint.per-file-ignores]
-# web.py contains HTML/JS/CSS template strings where line length is impractical
+# web.py and HTML templates contain template strings where line length is impractical
 "src/transit_tracker/web.py" = ["E501"]
+"src/transit_tracker/templates/*.html" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"

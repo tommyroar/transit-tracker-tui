@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    max-width: 900px; margin: 0 auto; padding: 40px 20px 80px;
+    color: #1a202c; line-height: 1.6; background: #fafafa;
+  }}
+  h1 {{ font-size: 28px; margin-bottom: 4px; }}
+  h2 {{ font-size: 20px; margin: 36px 0 12px; padding-bottom: 6px;
+        border-bottom: 2px solid #f58220; color: #333; }}
+  h3 {{ font-size: 16px; margin: 20px 0 8px; color: #555; }}
+  p {{ margin-bottom: 12px; color: #444; }}
+  .subtitle {{ color: #888; font-size: 14px; margin-bottom: 24px; }}
+  .badge {{ display: inline-block; background: #f58220; color: #fff;
+            padding: 2px 8px; border-radius: 4px; font-size: 12px;
+            font-weight: 600; margin-right: 6px; }}
+  .badge.ws {{ background: #2563eb; }}
+  .badge.http {{ background: #059669; }}
+  a {{ color: #f58220; }}
+  table {{ width: 100%; border-collapse: collapse; margin: 12px 0 20px;
+           font-size: 14px; }}
+  th, td {{ text-align: left; padding: 8px 12px; border: 1px solid #e2e8f0; }}
+  th {{ background: #f1f5f9; font-weight: 600; color: #333; }}
+  tr:nth-child(even) {{ background: #f8fafc; }}
+  code {{ background: #f1f5f9; padding: 1px 5px; border-radius: 3px;
+          font-size: 13px; }}
+  pre {{ background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 8px;
+         overflow-x: auto; font-size: 13px; line-height: 1.5; margin: 12px 0 20px; }}
+  pre code {{ background: none; padding: 0; color: inherit; }}
+  .config-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px;
+                   margin: 12px 0 20px; }}
+  .config-item {{ font-size: 14px; }}
+  .config-item .label {{ color: #888; }}
+  .config-item .value {{ font-weight: 600; }}
+  .raw-link {{ float: right; font-size: 13px; color: #888; }}
+  .raw-link:hover {{ color: #f58220; }}
+  .nav {{ display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0 8px; }}
+  .nav a {{ font-size: 13px; color: #666; text-decoration: none;
+            padding: 4px 10px; border-radius: 4px; background: #e2e8f0; }}
+  .nav a:hover {{ background: #f58220; color: #fff; }}
+  .seq {{ margin: 20px 0; overflow-x: auto; }}
+  .seq pre {{ background: #1e293b; color: #e2e8f0; padding: 24px; border-radius: 8px;
+              font-size: 13px; line-height: 1.6; white-space: pre; }}
+  .seq .actor {{ color: #f58220; font-weight: 600; }}
+  .seq .msg {{ color: #7dd3fc; }}
+  .seq .note {{ color: #94a3b8; font-style: italic; }}
+</style>
+</head>
+<body>
+
+<a href="/api/spec" class="raw-link">Raw JSON &rarr;</a>
+<h1>{title}</h1>
+<p class="subtitle">
+  <span class="badge ws">WebSocket</span>
+  <code>{websocket_url}</code>
+  &nbsp;&middot;&nbsp; v{version}
+</p>
+<p>{description}</p>
+
+<div class="nav">
+  <a href="#sequence">Sequence</a>
+  <a href="#config">Config</a>
+  <a href="#subscribe">Subscribe</a>
+  <a href="#schedule">Schedule</a>
+  <a href="#trip">Trip Type</a>
+  <a href="#ferry">Ferry</a>
+  <a href="#rate-limiting">Rate Limiting</a>
+</div>
+
+<h2 id="sequence">Protocol Sequence</h2>
+<div class="seq"><pre>
+<span class="actor">ESP32</span>                      <span class="actor">Transit Server (:8000)</span>              <span class="actor">OneBusAway API</span>
+  │                              │                                  │
+  │──── WebSocket connect ──────▶│                                  │
+  │                              │                                  │
+  │──── <span class="msg">schedule:subscribe</span> ────▶│                                  │
+  │     routeStopPairs=          │                                  │
+  │     "40_100240,1_8494,0;     │                                  │
+  │      95_73,95_3,0"           │                                  │
+  │                              │                                  │
+  │                              │──── GET /arrivals-for-stop ─────▶│
+  │                              │                                  │
+  │                              │◀─── arrivals JSON ──────────────│
+  │                              │                                  │
+  │                              │  <span class="note">┌─────────────────────────────┐</span>
+  │                              │  <span class="note">│ Apply ferry direction filter │</span>
+  │                              │  <span class="note">│ Map vessel names (vehicleId) │</span>
+  │                              │  <span class="note">│ Apply route abbreviations    │</span>
+  │                              │  <span class="note">│ Apply time offsets            │</span>
+  │                              │  <span class="note">│ Sort by arrivalTime           │</span>
+  │                              │  <span class="note">└─────────────────────────────┘</span>
+  │                              │                                  │
+  │◀──── <span class="msg">schedule</span> ──────────────│                                  │
+  │      trips: [...]            │                                  │
+  │                              │                                  │
+  │  <span class="note">display_mins =</span>              │        <span class="note">every {check_interval_seconds}s</span>
+  │  <span class="note">(arrivalTime - now) / 60</span>     │──── GET /arrivals-for-stop ─────▶│
+  │                              │◀─── arrivals JSON ──────────────│
+  │◀──── <span class="msg">schedule</span> ──────────────│                                  │
+  │                              │                                  │
+  │◀──── <span class="msg">heartbeat</span> ─────────────│        <span class="note">every 10s</span>
+  │                              │                                  │
+</pre></div>
+
+<h2 id="config">Current Configuration</h2>
+<div class="config-grid">
+  <div class="config-item"><span class="label">Check interval:</span>
+    <span class="value">{check_interval_seconds}s</span></div>
+  <div class="config-item"><span class="label">Arrival threshold:</span>
+    <span class="value">{arrival_threshold_minutes} min</span></div>
+  <div class="config-item"><span class="label">Time display:</span>
+    <span class="value">{time_display}</span></div>
+  <div class="config-item"><span class="label">Panels:</span>
+    <span class="value">{num_panels} &times; {panel_size}</span></div>
+  <div class="config-item"><span class="label">Scroll headsigns:</span>
+    <span class="value">{scroll_headsigns}</span></div>
+</div>
+
+<h3>Subscriptions</h3>
+<table>
+<tr><th>Feed</th><th>Route</th><th>Stop</th><th>Label</th><th>Offset</th></tr>
+{sub_rows}</table>
+
+<h2 id="subscribe">Client &rarr; Server: <code>schedule:subscribe</code></h2>
+<p>{subscribe_description}</p>
+<table>
+<tr><th>Field</th><th>Type</th><th>Description</th></tr>
+{sub_fields_rows}</table>
+
+<h3>Example</h3>
+<pre><code>{subscribe_example}</code></pre>
+
+<h2 id="schedule">Server &rarr; Client: <code>schedule</code></h2>
+<p>{schedule_description}</p>
+
+<h3>Bus Example</h3>
+<pre><code>{bus_example}</code></pre>
+
+<h3>Ferry Example</h3>
+<pre><code>{ferry_example}</code></pre>
+
+<h3>Heartbeat</h3>
+<pre><code>{heartbeat_example}</code></pre>
+
+<h2 id="trip">Trip Type</h2>
+<table>
+<tr><th>Field</th><th>Type</th><th>Description</th></tr>
+{trip_rows}</table>
+
+<h2>ID Prefixes</h2>
+<table>
+<tr><th>Prefix</th><th>Description</th></tr>
+{prefix_rows}</table>
+
+<h2 id="ferry">Ferry Support</h2>
+<p><strong>Vessel mapping:</strong> {vessel_mapping}</p>
+<p><strong>Arrival vs departure:</strong> {arrival_vs_departure}</p>
+<p><strong>Direction filtering:</strong> {direction_filtering}</p>
+<p><strong>Realtime detection:</strong> {realtime_detection}</p>
+
+{abbreviations_section}
+
+<h2 id="rate-limiting">Rate Limiting</h2>
+<p><strong>Backoff:</strong> {backoff}</p>
+<p><strong>Per-stop cooldown:</strong> {per_stop_cooldown}</p>
+
+</body>
+</html>

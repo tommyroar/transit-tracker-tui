@@ -155,6 +155,7 @@ def _make_handler(method, path, body=None):
     handler.wfile = BytesIO()
 
     # Bind real methods
+    handler._send = lambda *a, **kw: TransitWebHandler._send(handler, *a, **kw)
     handler._json_response = lambda body: TransitWebHandler._json_response(handler, body)
     handler._json_error = lambda code, msg: TransitWebHandler._json_error(handler, code, msg)
     handler._serve_dimming_get = lambda: TransitWebHandler._serve_dimming_get(handler)

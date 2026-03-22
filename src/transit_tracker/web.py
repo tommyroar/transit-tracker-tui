@@ -804,16 +804,6 @@ class TransitWebHandler(BaseHTTPRequestHandler):
             "message": "Schedule saved. Will take effect within 60 seconds.",
         }))
 
-    def _serve_profiles_get(self):
-        """Return available profiles and the currently active one."""
-        from .config import get_last_config_path, list_profiles
-        active = get_last_config_path()
-        profiles = [
-            {"name": os.path.basename(p), "path": p, "active": p == active}
-            for p in list_profiles()
-        ]
-        self._json_response(json.dumps({"profiles": profiles, "active": active}))
-
     def _serve_simulator(self):
         """Serve the web LED simulator HTML."""
         html = generate_simulator_html()

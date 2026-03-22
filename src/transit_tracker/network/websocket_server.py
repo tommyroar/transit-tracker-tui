@@ -152,6 +152,9 @@ class TransitServer:
             if self.config_path:
                 state["config_path"] = self.config_path
 
+            key = self.config.service.oba_api_key or os.environ.get("OBA_API_KEY") or "TEST"
+            state["oba_api_key"] = key[:8] + "…" if len(key) > 8 else key
+
             os.makedirs(os.path.dirname(SERVICE_STATE_FILE), exist_ok=True)
             with open(SERVICE_STATE_FILE, "w") as f:
                 json.dump(state, f)

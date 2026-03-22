@@ -1433,6 +1433,17 @@ async function poll() {
     prevState = {...state};
     state = cur;
 
+    // API key & profile cards
+    const keyEl = document.getElementById('s-apikey');
+    const key = cur.oba_api_key || 'TEST';
+    keyEl.textContent = key;
+    keyEl.className = 'stat-value ' + (key === 'TEST' ? 'orange' : 'green');
+    document.getElementById('s-apikey-sub').textContent = key === 'TEST' ? 'rate-limited public key' : 'configured';
+    const profEl = document.getElementById('s-profile');
+    const profPath = cur.config_path || '—';
+    profEl.textContent = profPath.split('/').pop();
+    document.getElementById('s-profile-sub').textContent = profPath;
+
     renderTopo();
     renderTrips();
     renderFeed();
@@ -1749,6 +1760,19 @@ def generate_dashboard_html() -> str:
       <div class="stat-label">Cache Size</div>
       <div class="stat-value" id="s-cache">0</div>
       <div class="stat-sub">stops cached</div>
+    </div>
+  </div>
+
+  <div class="grid grid-2">
+    <div class="stat-card">
+      <div class="stat-label">OBA API Key</div>
+      <div class="stat-value" id="s-apikey" style="font-size:14px">—</div>
+      <div class="stat-sub" id="s-apikey-sub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Active Profile</div>
+      <div class="stat-value" id="s-profile" style="font-size:14px">—</div>
+      <div class="stat-sub" id="s-profile-sub"></div>
     </div>
   </div>
 

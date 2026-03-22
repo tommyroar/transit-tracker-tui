@@ -1429,29 +1429,48 @@ function renderTopo() {
   h += '<text x="182" y="' + (sy + 57) + '" fill="#353850" font-size="9.5">Up: ' + esc(upStr) + '  \u00b7  Msgs: ' + msgs + '</text>';
   h += '<text x="182" y="' + (sy + 72) + '" fill="#353850" font-size="9.5">Refresh: ' + refresh + 's  \u00b7  Clients: ' + cc + '</text>';
 
-  /* Clients */
+  /* Clients — bus topology: vertical trunk + horizontal branches */
   var cStartY = sy + 90 + 26;
+  var trunkX = 155;
+  var clientBoxX = 185;
+  var clientBoxW = 240;
+  var clientBoxH = 40;
+  var clientSpacing = 52;
+
   if (clients.length === 0) {
     h += '<line x1="300" y1="' + (sy + 90) + '" x2="300" y2="' + cStartY + '" stroke="#1a1e35" stroke-width="1" stroke-dasharray="3,4"/>';
     h += '<text x="300" y="' + (cStartY + 16) + '" text-anchor="middle" fill="#353850" font-size="10.5" font-style="italic">No clients connected</text>';
   } else {
+    var lastCy = cStartY + (clients.length - 1) * clientSpacing;
+
+    /* Connector: server bottom center to trunk top */
+    h += '<line x1="300" y1="' + (sy + 90) + '" x2="' + trunkX + '" y2="' + (sy + 90) + '" stroke="#40b868" stroke-width="1.5" stroke-dasharray="5,4"/>';
+
+    /* Vertical trunk from server level down to last client midpoint */
+    h += '<line x1="' + trunkX + '" y1="' + (sy + 90) + '" x2="' + trunkX + '" y2="' + (lastCy + clientBoxH / 2) + '" stroke="#40b868" stroke-width="1.5" stroke-dasharray="5,4">';
+    h += '<animate attributeName="stroke-dashoffset" from="0" to="-18" dur="1.2s" repeatCount="indefinite"/>';
+    h += '</line>';
+
     for (var i = 0; i < clients.length; i++) {
       var c = clients[i];
-      var cy = cStartY + i * 52;
+      var cy = cStartY + i * clientSpacing;
+      var branchY = cy + clientBoxH / 2;
       var name = c.name || 'Unknown';
       var addr = (c.address || '?').split(':')[0];
       var subs = c.subscriptions || 0;
       var isLocal = addr === '127.0.0.1' || addr === 'localhost';
       var icon = isLocal ? '\uD83D\uDDA5\uFE0F' : '\uD83D\uDCFA';
 
-      h += '<line x1="300" y1="' + (sy + 90) + '" x2="300" y2="' + cy + '" stroke="#40b868" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#ag)">';
+      /* Horizontal branch: trunk to client box */
+      h += '<line x1="' + trunkX + '" y1="' + branchY + '" x2="' + clientBoxX + '" y2="' + branchY + '" stroke="#40b868" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#ag)">';
       h += '<animate attributeName="stroke-dashoffset" from="0" to="-18" dur="1.2s" repeatCount="indefinite"/>';
       h += '</line>';
 
-      h += '<rect x="175" y="' + cy + '" width="250" height="40" rx="6" fill="#0c0f1a" stroke="#1a1e35" stroke-width="1"/>';
-      h += '<text x="192" y="' + (cy + 16) + '" fill="#eae8e4" font-size="13">' + icon + '</text>';
-      h += '<text x="214" y="' + (cy + 16) + '" fill="#eae8e4" font-size="10.5" font-weight="600">' + esc(name) + '</text>';
-      h += '<text x="214" y="' + (cy + 30) + '" fill="#353850" font-size="9.5">' + esc(addr) + ' \u00b7 ' + subs + ' subs</text>';
+      /* Client box */
+      h += '<rect x="' + clientBoxX + '" y="' + cy + '" width="' + clientBoxW + '" height="' + clientBoxH + '" rx="6" fill="#0c0f1a" stroke="#1a1e35" stroke-width="1"/>';
+      h += '<text x="' + (clientBoxX + 17) + '" y="' + (cy + 16) + '" fill="#eae8e4" font-size="13">' + icon + '</text>';
+      h += '<text x="' + (clientBoxX + 39) + '" y="' + (cy + 16) + '" fill="#eae8e4" font-size="10.5" font-weight="600">' + esc(name) + '</text>';
+      h += '<text x="' + (clientBoxX + 39) + '" y="' + (cy + 30) + '" fill="#353850" font-size="9.5">' + esc(addr) + ' \u00b7 ' + subs + ' subs</text>';
     }
   }
 

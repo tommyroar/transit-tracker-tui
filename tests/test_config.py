@@ -126,6 +126,39 @@ def test_set_last_config_path_preserves_dimming(tmp_path):
         assert loaded.last_config_path == "/config/profiles/adventure.yaml"
 
 
+def test_save_service_settings_preserves_external_fields(tmp_path):
+    """save_service_settings must merge with disk, not overwrite externally-set fields."""
+    import unittest.mock as mock
+    from transit_tracker.config import DimmingEntry
+    import yaml
+
+    settings_file = tmp_path / "service.yaml"
+    with mock.patch(
+        "transit_tracker.config._resolve_settings_path",
+        return_value=str(settings_file),
+    ):
+        # Write initial settings with API key and dimming via REST-like path
+        full = ServiceSettings(
+            oba_api_key="real-key-abc",
+            device_ip="192.168.5.248",
+            dimming_schedule=[DimmingEntry(time="07:00", brightness=255)],
+        )
+        save_service_settings(full)
+
+        # Simulate a TUI wizard that only knows about a subset of fields
+        partial = ServiceSettings(num_panels=3, check_interval_seconds=45)
+        save_service_settings(partial)
+
+        loaded = load_service_settings()
+        # TUI fields updated
+        assert loaded.num_panels == 3
+        assert loaded.check_interval_seconds == 45
+        # REST-set fields preserved
+        assert loaded.oba_api_key == "real-key-abc"
+        assert loaded.device_ip == "192.168.5.248"
+        assert len(loaded.dimming_schedule) == 1
+
+
 def test_migrate_legacy_fields():
     """Old-format YAML with service fields embedded gets migrated."""
     data = {

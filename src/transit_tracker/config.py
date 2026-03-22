@@ -101,12 +101,31 @@ def load_service_settings() -> ServiceSettings:
 
 
 def save_service_settings(settings: ServiceSettings):
-    """Persist service settings to the resolved service.yaml path."""
+    """Persist service settings to the resolved service.yaml path.
+
+    Merges the in-memory model onto the existing file so that fields not
+    present in the model (e.g. oba_api_key, device_ip set via REST) are
+    preserved rather than silently dropped.
+    """
     path = _resolve_settings_path()
     log.info("Saving service settings to %s", path, extra={"component": "config"})
     settings_dir = os.path.dirname(path)
     os.makedirs(settings_dir, exist_ok=True)
+    # Read existing file to preserve fields not in the in-memory model
+    existing = {}
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                existing = yaml.safe_load(f) or {}
+        except Exception:
+            pass
     data = settings.model_dump(exclude_none=True)
+    # Only merge explicitly-set fields when there's existing data on disk,
+    # so default values (e.g. dimming_schedule=[]) don't clobber fields
+    # that were set via a different code path (REST, another process).
+    if existing and settings.model_fields_set:
+        data = {k: v for k, v in data.items() if k in settings.model_fields_set}
+    existing.update(data)
     # Use settings_dir for tempfile when possible; fall back to /tmp for
     # container environments where the parent dir may be read-only.
     try:
@@ -115,7 +134,7 @@ def save_service_settings(settings: ServiceSettings):
         fd, tmp_path = tempfile.mkstemp(suffix=".yaml")
     try:
         with os.fdopen(fd, "w") as f:
-            yaml.safe_dump(data, f)
+            yaml.safe_dump(existing, f)
         os.replace(tmp_path, path)
     except OSError:
         # os.replace fails across filesystems; fall back to copy

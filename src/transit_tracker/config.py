@@ -127,9 +127,33 @@ def get_last_config_path() -> Optional[str]:
 
 
 def set_last_config_path(path: str):
-    svc = load_service_settings()
-    svc.last_config_path = os.path.abspath(path)
-    save_service_settings(svc)
+    """Update only the last_config_path field without disturbing other settings."""
+    settings_path = _resolve_settings_path()
+    existing = {}
+    if os.path.exists(settings_path):
+        try:
+            with open(settings_path, "r") as f:
+                existing = yaml.safe_load(f) or {}
+        except Exception:
+            pass
+    existing["last_config_path"] = os.path.abspath(path)
+    settings_dir = os.path.dirname(settings_path)
+    os.makedirs(settings_dir, exist_ok=True)
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=settings_dir, suffix=".yaml")
+    except PermissionError:
+        fd, tmp_path = tempfile.mkstemp(suffix=".yaml")
+    try:
+        with os.fdopen(fd, "w") as f:
+            yaml.safe_dump(existing, f)
+        os.replace(tmp_path, settings_path)
+    except OSError:
+        import shutil
+        shutil.copy2(tmp_path, settings_path)
+        os.unlink(tmp_path)
+    except Exception:
+        os.unlink(tmp_path)
+        raise
 
 
 def list_profiles() -> List[str]:

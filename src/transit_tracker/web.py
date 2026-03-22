@@ -1308,6 +1308,12 @@ var simActive = false;
 var simLoaded = false;
 simToggle.addEventListener('change', function() {
   simActive = this.checked;
+  if (!simActive) {
+    /* Destroy iframe to close WebSocket connection */
+    var iframe = document.getElementById('sim-iframe');
+    iframe.src = 'about:blank';
+    simLoaded = false;
+  }
   renderTopo();
 });
 
@@ -1376,7 +1382,7 @@ function renderTopo() {
   var upH = state.uptime_hours || 0;
   var upStr = upH >= 1 ? upH.toFixed(1) + 'h' : Math.round(upH * 60) + 'm';
   var rows = Math.max(cc, 1);
-  var simH = simActive ? 200 : 0;
+  var simH = simActive ? 140 : 0;
   var svgH = 290 + rows * 56 + simH;
   svg.setAttribute('viewBox', '0 0 600 ' + svgH);
 
@@ -1437,7 +1443,7 @@ function renderTopo() {
   } else {
     /* Calculate last node Y for trunk length */
     var simNodeIdx = clients.length;
-    var simBoxH = 170;
+    var simBoxH = 110;
     var lastNodeBottomY;
     if (simActive) {
       var simCy = cStartY + simNodeIdx * clientSpacing;
@@ -1489,16 +1495,9 @@ function renderTopo() {
       h += '<animate attributeName="stroke-dashoffset" from="0" to="-18" dur="1.2s" repeatCount="indefinite"/>';
       h += '</line>';
 
-      /* Simulator container */
-      h += '<rect x="' + simBoxX + '" y="' + simCy + '" width="' + simBoxW + '" height="' + simBoxH + '" rx="6" fill="#0c0f1a" stroke="#e8a830" stroke-width="1.5"/>';
-      h += '<rect x="' + simBoxX + '" y="' + simCy + '" width="' + simBoxW + '" height="' + simBoxH + '" rx="6" fill="none" stroke="#e8a830" stroke-width="1" opacity="0.1" filter="url(#glow)"/>';
-
-      /* Label */
-      h += '<text x="' + (simBoxX + 12) + '" y="' + (simCy + 15) + '" fill="#e8a830" font-size="10" font-weight="600">LED SIMULATOR</text>';
-      h += '<text x="' + (simBoxX + simBoxW - 8) + '" y="' + (simCy + 15) + '" text-anchor="end" fill="#353850" font-size="9">ws://localhost:8080/ws</text>';
-
-      /* Placeholder rect for iframe overlay */
-      h += '<rect x="' + (simBoxX + 4) + '" y="' + (simCy + 22) + '" width="' + (simBoxW - 8) + '" height="' + (simBoxH - 26) + '" rx="4" fill="#000" id="sim-placeholder"/>';
+      /* Simulator container — tight border around canvas */
+      h += '<rect x="' + simBoxX + '" y="' + simCy + '" width="' + simBoxW + '" height="' + simBoxH + '" rx="4" fill="#000" stroke="#e8a830" stroke-width="1.5" id="sim-placeholder"/>';
+      h += '<rect x="' + simBoxX + '" y="' + simCy + '" width="' + simBoxW + '" height="' + simBoxH + '" rx="4" fill="none" stroke="#e8a830" stroke-width="1" opacity="0.1" filter="url(#glow)"/>';
     }
   }
 
@@ -2409,11 +2408,12 @@ canvas {{
 }}
 a {{ color: var(--purple); text-decoration: none; }}
 a:hover {{ text-decoration: underline; }}
-/* Embed mode: hide header, compact layout */
+/* Embed mode: hide header, fill container */
+body.embed {{ background: transparent; }}
 body.embed .header {{ display: none; }}
-body.embed .sim-container {{ min-height: auto; padding: 4px; }}
+body.embed .sim-container {{ min-height: auto; padding: 0; justify-content: flex-start; }}
 body.embed .info {{ display: none; }}
-body.embed canvas {{ border-width: 1px; }}
+body.embed canvas {{ border: none; border-radius: 0; }}
 </style>
 </head>
 <body>

@@ -188,7 +188,7 @@ def list_profiles() -> List[str]:
     When PROFILES_DIR is set (e.g. inside a Docker container), scans that
     directory instead of the project tree.
     """
-    _EXCLUDE = {"service.yaml", "test_isolation_config.yaml"}
+    _EXCLUDE = {"service.yaml", "service_state.json", "test_isolation_config.yaml"}
 
     profiles_dir = os.environ.get("PROFILES_DIR")
     if profiles_dir and os.path.isdir(profiles_dir):

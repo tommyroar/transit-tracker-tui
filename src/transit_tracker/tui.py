@@ -430,6 +430,7 @@ async def change_threshold_wizard(config: TransitConfig, config_path: str):
     
     if val and val.isdigit() and int(val) > 0:
         config.service.arrival_threshold_minutes = int(val)
+        save_service_settings(config.service)
         config.save(config_path)
         print("Threshold updated.")
     else:
@@ -447,6 +448,7 @@ async def change_panels_wizard(config: TransitConfig, config_path: str, console:
     
     if val:
         config.service.num_panels = int(val)
+        save_service_settings(config.service)
         config.save(config_path)
         rprint(f"[green]Hardware setup updated to {val} panel(s).[/green]")
 
@@ -519,7 +521,8 @@ async def change_api_mode_wizard(config: TransitConfig, config_path: str, consol
                 config.api_url = url
         else:
             config.api_url = "ws://localhost:8000/"
-            
+
+        save_service_settings(config.service)
         config.save(config_path)
         rprint(f"[green]API mode updated to {'Local' if mode else 'Cloud'}.[/green]")
 

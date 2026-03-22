@@ -22,6 +22,7 @@ from .config import (
     get_last_config_path,
     set_last_config_path,
     list_profiles,
+    save_service_settings,
 )
 from .display import format_trip_line, DISPLAY_VARIABLES
 from .hardware import (
@@ -485,6 +486,7 @@ async def change_brightness_wizard(config: TransitConfig, config_path: str, cons
             brightness = int(val)
             if 0 <= brightness <= 255:
                 config.service.display_brightness = brightness
+                save_service_settings(config.service)
                 config.save(config_path)
                 rprint(f"[green]Display brightness set to {brightness}.[/green]")
             else:

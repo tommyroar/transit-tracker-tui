@@ -1950,8 +1950,8 @@ a:hover {{ text-decoration: underline; }}
     <span><span class="status-dot" id="ws-dot"></span> <span id="ws-label">Disconnected</span></span>
     <label>Endpoint:
       <select id="endpoint-select">
-        <option value="ws">Local (ws://localhost:8000)</option>
-        <option value="wss">Cloud (wss://tt.horner.tj/)</option>
+        <option value="local">Local (:8000)</option>
+        <option value="cloud">Cloud (tt.horner.tj)</option>
         <option value="custom">Custom...</option>
       </select>
     </label>
@@ -2236,9 +2236,10 @@ function renderFrame() {{
 function getWsUrl() {{
   const sel = document.getElementById('endpoint-select').value;
   const custom = document.getElementById('custom-url');
-  if (sel === 'ws') return 'ws://' + location.hostname + ':8000';
-  if (sel === 'wss') return 'wss://tt.horner.tj/';
-  return custom.value || 'ws://localhost:8000';
+  const wsProt = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  if (sel === 'local') return wsProt + location.hostname + ':8000';
+  if (sel === 'cloud') return 'wss://tt.horner.tj/';
+  return custom.value || (wsProt + location.hostname + ':8000');
 }}
 
 function connect() {{

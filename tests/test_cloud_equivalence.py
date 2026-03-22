@@ -14,7 +14,7 @@ import time
 import pytest
 import websockets.sync.client
 
-pytestmark = [pytest.mark.e2e, pytest.mark.integration]
+pytestmark = pytest.mark.e2e
 CLOUD_URL = "wss://tt.horner.tj/"
 LOCAL_URL = "ws://localhost:8000"
 

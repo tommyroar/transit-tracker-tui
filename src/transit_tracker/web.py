@@ -6,6 +6,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Dict, List
 from urllib.parse import parse_qs, urlparse
 
+import websockets
+
 from .config import TransitConfig
 from .logging import get_logger
 from .metrics import metrics
@@ -807,26 +809,138 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
     ]
     index_html = generate_index_html(pages)
 
-    TransitWebHandler.routes = {
+    # -- Route tables for the dual HTTP+WS server --
+    static_routes = {
         "/": index_html,
         "/spec": spec_html,
         "/api/spec": spec_json,
         "/api/stops": stops_json,
     }
-    # Dynamic routes — served fresh on each request
-    TransitWebHandler.dynamic_routes = {"/api/status", "/api/metrics", "/api/logs", "/api/dimming", "/dashboard", "/monitor", "/simulator"}
+    dynamic_routes = {
+        "/api/status", "/api/metrics", "/api/logs", "/api/dimming",
+        "/dashboard", "/monitor", "/simulator",
+    }
 
-    server = HTTPServer((host, port), TransitWebHandler)
+    # -- Also configure the legacy HTTPServer routes (used by tests) --
+    TransitWebHandler.routes = static_routes
+    TransitWebHandler.dynamic_routes = dynamic_routes
+
+    def _serve_dynamic(path: str, query: dict) -> tuple:
+        """Serve a dynamic route, returning (status, content_type, body)."""
+        from .network.websocket_server import SERVICE_STATE_FILE
+
+        if path == "/api/status":
+            include_full = query.get("full", ["0"])[0] == "1"
+            try:
+                if os.path.exists(SERVICE_STATE_FILE):
+                    with open(SERVICE_STATE_FILE, "r") as f:
+                        state = json.load(f)
+                    if not include_full:
+                        state.pop("last_message", None)
+                    return (200, "application/json", json.dumps(state))
+                return (200, "application/json", json.dumps({"status": "unavailable"}))
+            except Exception:
+                return (200, "application/json", json.dumps({"status": "error"}))
+
+        if path == "/api/metrics":
+            since = float(query.get("since", [0])[0])
+            return (200, "application/json", json.dumps(metrics.snapshot(series_since=since)))
+
+        if path == "/api/logs":
+            since = float(query.get("since", [0])[0])
+            limit = int(query.get("limit", [200])[0])
+            entries = metrics.logs.snapshot(since=since, limit=limit)
+            return (200, "application/json", json.dumps({"logs": entries}))
+
+        if path == "/api/dimming":
+            from .config import load_service_settings
+            settings = load_service_settings()
+            return (200, "application/json", json.dumps({
+                "dimming_schedule": [e.model_dump() for e in settings.dimming_schedule],
+                "display_brightness": settings.display_brightness,
+                "device_ip": settings.device_ip,
+            }))
+
+        if path == "/dashboard":
+            return (200, "text/html", generate_dashboard_html())
+        if path == "/monitor":
+            return (200, "text/html", generate_monitor_html())
+        if path == "/simulator":
+            return (200, "text/html", generate_simulator_html())
+
+        return (404, "text/html", "<h1>404 Not Found</h1>")
+
+    def handle_http(path: str, query: dict) -> tuple:
+        """Return (status, headers_list, body_bytes) for an HTTP request."""
+        clean = path.rstrip("/") or "/"
+        headers = [("Access-Control-Allow-Origin", "*")]
+
+        if clean in dynamic_routes:
+            status, ct, body = _serve_dynamic(clean, query)
+            headers.append(("Content-Type", f"{ct}; charset=utf-8"))
+            if ct == "text/html":
+                headers.append(("Cache-Control", "no-cache"))
+            return (status, headers, body.encode("utf-8"))
+
+        content = static_routes.get(clean)
+        if content is not None:
+            ct = "application/json" if clean.startswith("/api/") else "text/html"
+            headers.append(("Content-Type", f"{ct}; charset=utf-8"))
+            return (200, headers, content.encode("utf-8"))
+
+        headers.append(("Content-Type", "text/html; charset=utf-8"))
+        return (404, headers, b"<h1>404 Not Found</h1>")
+
+    # -- WebSocket proxy: relay /ws connections to the internal WS server --
+    async def ws_proxy_handler(ws):
+        """Proxy a WebSocket connection to the internal server on :8000."""
+        try:
+            async with websockets.connect("ws://localhost:8000") as upstream:
+                async def client_to_upstream():
+                    async for msg in ws:
+                        await upstream.send(msg)
+
+                async def upstream_to_client():
+                    async for msg in upstream:
+                        await ws.send(msg)
+
+                await asyncio.gather(
+                    client_to_upstream(),
+                    upstream_to_client(),
+                )
+        except websockets.exceptions.ConnectionClosed:
+            pass
+        except Exception as e:
+            log.debug("WS proxy error: %s", e, extra={"component": "web"})
+
+    # -- process_request: HTTP responses for non-WS requests --
+    async def process_request(connection, request):
+        """Handle HTTP requests; return None to allow WS upgrade on /ws."""
+        path = request.path
+        parsed = urlparse(path)
+        clean = parsed.path.rstrip("/") or "/"
+
+        # Allow WebSocket upgrade on /ws
+        if clean == "/ws":
+            return None
+
+        query = parse_qs(parsed.query)
+        status, headers, body = handle_http(clean, query)
+        return websockets.http11.Response(
+            status, "", websockets.datastructures.Headers(headers), body,
+        )
+
     log.info("Transit Tracker web server at http://%s:%d", host, port, extra={"component": "web"})
+    log.info("  /ws         — WebSocket relay (for HTTPS clients)", extra={"component": "web"})
     log.info("  /dashboard  — observability dashboard", extra={"component": "web"})
+    log.info("  /simulator  — LED matrix simulator", extra={"component": "web"})
     log.info("  /spec       — API documentation page", extra={"component": "web"})
-    log.info("  /api/metrics — metrics JSON endpoint", extra={"component": "web"})
 
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        log.info("Shutting down...", extra={"component": "web"})
-        server.shutdown()
+    async with websockets.serve(
+        ws_proxy_handler, host, port,
+        process_request=process_request,
+    ):
+        await asyncio.Future()  # Run forever
 
 
 def generate_monitor_html() -> str:
@@ -1950,7 +2064,7 @@ a:hover {{ text-decoration: underline; }}
     <span><span class="status-dot" id="ws-dot"></span> <span id="ws-label">Disconnected</span></span>
     <label>Endpoint:
       <select id="endpoint-select">
-        <option value="local">Local (:8000)</option>
+        <option value="local">Local (via /ws proxy)</option>
         <option value="cloud">Cloud (tt.horner.tj)</option>
         <option value="custom">Custom...</option>
       </select>
@@ -2237,9 +2351,12 @@ function getWsUrl() {{
   const sel = document.getElementById('endpoint-select').value;
   const custom = document.getElementById('custom-url');
   const wsProt = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  if (sel === 'local') return wsProt + location.hostname + ':8000';
+  // Connect via /ws on the same origin (port 8080) — the web server
+  // proxies to the internal WS server on :8000.  This avoids mixed-content
+  // errors when the page is served over HTTPS (e.g. OrbStack .orb.local).
+  if (sel === 'local') return wsProt + location.host + '/ws';
   if (sel === 'cloud') return 'wss://tt.horner.tj/';
-  return custom.value || (wsProt + location.hostname + ':8000');
+  return custom.value || (wsProt + location.host + '/ws');
 }}
 
 function connect() {{

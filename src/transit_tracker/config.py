@@ -8,6 +8,10 @@ from typing import Any, Dict, List, Optional
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .logging import get_logger
+
+log = get_logger("transit_tracker.config")
+
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SERVICE_SETTINGS_FILE = os.path.join(_PROJECT_ROOT, ".local", "service.yaml")
 
@@ -99,6 +103,7 @@ def load_service_settings() -> ServiceSettings:
 def save_service_settings(settings: ServiceSettings):
     """Persist service settings to the resolved service.yaml path."""
     path = _resolve_settings_path()
+    log.info("Saving service settings to %s", path, extra={"component": "config"})
     settings_dir = os.path.dirname(path)
     os.makedirs(settings_dir, exist_ok=True)
     data = settings.model_dump(exclude_none=True)
@@ -129,6 +134,8 @@ def get_last_config_path() -> Optional[str]:
 def set_last_config_path(path: str):
     """Update only the last_config_path field without disturbing other settings."""
     settings_path = _resolve_settings_path()
+    log.info("Switching active profile to %s", os.path.basename(path),
+             extra={"component": "config", "profile": path, "settings_path": settings_path})
     existing = {}
     if os.path.exists(settings_path):
         try:

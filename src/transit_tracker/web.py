@@ -40,6 +40,7 @@ def _handle_profile_activate(query: dict) -> tuple:
     if not match:
         available = [os.path.basename(p) for p in all_profiles]
         return (404, {"error": f"Profile '{name}' not found", "available": available})
+    log.info("REST profile switch to %s", name, extra={"component": "web", "profile": match})
     set_last_config_path(match)
     return (200, {"status": "ok", "profile": name, "path": match,
                   "message": "Profile activated. Server will hot-reload within 30 seconds."})
@@ -48,6 +49,8 @@ def _handle_profile_activate(query: dict) -> tuple:
 def _handle_dimming_set(query: dict) -> tuple:
     """Update dimming settings from query params. Returns (status_code, response_dict)."""
     from .config import DimmingEntry, load_service_settings, save_service_settings
+    log.info("REST dimming update: %s", {k: v for k, v in query.items() if k != "device_ip"},
+             extra={"component": "web"})
     settings = load_service_settings()
     raw_entries = query.get("schedule", [])
     if raw_entries:

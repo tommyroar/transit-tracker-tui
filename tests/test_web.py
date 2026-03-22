@@ -19,6 +19,7 @@ import pytest
 from transit_tracker.config import TransitConfig
 from transit_tracker.transit_api import TransitAPI
 from transit_tracker.web import (
+    PREFIX,
     TransitWebHandler,
     generate_api_spec,
     generate_dashboard_html,
@@ -310,19 +311,19 @@ def test_index_html_has_transit_tracker_title():
 def test_handler_serves_registered_routes():
     """Handler returns 200 for registered routes."""
     TransitWebHandler.routes = {
-        "/": "<html>index</html>",
-        "/api/spec": '{"info": {}}',
-        "/api/stops": "[]",
+        f"{PREFIX}": "<html>index</html>",
+        f"{PREFIX}/api/spec": '{"info": {}}',
+        f"{PREFIX}/api/stops": "[]",
     }
 
-    handler = _make_handler("GET", "/api/spec")
+    handler = _make_handler("GET", f"{PREFIX}/api/spec")
     assert handler._status_code == 200
     assert b'{"info": {}}' in handler._body
 
 
 def test_handler_returns_404_for_unknown():
     """Handler returns 404 for unregistered paths."""
-    TransitWebHandler.routes = {"/": "index"}
+    TransitWebHandler.routes = {f"{PREFIX}": "index"}
 
     handler = _make_handler("GET", "/nonexistent")
     assert handler._status_code == 404
@@ -330,43 +331,43 @@ def test_handler_returns_404_for_unknown():
 
 def test_handler_json_content_type_for_api():
     """API routes get application/json content type."""
-    TransitWebHandler.routes = {"/api/stops": "[]"}
+    TransitWebHandler.routes = {f"{PREFIX}/api/stops": "[]"}
 
-    handler = _make_handler("GET", "/api/stops")
+    handler = _make_handler("GET", f"{PREFIX}/api/stops")
     assert handler._status_code == 200
     assert "application/json" in handler._content_type
 
 
 def test_handler_html_content_type_for_pages():
     """Page routes get text/html content type."""
-    TransitWebHandler.routes = {"/": "<html></html>"}
+    TransitWebHandler.routes = {f"{PREFIX}": "<html></html>"}
 
-    handler = _make_handler("GET", "/")
+    handler = _make_handler("GET", f"{PREFIX}")
     assert handler._status_code == 200
     assert "text/html" in handler._content_type
 
 
 def test_handler_strips_trailing_slash():
     """Trailing slashes are normalized."""
-    TransitWebHandler.routes = {"/api/spec": "{}"}
+    TransitWebHandler.routes = {f"{PREFIX}/api/spec": "{}"}
 
-    handler = _make_handler("GET", "/api/spec/")
+    handler = _make_handler("GET", f"{PREFIX}/api/spec/")
     assert handler._status_code == 200
 
 
 def test_handler_strips_query_string():
     """Query strings are stripped from path matching."""
-    TransitWebHandler.routes = {"/api/spec": "{}"}
+    TransitWebHandler.routes = {f"{PREFIX}/api/spec": "{}"}
 
-    handler = _make_handler("GET", "/api/spec?format=pretty")
+    handler = _make_handler("GET", f"{PREFIX}/api/spec?format=pretty")
     assert handler._status_code == 200
 
 
 def test_handler_cors_header():
     """Responses include CORS header for cross-origin access."""
-    TransitWebHandler.routes = {"/api/stops": "[]"}
+    TransitWebHandler.routes = {f"{PREFIX}/api/stops": "[]"}
 
-    handler = _make_handler("GET", "/api/stops")
+    handler = _make_handler("GET", f"{PREFIX}/api/stops")
     assert handler._cors_header == "*"
 
 
@@ -497,7 +498,7 @@ def test_monitor_html_has_trip_table():
 
 def test_monitor_html_has_status_polling():
     html = generate_monitor_html()
-    assert "/api/status" in html
+    assert "/transit-tracker/api/status" in html
     assert "setInterval" in html
 
 

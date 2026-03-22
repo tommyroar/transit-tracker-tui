@@ -62,8 +62,6 @@ class ServiceSettings(BaseModel):
 
     # Service mode
     use_local_api: bool = Field(default=False)
-    auto_launch_gui: bool = Field(default=False)  # deprecated: use web UI at /dashboard
-
     # Display brightness / scheduled dimming
     display_brightness: int = Field(default=128, ge=0, le=255)
     device_ip: Optional[str] = None
@@ -139,6 +137,7 @@ def save_service_settings(settings: ServiceSettings):
     except OSError:
         # os.replace fails across filesystems; fall back to copy
         import shutil
+
         shutil.copy2(tmp_path, path)
         os.unlink(tmp_path)
     except Exception:
@@ -153,8 +152,11 @@ def get_last_config_path() -> Optional[str]:
 def set_last_config_path(path: str):
     """Update only the last_config_path field without disturbing other settings."""
     settings_path = _resolve_settings_path()
-    log.info("Switching active profile to %s", os.path.basename(path),
-             extra={"component": "config", "profile": path, "settings_path": settings_path})
+    log.info(
+        "Switching active profile to %s",
+        os.path.basename(path),
+        extra={"component": "config", "profile": path, "settings_path": settings_path},
+    )
     existing = {}
     if os.path.exists(settings_path):
         try:
@@ -175,6 +177,7 @@ def set_last_config_path(path: str):
         os.replace(tmp_path, settings_path)
     except OSError:
         import shutil
+
         shutil.copy2(tmp_path, settings_path)
         os.unlink(tmp_path)
     except Exception:
@@ -205,7 +208,11 @@ def list_profiles() -> List[str]:
     local_dir = os.path.join(project_root, ".local")
     if os.path.exists(local_dir):
         for f in os.listdir(local_dir):
-            if f.endswith(".yaml") and f not in _EXCLUDE and f != "accurate_config.yaml":
+            if (
+                f.endswith(".yaml")
+                and f not in _EXCLUDE
+                and f != "accurate_config.yaml"
+            ):
                 profiles.append(os.path.abspath(os.path.join(local_dir, f)))
 
     # Check project root
@@ -283,7 +290,7 @@ _LEGACY_TT_KEYS = {
 }
 
 # Keys that used to live at the root of the config YAML
-_LEGACY_ROOT_KEYS = {"use_local_api", "auto_launch_gui"}
+_LEGACY_ROOT_KEYS = {"use_local_api"}
 
 # Dead fields that should be silently stripped
 _DEAD_KEYS = {"mapbox_access_token", "show_units", "list_mode", "styles"}

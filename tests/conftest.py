@@ -106,7 +106,6 @@ def mock_config():
     ]
     config.service = MagicMock()
     config.service.use_local_api = True
-    config.service.auto_launch_gui = True
     config.service.arrival_threshold_minutes = 5
     config.service.check_interval_seconds = 30
     config.service.request_spacing_ms = 250
@@ -129,7 +128,6 @@ def ferry_config():
     ]
     config.service = MagicMock()
     config.service.use_local_api = True
-    config.service.auto_launch_gui = False
     config.service.arrival_threshold_minutes = 5
     config.service.check_interval_seconds = 30
     config.service.request_spacing_ms = 250

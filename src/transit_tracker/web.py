@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import re
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
 from typing import Any, Dict, List
 from urllib.parse import parse_qs, urlparse
 
@@ -14,6 +14,9 @@ from .metrics import metrics
 from .transit_api import TransitAPI
 
 log = get_logger("transit_tracker.web")
+
+# All routes are served under this prefix
+PREFIX = "/transit-tracker"
 
 
 # -- Shared API helpers (used by both legacy HTTPServer and websockets paths) --
@@ -71,6 +74,201 @@ def _handle_dimming_set(query: dict) -> tuple:
         "device_ip": settings.device_ip,
         "message": "Dimming settings saved. Will take effect within 60 seconds.",
     })
+
+
+# -- In-memory draft config for stop/route editing via the web API --
+# The draft is loaded from the active profile on first access and can be
+# modified via POST/DELETE to /api/config/stops.  An explicit POST to
+# /api/config/save persists the draft to disk.
+_draft_config: TransitConfig | None = None
+_draft_dirty: bool = False
+
+
+def _get_draft() -> TransitConfig:
+    """Return the in-memory draft config, loading from active profile if needed."""
+    global _draft_config
+    if _draft_config is None:
+        from .config import get_last_config_path
+        path = get_last_config_path()
+        if path and os.path.exists(path):
+            _draft_config = TransitConfig.load(path)
+        else:
+            _draft_config = TransitConfig.load()
+    return _draft_config
+
+
+def _reset_draft():
+    """Force-reload the draft from disk on next access."""
+    global _draft_config, _draft_dirty
+    _draft_config = None
+    _draft_dirty = False
+
+
+async def _handle_geocode(query: dict) -> tuple:
+    """Geocode a location query. Returns (status, response_dict)."""
+    q = query.get("q", [None])[0]
+    if not q:
+        return (400, {"error": "Missing 'q' query parameter"})
+    api = TransitAPI()
+    try:
+        result = await api.geocode(q)
+        if result is None:
+            return (404, {"error": "Location not found"})
+        lat, lon, display_name = result
+        return (200, {"lat": lat, "lon": lon, "display_name": display_name})
+    finally:
+        await api.close()
+
+
+async def _handle_routes_for_location(query: dict) -> tuple:
+    """Find routes near a location. Returns (status, response_dict)."""
+    lat = query.get("lat", [None])[0]
+    lon = query.get("lon", [None])[0]
+    if lat is None or lon is None:
+        return (400, {"error": "Missing 'lat' and/or 'lon' query parameters"})
+    radius = int(query.get("radius", [1500])[0])
+    api = TransitAPI()
+    try:
+        routes = await api.get_routes_for_location(float(lat), float(lon), radius)
+        return (200, {"routes": routes})
+    finally:
+        await api.close()
+
+
+async def _handle_stops_for_route(route_id: str) -> tuple:
+    """Find stops for a route. Returns (status, response_dict)."""
+    api = TransitAPI()
+    try:
+        stops = await api.get_stops_for_route(route_id)
+        return (200, {"stops": stops})
+    finally:
+        await api.close()
+
+
+async def _handle_arrivals(query: dict) -> tuple:
+    """Get arrivals for a stop. Returns (status, response_dict)."""
+    stop_id = query.get("stop_id", [None])[0]
+    if not stop_id:
+        return (400, {"error": "Missing 'stop_id' query parameter"})
+    api = TransitAPI()
+    try:
+        arrivals = await api.get_arrivals(stop_id)
+        return (200, {"arrivals": arrivals})
+    finally:
+        await api.close()
+
+
+def _handle_config_stops_get() -> dict:
+    """Return configured stops from the draft config."""
+    draft = _get_draft()
+    stops = []
+    for stop in draft.transit_tracker.stops:
+        stops.append({
+            "stop_id": stop.stop_id,
+            "label": stop.label,
+            "direction": stop.direction,
+            "time_offset": stop.time_offset,
+            "routes": stop.routes,
+        })
+    return {"stops": stops, "dirty": _draft_dirty}
+
+
+def _handle_config_stops_post(data: dict) -> tuple:
+    """Add a stop subscription to the draft config."""
+    global _draft_dirty
+    from .config import TransitStop
+    draft = _get_draft()
+    try:
+        stop_id = data.get("stop_id")
+        if not stop_id:
+            return (400, {"error": "Missing 'stop_id'"})
+        routes = data.get("routes", [])
+        if isinstance(routes, str):
+            routes = [routes]
+        new_stop = TransitStop(
+            stop_id=stop_id,
+            label=data.get("label"),
+            direction=data.get("direction"),
+            time_offset=data.get("time_offset", "0min"),
+            routes=routes,
+        )
+        draft.transit_tracker.stops.append(new_stop)
+        _draft_dirty = True
+        return (200, {"status": "ok", "message": "Stop added to draft", "stop": new_stop.model_dump()})
+    except Exception as e:
+        return (400, {"error": str(e)})
+
+
+def _handle_config_stops_delete(data: dict) -> tuple:
+    """Remove a stop subscription from the draft config."""
+    global _draft_dirty
+    draft = _get_draft()
+    index = data.get("index")
+    stop_id = data.get("stop_id")
+
+    if index is not None:
+        index = int(index)
+        if 0 <= index < len(draft.transit_tracker.stops):
+            removed = draft.transit_tracker.stops.pop(index)
+            _draft_dirty = True
+            return (200, {"status": "ok", "message": "Stop removed from draft", "removed": removed.model_dump()})
+        return (400, {"error": f"Index {index} out of range"})
+
+    if stop_id:
+        for i, s in enumerate(draft.transit_tracker.stops):
+            if s.stop_id == stop_id:
+                removed = draft.transit_tracker.stops.pop(i)
+                _draft_dirty = True
+                return (200, {"status": "ok", "message": "Stop removed from draft", "removed": removed.model_dump()})
+        return (404, {"error": f"Stop '{stop_id}' not found in draft"})
+
+    return (400, {"error": "Provide 'index' or 'stop_id'"})
+
+
+def _handle_config_save(data: dict) -> tuple:
+    """Save the draft config to disk."""
+    global _draft_dirty
+    draft = _get_draft()
+    path = data.get("path")
+    if path:
+        draft.save(path)
+    else:
+        from .config import get_last_config_path
+        active = get_last_config_path()
+        if active:
+            draft.save(active)
+        else:
+            return (400, {"error": "No active profile and no path provided"})
+    _draft_dirty = False
+    log.info("Draft config saved to %s", path or active, extra={"component": "web"})
+    return (200, {"status": "ok", "message": f"Config saved to {path or active}"})
+
+
+def _handle_config_settings_get() -> dict:
+    """Return current service settings."""
+    from .config import load_service_settings
+    settings = load_service_settings()
+    return settings.model_dump(exclude_none=True)
+
+
+def _handle_config_settings_patch(data: dict) -> tuple:
+    """Update service settings."""
+    from .config import load_service_settings, save_service_settings
+    settings = load_service_settings()
+    allowed = {
+        "check_interval_seconds", "request_spacing_ms", "arrival_threshold_minutes",
+        "num_panels", "panel_width", "panel_height", "use_local_api",
+        "display_brightness", "device_ip",
+    }
+    updated = []
+    for key, value in data.items():
+        if key in allowed:
+            setattr(settings, key, value)
+            updated.append(key)
+    if not updated:
+        return (400, {"error": "No valid fields to update", "allowed": sorted(allowed)})
+    save_service_settings(settings)
+    return (200, {"status": "ok", "updated": updated, "message": "Settings saved."})
 
 
 async def resolve_stop_coordinates(config: TransitConfig) -> List[Dict[str, Any]]:
@@ -459,7 +657,7 @@ def generate_spec_html(spec_json: str) -> str:
 </head>
 <body>
 
-<a href="/api/spec" class="raw-link">Raw JSON &rarr;</a>
+<a href="/transit-tracker/api/spec" class="raw-link">Raw JSON &rarr;</a>
 <h1>{info['title']}</h1>
 <p class="subtitle">
   <span class="badge ws">WebSocket</span>
@@ -640,46 +838,52 @@ class TransitWebHandler(BaseHTTPRequestHandler):
 
         # Dynamic routes (read fresh on each request)
         if path in self.dynamic_routes:
-            if path == "/api/status":
+            if path == f"{PREFIX}/api/status":
                 self._serve_status(query)
                 return
-            if path == "/api/metrics":
+            if path == f"{PREFIX}/api/metrics":
                 self._serve_metrics(query)
                 return
-            if path == "/api/logs":
+            if path == f"{PREFIX}/api/logs":
                 self._serve_logs(query)
                 return
-            if path == "/dashboard":
+            if path == f"{PREFIX}/dashboard":
                 self._serve_dashboard()
                 return
-            if path == "/monitor":
+            if path == f"{PREFIX}/monitor":
                 self._serve_monitor()
                 return
-            if path == "/api/dimming":
+            if path == f"{PREFIX}/api/dimming":
                 self._serve_dimming_get()
                 return
-            if path == "/api/dimming/set":
+            if path == f"{PREFIX}/api/dimming/set":
                 try:
                     status, resp = _handle_dimming_set(query)
                     self._json_response(json.dumps(resp), status)
                 except Exception as e:
                     self._json_error(400, str(e))
                 return
-            if path == "/simulator":
+            if path == f"{PREFIX}/simulator":
                 self._serve_simulator()
                 return
-            if path == "/api/profiles":
+            if path == f"{PREFIX}/api/profiles":
                 self._json_response(json.dumps(_handle_profiles_list()))
                 return
-            if path == "/api/profile/activate":
+            if path == f"{PREFIX}/api/profile/activate":
                 status, resp = _handle_profile_activate(query)
                 self._json_response(json.dumps(resp), status)
+                return
+            if path == f"{PREFIX}/api/config/stops":
+                self._json_response(json.dumps(_handle_config_stops_get()))
+                return
+            if path == f"{PREFIX}/api/config/settings":
+                self._json_response(json.dumps(_handle_config_settings_get()))
                 return
 
         content = self.routes.get(path)
         if content is not None:
             content_type = (
-                "application/json" if path.startswith("/api/") else "text/html"
+                "application/json" if "/api/" in path else "text/html"
             )
             self.send_response(200)
             self.send_header("Content-Type", f"{content_type}; charset=utf-8")
@@ -696,7 +900,7 @@ class TransitWebHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
 
-        if path == "/api/dimming":
+        if path == f"{PREFIX}/api/dimming":
             self._handle_dimming_post()
             return
 
@@ -851,47 +1055,47 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
 
     pages = [
         {
-            "path": "/simulator",
+            "path": f"{PREFIX}/simulator",
             "name": "LED Simulator",
             "description": "Browser-based HUB75 LED matrix emulator with live WebSocket data",
         },
         {
-            "path": "/dashboard",
+            "path": f"{PREFIX}/dashboard",
             "name": "Dashboard",
             "description": "Live metrics and observability dashboard",
         },
         {
-            "path": "/monitor",
+            "path": f"{PREFIX}/monitor",
             "name": "Network Monitor",
             "description": "Live topology diagram showing proxy, provider, and connected displays",
         },
         {
-            "path": "/spec",
+            "path": f"{PREFIX}/spec",
             "name": "API Docs",
             "description": "Interactive WebSocket API documentation",
         },
         {
-            "path": "/api/spec",
+            "path": f"{PREFIX}/api/spec",
             "name": "API Spec (JSON)",
             "description": "Raw JSON specification with example payloads",
         },
         {
-            "path": "/api/stops",
+            "path": f"{PREFIX}/api/stops",
             "name": "Stops",
             "description": "Configured stop coordinates as JSON",
         },
         {
-            "path": "/api/status",
+            "path": f"{PREFIX}/api/status",
             "name": "Status",
             "description": "Live service state (clients, rate limits, uptime)",
         },
         {
-            "path": "/api/metrics",
+            "path": f"{PREFIX}/api/metrics",
             "name": "Metrics",
             "description": "Time-series metrics snapshot (JSON)",
         },
         {
-            "path": "/api/logs",
+            "path": f"{PREFIX}/api/logs",
             "name": "Logs",
             "description": "Recent log entries from ring buffer (JSON)",
         },
@@ -900,17 +1104,23 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
 
     # -- Route tables for the dual HTTP+WS server --
     static_routes = {
-        "/": index_html,
-        "/spec": spec_html,
-        "/api/spec": spec_json,
-        "/api/stops": stops_json,
+        f"{PREFIX}": index_html,
+        f"{PREFIX}/spec": spec_html,
+        f"{PREFIX}/api/spec": spec_json,
+        f"{PREFIX}/api/stops": stops_json,
     }
     dynamic_routes = {
-        "/api/status", "/api/metrics", "/api/logs", "/api/dimming",
-        "/api/dimming/set",
-        "/api/profiles", "/api/profile/activate",
-        "/dashboard", "/monitor", "/simulator",
+        f"{PREFIX}/api/status", f"{PREFIX}/api/metrics", f"{PREFIX}/api/logs",
+        f"{PREFIX}/api/dimming", f"{PREFIX}/api/dimming/set",
+        f"{PREFIX}/api/profiles", f"{PREFIX}/api/profile/activate",
+        f"{PREFIX}/api/geocode", f"{PREFIX}/api/routes",
+        f"{PREFIX}/api/arrivals",
+        f"{PREFIX}/api/config/stops", f"{PREFIX}/api/config/save",
+        f"{PREFIX}/api/config/settings",
+        f"{PREFIX}/dashboard", f"{PREFIX}/monitor", f"{PREFIX}/simulator",
     }
+    # Route patterns that need path parameter extraction (e.g., /api/routes/<id>/stops)
+    route_pattern_prefix = f"{PREFIX}/api/routes/"
 
     # -- Also configure the legacy HTTPServer routes (used by tests) --
     TransitWebHandler.routes = static_routes
@@ -920,7 +1130,7 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
         """Serve a dynamic route, returning (status, content_type, body)."""
         from .network.websocket_server import SERVICE_STATE_FILE
 
-        if path == "/api/status":
+        if path == f"{PREFIX}/api/status":
             include_full = query.get("full", ["0"])[0] == "1"
             try:
                 if os.path.exists(SERVICE_STATE_FILE):
@@ -933,17 +1143,17 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
             except Exception:
                 return (200, "application/json", json.dumps({"status": "error"}))
 
-        if path == "/api/metrics":
+        if path == f"{PREFIX}/api/metrics":
             since = float(query.get("since", [0])[0])
             return (200, "application/json", json.dumps(metrics.snapshot(series_since=since)))
 
-        if path == "/api/logs":
+        if path == f"{PREFIX}/api/logs":
             since = float(query.get("since", [0])[0])
             limit = int(query.get("limit", [200])[0])
             entries = metrics.logs.snapshot(since=since, limit=limit)
             return (200, "application/json", json.dumps({"logs": entries}))
 
-        if path == "/api/dimming":
+        if path == f"{PREFIX}/api/dimming":
             from .config import load_service_settings
             settings = load_service_settings()
             return (200, "application/json", json.dumps({
@@ -952,31 +1162,113 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
                 "device_ip": settings.device_ip,
             }))
 
-        if path == "/api/dimming/set":
+        if path == f"{PREFIX}/api/dimming/set":
             try:
                 status, resp = _handle_dimming_set(query)
                 return (status, "application/json", json.dumps(resp))
             except Exception as e:
                 return (400, "application/json", json.dumps({"error": str(e)}))
 
-        if path == "/api/profiles":
+        if path == f"{PREFIX}/api/profiles":
             return (200, "application/json", json.dumps(_handle_profiles_list()))
 
-        if path == "/api/profile/activate":
+        if path == f"{PREFIX}/api/profile/activate":
             status, resp = _handle_profile_activate(query)
             return (status, "application/json", json.dumps(resp))
 
-        if path == "/dashboard":
+        if path == f"{PREFIX}/api/config/stops":
+            return (200, "application/json", json.dumps(_handle_config_stops_get()))
+
+        if path == f"{PREFIX}/api/config/settings":
+            return (200, "application/json", json.dumps(_handle_config_settings_get()))
+
+        if path == f"{PREFIX}/dashboard":
             return (200, "text/html", generate_dashboard_html())
-        if path == "/monitor":
+        if path == f"{PREFIX}/monitor":
             return (200, "text/html", generate_monitor_html())
-        if path == "/simulator":
+        if path == f"{PREFIX}/simulator":
             return (200, "text/html", generate_simulator_html())
 
         return (404, "text/html", "<h1>404 Not Found</h1>")
 
+    async def _serve_async(path: str, query: dict) -> tuple:
+        """Handle async API endpoints. Returns (status, content_type, body) or None."""
+        if path == f"{PREFIX}/api/geocode":
+            status, resp = await _handle_geocode(query)
+            return (status, "application/json", json.dumps(resp))
+        if path == f"{PREFIX}/api/routes":
+            status, resp = await _handle_routes_for_location(query)
+            return (status, "application/json", json.dumps(resp))
+        if path == f"{PREFIX}/api/arrivals":
+            status, resp = await _handle_arrivals(query)
+            return (status, "application/json", json.dumps(resp))
+        # Handle /api/routes/<route_id>/stops
+        if path.startswith(route_pattern_prefix) and path.endswith("/stops"):
+            route_id = path[len(route_pattern_prefix):-len("/stops")]
+            if route_id:
+                status, resp = await _handle_stops_for_route(route_id)
+                return (status, "application/json", json.dumps(resp))
+        return None
+
+    async def _handle_post(path: str, body: bytes) -> tuple:
+        """Handle POST requests. Returns (status, content_type, body_str)."""
+        try:
+            data = json.loads(body) if body else {}
+        except json.JSONDecodeError as e:
+            return (400, "application/json", json.dumps({"error": f"Invalid JSON: {e}"}))
+
+        if path == f"{PREFIX}/api/dimming":
+            from .config import (
+                DimmingEntry,
+                load_service_settings,
+                save_service_settings,
+            )
+            try:
+                entries = [DimmingEntry.model_validate(e) for e in data.get("dimming_schedule", [])]
+            except Exception as e:
+                return (400, "application/json", json.dumps({"error": f"Validation error: {e}"}))
+            settings = load_service_settings()
+            settings.dimming_schedule = entries
+            if "device_ip" in data:
+                settings.device_ip = data["device_ip"]
+            if "display_brightness" in data:
+                settings.display_brightness = int(data["display_brightness"])
+            save_service_settings(settings)
+            return (200, "application/json", json.dumps({
+                "status": "ok",
+                "dimming_schedule": [e.model_dump() for e in entries],
+                "message": "Schedule saved. Will take effect within 60 seconds.",
+            }))
+
+        if path == f"{PREFIX}/api/config/stops":
+            status, resp = _handle_config_stops_post(data)
+            return (status, "application/json", json.dumps(resp))
+
+        if path == f"{PREFIX}/api/config/save":
+            status, resp = _handle_config_save(data)
+            return (status, "application/json", json.dumps(resp))
+
+        if path == f"{PREFIX}/api/config/settings":
+            status, resp = _handle_config_settings_patch(data)
+            return (status, "application/json", json.dumps(resp))
+
+        return (404, "application/json", json.dumps({"error": "Not found"}))
+
+    async def _handle_delete(path: str, body: bytes) -> tuple:
+        """Handle DELETE requests. Returns (status, content_type, body_str)."""
+        try:
+            data = json.loads(body) if body else {}
+        except json.JSONDecodeError as e:
+            return (400, "application/json", json.dumps({"error": f"Invalid JSON: {e}"}))
+
+        if path == f"{PREFIX}/api/config/stops":
+            status, resp = _handle_config_stops_delete(data)
+            return (status, "application/json", json.dumps(resp))
+
+        return (404, "application/json", json.dumps({"error": "Not found"}))
+
     def handle_http(path: str, query: dict) -> tuple:
-        """Return (status, headers_list, body_bytes) for an HTTP request."""
+        """Return (status, headers_list, body_bytes) for an HTTP GET request."""
         clean = path.rstrip("/") or "/"
         headers = [("Access-Control-Allow-Origin", "*")]
 
@@ -989,7 +1281,7 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
 
         content = static_routes.get(clean)
         if content is not None:
-            ct = "application/json" if clean.startswith("/api/") else "text/html"
+            ct = "application/json" if "/api/" in clean else "text/html"
             headers.append(("Content-Type", f"{ct}; charset=utf-8"))
             return (200, headers, content.encode("utf-8"))
 
@@ -1020,26 +1312,60 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
 
     # -- process_request: HTTP responses for non-WS requests --
     async def process_request(connection, request):
-        """Handle HTTP requests; return None to allow WS upgrade on /ws."""
+        """Handle HTTP requests; return None to allow WS upgrade on /transit-tracker/ws."""
         path = request.path
         parsed = urlparse(path)
         clean = parsed.path.rstrip("/") or "/"
 
-        # Allow WebSocket upgrade on /ws
-        if clean == "/ws":
+        # Allow WebSocket upgrade on /transit-tracker/ws
+        if clean == f"{PREFIX}/ws":
             return None
 
         query = parse_qs(parsed.query)
-        status, headers, body = handle_http(clean, query)
+        method = getattr(request, "method", "GET") or "GET"
+        headers = [("Access-Control-Allow-Origin", "*")]
+
+        if method == "OPTIONS":
+            headers.extend([
+                ("Access-Control-Allow-Methods", "GET, POST, DELETE, PATCH, OPTIONS"),
+                ("Access-Control-Allow-Headers", "Content-Type"),
+            ])
+            return websockets.http11.Response(
+                204, "", websockets.datastructures.Headers(headers), b"",
+            )
+
+        if method in ("POST", "DELETE", "PATCH"):
+            body_bytes = getattr(request, "body", b"") or b""
+            if method == "DELETE":
+                status, ct, body_str = await _handle_delete(clean, body_bytes)
+            else:
+                status, ct, body_str = await _handle_post(clean, body_bytes)
+            headers.append(("Content-Type", f"{ct}; charset=utf-8"))
+            return websockets.http11.Response(
+                status, "", websockets.datastructures.Headers(headers),
+                body_str.encode("utf-8"),
+            )
+
+        # GET: try async endpoints first, then sync
+        async_result = await _serve_async(clean, query)
+        if async_result is not None:
+            status, ct, body_str = async_result
+            headers.append(("Content-Type", f"{ct}; charset=utf-8"))
+            return websockets.http11.Response(
+                status, "", websockets.datastructures.Headers(headers),
+                body_str.encode("utf-8"),
+            )
+
+        status, h_list, body = handle_http(clean, query)
         return websockets.http11.Response(
-            status, "", websockets.datastructures.Headers(headers), body,
+            status, "", websockets.datastructures.Headers(h_list), body,
         )
 
-    log.info("Transit Tracker web server at http://%s:%d", host, port, extra={"component": "web"})
-    log.info("  /ws         — WebSocket relay (for HTTPS clients)", extra={"component": "web"})
-    log.info("  /dashboard  — observability dashboard", extra={"component": "web"})
-    log.info("  /simulator  — LED matrix simulator", extra={"component": "web"})
-    log.info("  /spec       — API documentation page", extra={"component": "web"})
+    log.info("Transit Tracker web server at http://%s:%d%s", host, port, PREFIX, extra={"component": "web"})
+    log.info("  %s/ws         — WebSocket relay", PREFIX, extra={"component": "web"})
+    log.info("  %s/dashboard  — observability dashboard", PREFIX, extra={"component": "web"})
+    log.info("  %s/simulator  — LED matrix simulator", PREFIX, extra={"component": "web"})
+    log.info("  %s/spec       — API documentation page", PREFIX, extra={"component": "web"})
 
     async with websockets.serve(
         ws_proxy_handler, host, port,
@@ -1249,10 +1575,10 @@ svg.topo text { font-family: 'IBM Plex Mono', monospace; }
       Transit Tracker
     </div>
     <div class="nav-links">
-      <a href="/dashboard" class="nav-link">Dashboard</a>
-      <a href="/monitor" class="nav-link active">Monitor</a>
-      <a href="/simulator" class="nav-link">Simulator</a>
-      <a href="/spec" class="nav-link">API</a>
+      <a href="/transit-tracker/dashboard" class="nav-link">Dashboard</a>
+      <a href="/transit-tracker/monitor" class="nav-link active">Monitor</a>
+      <a href="/transit-tracker/simulator" class="nav-link">Simulator</a>
+      <a href="/transit-tracker/spec" class="nav-link">API</a>
     </div>
   </div>
   <div class="nav-right">
@@ -1552,7 +1878,7 @@ function renderTopo() {
     /* Load iframe once */
     if (!simLoaded) {
       simLoaded = true;
-      simIframe.src = '/simulator?embed=1';
+      simIframe.src = '/transit-tracker/simulator?embed=1';
     }
     /* Map SVG coords to screen coords */
     var svgEl = document.getElementById('topo-svg');
@@ -1642,7 +1968,7 @@ window._toggleJson = function(idx) { showJson[idx] = !showJson[idx]; renderFeed(
 var lastLogTs = 0;
 
 function poll() {
-  fetch('/api/status?full=1').then(function(r) { return r.json(); }).then(function(cur) {
+  fetch('/transit-tracker/api/status?full=1').then(function(r) { return r.json(); }).then(function(cur) {
     if (cur.status === 'unavailable' || cur.status === 'error') {
       document.getElementById('live-dot').className = 'live-dot off';
       document.getElementById('conn-label').textContent = 'Unavailable';
@@ -1665,7 +1991,7 @@ function poll() {
 }
 
 function pollLogs() {
-  fetch('/api/logs?since=' + lastLogTs + '&limit=50').then(function(r) { return r.json(); }).then(function(data) {
+  fetch('/transit-tracker/api/logs?since=' + lastLogTs + '&limit=50').then(function(r) { return r.json(); }).then(function(data) {
     if (data.logs && data.logs.length) {
       for (var j = 0; j < data.logs.length; j++) {
         var entry = data.logs[j];
@@ -1983,10 +2309,10 @@ canvas { width: 100% !important; height: 130px !important; display: block; }
       Transit Tracker
     </div>
     <div class="nav-links">
-      <a href="/dashboard" class="nav-link active">Dashboard</a>
-      <a href="/monitor" class="nav-link">Monitor</a>
-      <a href="/simulator" class="nav-link">Simulator</a>
-      <a href="/spec" class="nav-link">API</a>
+      <a href="/transit-tracker/dashboard" class="nav-link active">Dashboard</a>
+      <a href="/transit-tracker/monitor" class="nav-link">Monitor</a>
+      <a href="/transit-tracker/simulator" class="nav-link">Simulator</a>
+      <a href="/transit-tracker/spec" class="nav-link">API</a>
     </div>
   </div>
   <div class="nav-right">
@@ -2242,7 +2568,7 @@ function esc(s) { var d = document.createElement('div'); d.textContent = s; retu
 
 /* ── Fetch status for info bar ── */
 function fetchStatus() {
-  fetch('/api/status').then(function(r) { return r.json(); }).then(function(s) {
+  fetch('/transit-tracker/api/status').then(function(r) { return r.json(); }).then(function(s) {
     if (s.status === 'unavailable' || s.status === 'error') return;
     var prof = (s.config_path || '').split('/').pop() || '\u2014';
     document.getElementById('i-profile').textContent = prof;
@@ -2257,7 +2583,7 @@ function fetchStatus() {
 /* ── Fetch metrics ── */
 function fetchMetrics() {
   var since = timeRange > 0 ? (Date.now() / 1000 - timeRange) : 0;
-  fetch('/api/metrics?since=' + since).then(function(r) { return r.json(); }).then(function(m) {
+  fetch('/transit-tracker/api/metrics?since=' + since).then(function(r) { return r.json(); }).then(function(m) {
     document.getElementById('live-dot').className = 'live-dot';
     document.getElementById('live-label').textContent = 'Live';
 
@@ -2310,7 +2636,7 @@ function fetchMetrics() {
 
 /* ── Fetch logs ── */
 function fetchLogs() {
-  fetch('/api/logs?since=' + lastLogTs + '&limit=200').then(function(r) { return r.json(); }).then(function(data) {
+  fetch('/transit-tracker/api/logs?since=' + lastLogTs + '&limit=200').then(function(r) { return r.json(); }).then(function(data) {
     if (data.logs && data.logs.length) {
       allLogs = allLogs.concat(data.logs);
       if (allLogs.length > 500) allLogs = allLogs.slice(-500);
@@ -2466,13 +2792,13 @@ body.embed canvas {{ border: none; border-radius: 0; display: block; width: 100%
     <span><span class="status-dot" id="ws-dot"></span> <span id="ws-label">Disconnected</span></span>
     <label>Endpoint:
       <select id="endpoint-select">
-        <option value="local">Local (via /ws proxy)</option>
+        <option value="local">Local (via /transit-tracker/ws proxy)</option>
         <option value="cloud">Cloud (tt.horner.tj)</option>
         <option value="custom">Custom...</option>
       </select>
     </label>
     <input type="text" id="custom-url" placeholder="ws://host:port" style="display:none;width:200px;">
-    <a href="/monitor">Monitor &rarr;</a>
+    <a href="/transit-tracker/monitor">Monitor &rarr;</a>
   </div>
 </div>
 <div class="sim-container">
@@ -2753,12 +3079,11 @@ function getWsUrl() {{
   const sel = document.getElementById('endpoint-select').value;
   const custom = document.getElementById('custom-url');
   const wsProt = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  // Connect via /ws on the same origin (port 8080) — the web server
-  // proxies to the internal WS server on :8000.  This avoids mixed-content
-  // errors when the page is served over HTTPS (e.g. OrbStack .orb.local).
-  if (sel === 'local') return wsProt + location.host + '/ws';
+  // Connect via /transit-tracker/ws on the same origin — the web server
+  // proxies to the internal WS server on :8000.
+  if (sel === 'local') return wsProt + location.host + '/transit-tracker/ws';
   if (sel === 'cloud') return 'wss://tt.horner.tj/';
-  return custom.value || (wsProt + location.host + '/ws');
+  return custom.value || (wsProt + location.host + '/transit-tracker/ws');
 }}
 
 function connect() {{

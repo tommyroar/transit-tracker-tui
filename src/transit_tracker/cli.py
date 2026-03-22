@@ -22,7 +22,8 @@ def _container_running() -> bool:
     """Check if the transit-tracker Docker container is running."""
     res = subprocess.run(
         ["docker", "inspect", "-f", "{{.State.Running}}", CONTAINER_NAME],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     return res.returncode == 0 and "true" in res.stdout.lower()
 
@@ -45,7 +46,8 @@ def manage_service(action: str):
     # If a container exists (running or stopped), manage via Docker
     res = subprocess.run(
         ["docker", "inspect", CONTAINER_NAME],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if res.returncode == 0:
         _manage_service_docker(action)
@@ -61,7 +63,8 @@ def _manage_service_docker(action: str):
         print(f"Starting container {CONTAINER_NAME}...")
         result = subprocess.run(
             ["docker", "start", CONTAINER_NAME],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if result.returncode == 0:
             print(f"[green]Container {CONTAINER_NAME} started.[/green]")
@@ -70,10 +73,10 @@ def _manage_service_docker(action: str):
 
     elif action == "stop":
         print(f"Stopping container {CONTAINER_NAME}...")
-        subprocess.run(["pkill", "-f", "transit-tracker gui"], capture_output=True)
         result = subprocess.run(
             ["docker", "stop", CONTAINER_NAME],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if result.returncode == 0:
             print(f"[green]Container {CONTAINER_NAME} stopped.[/green]")
@@ -81,11 +84,11 @@ def _manage_service_docker(action: str):
             print(f"[red]Failed to stop: {result.stderr.strip()}[/red]")
 
     elif action == "restart":
-        subprocess.run(["pkill", "-f", "transit-tracker gui"], capture_output=True)
         print(f"Restarting container {CONTAINER_NAME}...")
         result = subprocess.run(
             ["docker", "restart", CONTAINER_NAME],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if result.returncode == 0:
             print(f"[green]Container {CONTAINER_NAME} restarted.[/green]")
@@ -97,10 +100,13 @@ def _manage_service_docker(action: str):
             # Get uptime from container inspect
             res = subprocess.run(
                 ["docker", "inspect", "-f", "{{.State.StartedAt}}", CONTAINER_NAME],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             started = res.stdout.strip() if res.returncode == 0 else "unknown"
-            print(f"● {CONTAINER_NAME} is [bold green]running[/bold green] (since {started})")
+            print(
+                f"● {CONTAINER_NAME} is [bold green]running[/bold green] (since {started})"
+            )
         else:
             print(f"○ {CONTAINER_NAME} is [red]stopped[/red]")
 
@@ -119,7 +125,9 @@ def _manage_service_launchctl(action: str):
             print(f"Starting {label} via launchctl...")
             os.system(f"launchctl load {PLIST_PATH}")
         else:
-            print(f"[red]Error: {PLIST_PATH} not found. Run 'transit-tracker install' first.[/red]")
+            print(
+                f"[red]Error: {PLIST_PATH} not found. Run 'transit-tracker install' first.[/red]"
+            )
 
     elif action == "stop":
         if sys.platform != "darwin":
@@ -127,7 +135,6 @@ def _manage_service_launchctl(action: str):
             return
         print(f"Stopping {label} via launchctl...")
         os.system(f"launchctl unload {PLIST_PATH}")
-        subprocess.run(["pkill", "-f", "transit-tracker gui"], capture_output=True)
         subprocess.run(["pkill", "-f", "transit-tracker service"], capture_output=True)
         print("[green]Service stopped.[/green]")
 
@@ -137,26 +144,31 @@ def _manage_service_launchctl(action: str):
             time.sleep(1)
             manage_service("start")
             return
-        subprocess.run(["pkill", "-f", "transit-tracker gui"], capture_output=True)
         uid = os.getuid()
         result = subprocess.run(
             ["launchctl", "kickstart", "-k", f"gui/{uid}/{label}"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if result.returncode == 0:
             print(f"Service {label} restarted.")
         else:
-            print(f"kickstart failed ({result.stderr.strip()}), falling back to stop/start...")
+            print(
+                f"kickstart failed ({result.stderr.strip()}), falling back to stop/start..."
+            )
             _manage_service_launchctl("stop")
             time.sleep(1)
             _manage_service_launchctl("start")
 
     elif action == "status":
-        res = subprocess.run(["launchctl", "list", label], capture_output=True, text=True)
+        res = subprocess.run(
+            ["launchctl", "list", label], capture_output=True, text=True
+        )
         if res.returncode == 0:
             print(f"● {label} is [bold green]running[/bold green]")
         else:
             print(f"○ {label} is [red]stopped[/red]")
+
 
 async def run_full_service():
     """Runs both the WebSocket server (for HW) and the notification client."""
@@ -168,14 +180,6 @@ async def run_full_service():
         config = TransitConfig.load()
 
     tasks = []
-
-    # GUI tray app is deprecated — use web UI at /dashboard and /monitor
-    if sys.platform == "darwin" and config.service.auto_launch_gui:
-        log.warning(
-            "auto_launch_gui is deprecated — use the web UI at /dashboard instead. "
-            "Set auto_launch_gui: false in service.yaml to silence this warning.",
-            extra={"component": "service"},
-        )
 
     # Always start the local proxy server (for hardware/monitors)
     tasks.append(run_server(config=config))
@@ -193,6 +197,7 @@ async def run_full_service():
 
     await asyncio.gather(*tasks)
 
+
 def main():
     # Use saved config path if available
     path = get_last_config_path()
@@ -205,16 +210,25 @@ def main():
     parser.add_argument(
         "command",
         nargs="*",
-        help="Command to run: 'ui' (default), 'service [start|stop|restart|status]', 'simulator', 'gui', 'web'."
+        help="Command to run: 'ui' (default), 'service [start|stop|restart|status]', 'simulator', 'web'.",
     )
-    parser.add_argument("--log-level", default=os.environ.get("TT_LOG_LEVEL", "INFO"),
-                        help="Log level: DEBUG, INFO, WARNING, ERROR")
-    parser.add_argument("--log-json", action="store_true",
-                        default=os.environ.get("TT_LOG_JSON", "").lower() in ("1", "true"),
-                        help="Emit structured JSON logs (for containers)")
-    parser.add_argument("--log-messages", action="store_true",
-                        default=os.environ.get("TT_LOG_MESSAGES", "").lower() in ("1", "true"),
-                        help="Log all WebSocket messages sent/received")
+    parser.add_argument(
+        "--log-level",
+        default=os.environ.get("TT_LOG_LEVEL", "INFO"),
+        help="Log level: DEBUG, INFO, WARNING, ERROR",
+    )
+    parser.add_argument(
+        "--log-json",
+        action="store_true",
+        default=os.environ.get("TT_LOG_JSON", "").lower() in ("1", "true"),
+        help="Emit structured JSON logs (for containers)",
+    )
+    parser.add_argument(
+        "--log-messages",
+        action="store_true",
+        default=os.environ.get("TT_LOG_MESSAGES", "").lower() in ("1", "true"),
+        help="Log all WebSocket messages sent/received",
+    )
 
     args = parser.parse_args()
 
@@ -238,24 +252,25 @@ def main():
                 asyncio.run(run_full_service())
             except KeyboardInterrupt:
                 pass
-    elif primary_cmd == "gui":
-        from .gui import main as run_gui
-        run_gui()
     elif primary_cmd == "simulator":
         from .simulator import run_simulator
+
         run_simulator(config, force_live=True)
     elif primary_cmd == "monitor":
         from .monitor import run_monitor
+
         use_ws = "--ws" in sys.argv
         asyncio.run(run_monitor(config, use_ws=use_ws))
     elif primary_cmd == "web":
         from .web import run_web
+
         asyncio.run(run_web(config))
     elif primary_cmd == "ui":
         run_cli()
     else:
         # Default fallback
         run_cli()
+
 
 if __name__ == "__main__":
     main()

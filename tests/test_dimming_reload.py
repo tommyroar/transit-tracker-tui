@@ -68,7 +68,6 @@ def test_file_reload_picks_up_changes(tmp_path):
     config.service.device_ip = "192.168.5.248"
     config.service.request_spacing_ms = 250
     config.service.use_local_api = True
-    config.service.auto_launch_gui = True
     config.transit_tracker = MagicMock()
     config.transit_tracker.abbreviations = []
     config.transit_tracker.time_display = "arrival"
@@ -121,7 +120,6 @@ def test_file_reload_no_change_skips(tmp_path):
     config.service.device_ip = None
     config.service.request_spacing_ms = 250
     config.service.use_local_api = True
-    config.service.auto_launch_gui = True
     config.transit_tracker = MagicMock()
     config.transit_tracker.abbreviations = []
     config.transit_tracker.time_display = "arrival"

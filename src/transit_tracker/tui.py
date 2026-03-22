@@ -17,11 +17,13 @@ from rich.table import Table
 from rich.text import Text
 
 from .config import (
+    DimmingEntry,
     TransitConfig,
     TransitSubscription,
     get_last_config_path,
     set_last_config_path,
     list_profiles,
+    save_service_settings,
 )
 from .display import format_trip_line, DISPLAY_VARIABLES
 from .hardware import (
@@ -429,6 +431,7 @@ async def change_threshold_wizard(config: TransitConfig, config_path: str):
     
     if val and val.isdigit() and int(val) > 0:
         config.service.arrival_threshold_minutes = int(val)
+        save_service_settings(config.service)
         config.save(config_path)
         print("Threshold updated.")
     else:
@@ -446,6 +449,7 @@ async def change_panels_wizard(config: TransitConfig, config_path: str, console:
     
     if val:
         config.service.num_panels = int(val)
+        save_service_settings(config.service)
         config.save(config_path)
         rprint(f"[green]Hardware setup updated to {val} panel(s).[/green]")
 
@@ -485,12 +489,68 @@ async def change_brightness_wizard(config: TransitConfig, config_path: str, cons
             brightness = int(val)
             if 0 <= brightness <= 255:
                 config.service.display_brightness = brightness
+                save_service_settings(config.service)
                 config.save(config_path)
                 rprint(f"[green]Display brightness set to {brightness}.[/green]")
             else:
                 rprint("[red]Brightness must be between 0 and 255.[/red]")
         except ValueError:
             rprint("[red]Invalid brightness value.[/red]")
+
+
+async def manage_dimming_schedule_wizard(config: TransitConfig, config_path: str, console: Console):
+    while True:
+        schedule = config.service.dimming_schedule
+        entry_lines = [f"{e.time}  ->  {e.brightness}" for e in sorted(schedule, key=lambda e: e.time)]
+
+        choices = entry_lines + ["-- Add entry", "-- Clear all", "-- Back"]
+        action = await questionary.select(
+            "Brightness Schedule  (select an entry to remove it):",
+            choices=choices,
+        ).ask_async()
+
+        if action is None or action == "-- Back":
+            break
+
+        elif action == "-- Add entry":
+            time_val = await questionary.text(
+                "Time (HH:MM, 24-hour):",
+                validate=lambda v: bool(re.match(r"^\d{2}:\d{2}$", v)) or "Use HH:MM format",
+            ).ask_async()
+            if not time_val:
+                continue
+            brightness_val = await questionary.text(
+                "Brightness (0-255):",
+                validate=lambda v: (v.isdigit() and 0 <= int(v) <= 255) or "Enter a value from 0 to 255",
+            ).ask_async()
+            if not brightness_val:
+                continue
+            try:
+                entry = DimmingEntry(time=time_val, brightness=int(brightness_val))
+                config.service.dimming_schedule.append(entry)
+                save_service_settings(config.service)
+                rprint(f"[green]Added {entry.time} -> {entry.brightness}.[/green]")
+            except Exception as e:
+                rprint(f"[red]Invalid entry: {e}[/red]")
+
+        elif action == "-- Clear all":
+            confirmed = await questionary.confirm("Remove all schedule entries?").ask_async()
+            if confirmed:
+                config.service.dimming_schedule = []
+                save_service_settings(config.service)
+                rprint("[green]Schedule cleared.[/green]")
+
+        elif action in entry_lines:
+            idx = entry_lines.index(action)
+            sorted_entries = sorted(schedule, key=lambda e: e.time)
+            entry = sorted_entries[idx]
+            confirmed = await questionary.confirm(
+                f"Remove {entry.time} -> {entry.brightness}?"
+            ).ask_async()
+            if confirmed:
+                config.service.dimming_schedule.remove(entry)
+                save_service_settings(config.service)
+                rprint(f"[green]Removed {entry.time} -> {entry.brightness}.[/green]")
 
 
 async def change_api_mode_wizard(config: TransitConfig, config_path: str, console: Console):
@@ -517,7 +577,8 @@ async def change_api_mode_wizard(config: TransitConfig, config_path: str, consol
                 config.api_url = url
         else:
             config.api_url = "ws://localhost:8000/"
-            
+
+        save_service_settings(config.service)
         config.save(config_path)
         rprint(f"[green]API mode updated to {'Local' if mode else 'Cloud'}.[/green]")
 
@@ -896,6 +957,7 @@ async def async_main_menu():
                         "Manage Stops",
                         "Change Number of Panels",
                         "Change Brightness",
+                        "Brightness Schedule",
                         "Debug",
                         "Back"
                     ],
@@ -1071,6 +1133,9 @@ async def async_main_menu():
 
                 elif c_action == "Change Brightness":
                     await change_brightness_wizard(config, config_path, console)
+
+                elif c_action == "Brightness Schedule":
+                    await manage_dimming_schedule_wizard(config, config_path, console)
 
         elif action == "Simulator":
             rprint(f"[dim]Using config: {config_path}[/dim]")

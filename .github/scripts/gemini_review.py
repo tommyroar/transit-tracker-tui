@@ -61,14 +61,11 @@ def get_latest_pro_model(client: genai.Client) -> str:
 
     Queries the API for all available models, filters to those whose name
     contains 'pro' and supports 'generateContent', then prefers stable over
-    preview/experimental releases.  Falls back to a known-good model if the
-    list is unavailable or empty.
+    preview/experimental releases.  Fails loudly on any error so the Actions
+    job surfaces a red failure rather than silently using a stale model.
     """
-    fallback = "gemini-3.1-pro-preview"
-    try:
-        all_models = list(client.models.list())
-    except Exception:
-        return fallback
+    # Let any API exception propagate — don't swallow errors.
+    all_models = list(client.models.list())
 
     def _is_pro(m) -> bool:
         name = (m.name or "").lower()
@@ -77,7 +74,11 @@ def get_latest_pro_model(client: genai.Client) -> str:
 
     pro_models = [m for m in all_models if _is_pro(m)]
     if not pro_models:
-        return fallback
+        print(
+            "ERROR: No Gemini Pro models available — check GEMINI_API_KEY and API quota.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # Prefer stable (no 'preview' or 'experimental') if any exist.
     stable = [m for m in pro_models if "preview" not in m.name.lower() and "experimental" not in m.name.lower()]

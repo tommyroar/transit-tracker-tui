@@ -1382,7 +1382,7 @@ function renderTopo() {
   var upH = state.uptime_hours || 0;
   var upStr = upH >= 1 ? upH.toFixed(1) + 'h' : Math.round(upH * 60) + 'm';
   var rows = Math.max(cc, 1);
-  var simH = simActive ? 140 : 0;
+  var simH = simActive ? 105 : 0;
   var svgH = 290 + rows * 56 + simH;
   svg.setAttribute('viewBox', '0 0 600 ' + svgH);
 
@@ -1443,7 +1443,7 @@ function renderTopo() {
   } else {
     /* Calculate last node Y for trunk length */
     var simNodeIdx = clients.length;
-    var simBoxH = 110;
+    var simBoxH = 75;
     var lastNodeBottomY;
     if (simActive) {
       var simCy = cStartY + simNodeIdx * clientSpacing;
@@ -1487,7 +1487,7 @@ function renderTopo() {
     if (simActive) {
       var simCy = cStartY + simNodeIdx * clientSpacing;
       var simBranchY = simCy + simBoxH / 2;
-      var simBoxW = 400;
+      var simBoxW = 300;
       var simBoxX = clientBoxX;
 
       /* Horizontal branch: trunk to simulator */
@@ -2408,12 +2408,12 @@ canvas {{
 }}
 a {{ color: var(--purple); text-decoration: none; }}
 a:hover {{ text-decoration: underline; }}
-/* Embed mode: hide header, fill container */
-body.embed {{ background: transparent; }}
+/* Embed mode: canvas fills entire viewport, no chrome */
+body.embed {{ background: #000; margin: 0; padding: 0; overflow: hidden; }}
 body.embed .header {{ display: none; }}
-body.embed .sim-container {{ min-height: auto; padding: 0; justify-content: flex-start; }}
+body.embed .sim-container {{ min-height: 0; height: 100vh; padding: 0; display: block; }}
 body.embed .info {{ display: none; }}
-body.embed canvas {{ border: none; border-radius: 0; }}
+body.embed canvas {{ border: none; border-radius: 0; display: block; width: 100%; height: 100%; }}
 </style>
 </head>
 <body>

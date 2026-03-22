@@ -42,6 +42,11 @@ dev = [
     "pytest-cov>=6.0",
     "mutmut>=3.2.0",
     "ruff>=0.9.9",
+    "jupyter>=1.1.1",
+    "pyyaml>=6.0.3",
+    "osmnx>=2.1.0",
+    "shapely>=2.1.2",
+    "scikit-learn>=1.8.0",
 ]
 
 [tool.ruff]

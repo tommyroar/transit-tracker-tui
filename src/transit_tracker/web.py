@@ -1229,9 +1229,6 @@ svg.topo text { font-family: 'IBM Plex Mono', monospace; }
 }
 .sim-label input { accent-color: var(--amber); }
 
-/* ── Sim panel ── */
-#sim-panel { display: none; border-top: 1px solid var(--border); background: #000; }
-
 @media (max-width: 800px) {
   .main { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .col-left { border-right: none; border-bottom: 1px solid var(--border); max-height: 50vh; }
@@ -1276,6 +1273,7 @@ svg.topo text { font-family: 'IBM Plex Mono', monospace; }
     </div>
     <div class="topo-wrap">
       <svg class="topo" id="topo-svg" viewBox="0 0 600 500" preserveAspectRatio="xMidYMid meet"></svg>
+      <iframe id="sim-iframe" src="about:blank" style="display:none;position:absolute;border:none;border-radius:4px;background:#000;z-index:10"></iframe>
     </div>
     <div class="trip-section">
       <div class="section-hdr">
@@ -1300,25 +1298,17 @@ svg.topo text { font-family: 'IBM Plex Mono', monospace; }
   </div>
 </div>
 
-<div id="sim-panel">
-  <iframe id="sim-iframe" style="width:100%;height:360px;border:none" src="about:blank"></iframe>
-</div>
-
 <script>
 (function() {
 'use strict';
 
 /* ── Simulator toggle ── */
 var simToggle = document.getElementById('sim-toggle');
-var simPanel = document.getElementById('sim-panel');
-var simIframe = document.getElementById('sim-iframe');
+var simActive = false;
+var simLoaded = false;
 simToggle.addEventListener('change', function() {
-  if (this.checked) {
-    simPanel.style.display = 'block';
-    if (simIframe.src === 'about:blank') simIframe.src = '/simulator';
-  } else {
-    simPanel.style.display = 'none';
-  }
+  simActive = this.checked;
+  renderTopo();
 });
 
 /* ── State ── */
@@ -1386,7 +1376,8 @@ function renderTopo() {
   var upH = state.uptime_hours || 0;
   var upStr = upH >= 1 ? upH.toFixed(1) + 'h' : Math.round(upH * 60) + 'm';
   var rows = Math.max(cc, 1);
-  var svgH = 290 + rows * 56;
+  var simH = simActive ? 200 : 0;
+  var svgH = 290 + rows * 56 + simH;
   svg.setAttribute('viewBox', '0 0 600 ' + svgH);
 
   var h = '';
@@ -1437,20 +1428,33 @@ function renderTopo() {
   var clientBoxH = 40;
   var clientSpacing = 52;
 
-  if (clients.length === 0) {
+  /* Total nodes = real clients + simulator (if active) */
+  var totalNodes = clients.length + (simActive ? 1 : 0);
+
+  if (totalNodes === 0) {
     h += '<line x1="300" y1="' + (sy + 90) + '" x2="300" y2="' + cStartY + '" stroke="#1a1e35" stroke-width="1" stroke-dasharray="3,4"/>';
     h += '<text x="300" y="' + (cStartY + 16) + '" text-anchor="middle" fill="#353850" font-size="10.5" font-style="italic">No clients connected</text>';
   } else {
-    var lastCy = cStartY + (clients.length - 1) * clientSpacing;
+    /* Calculate last node Y for trunk length */
+    var simNodeIdx = clients.length;
+    var simBoxH = 170;
+    var lastNodeBottomY;
+    if (simActive) {
+      var simCy = cStartY + simNodeIdx * clientSpacing;
+      lastNodeBottomY = simCy + simBoxH / 2;
+    } else {
+      lastNodeBottomY = cStartY + (clients.length - 1) * clientSpacing + clientBoxH / 2;
+    }
 
     /* Connector: server bottom center to trunk top */
     h += '<line x1="300" y1="' + (sy + 90) + '" x2="' + trunkX + '" y2="' + (sy + 90) + '" stroke="#40b868" stroke-width="1.5" stroke-dasharray="5,4"/>';
 
-    /* Vertical trunk from server level down to last client midpoint */
-    h += '<line x1="' + trunkX + '" y1="' + (sy + 90) + '" x2="' + trunkX + '" y2="' + (lastCy + clientBoxH / 2) + '" stroke="#40b868" stroke-width="1.5" stroke-dasharray="5,4">';
+    /* Vertical trunk from server level down to last node midpoint */
+    h += '<line x1="' + trunkX + '" y1="' + (sy + 90) + '" x2="' + trunkX + '" y2="' + lastNodeBottomY + '" stroke="#40b868" stroke-width="1.5" stroke-dasharray="5,4">';
     h += '<animate attributeName="stroke-dashoffset" from="0" to="-18" dur="1.2s" repeatCount="indefinite"/>';
     h += '</line>';
 
+    /* Real client nodes */
     for (var i = 0; i < clients.length; i++) {
       var c = clients[i];
       var cy = cStartY + i * clientSpacing;
@@ -1472,9 +1476,58 @@ function renderTopo() {
       h += '<text x="' + (clientBoxX + 39) + '" y="' + (cy + 16) + '" fill="#eae8e4" font-size="10.5" font-weight="600">' + esc(name) + '</text>';
       h += '<text x="' + (clientBoxX + 39) + '" y="' + (cy + 30) + '" fill="#353850" font-size="9.5">' + esc(addr) + ' \u00b7 ' + subs + ' subs</text>';
     }
+
+    /* Simulator node — embedded as foreignObject on the bus */
+    if (simActive) {
+      var simCy = cStartY + simNodeIdx * clientSpacing;
+      var simBranchY = simCy + simBoxH / 2;
+      var simBoxW = 400;
+      var simBoxX = clientBoxX;
+
+      /* Horizontal branch: trunk to simulator */
+      h += '<line x1="' + trunkX + '" y1="' + simBranchY + '" x2="' + simBoxX + '" y2="' + simBranchY + '" stroke="#e8a830" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#ag)">';
+      h += '<animate attributeName="stroke-dashoffset" from="0" to="-18" dur="1.2s" repeatCount="indefinite"/>';
+      h += '</line>';
+
+      /* Simulator container */
+      h += '<rect x="' + simBoxX + '" y="' + simCy + '" width="' + simBoxW + '" height="' + simBoxH + '" rx="6" fill="#0c0f1a" stroke="#e8a830" stroke-width="1.5"/>';
+      h += '<rect x="' + simBoxX + '" y="' + simCy + '" width="' + simBoxW + '" height="' + simBoxH + '" rx="6" fill="none" stroke="#e8a830" stroke-width="1" opacity="0.1" filter="url(#glow)"/>';
+
+      /* Label */
+      h += '<text x="' + (simBoxX + 12) + '" y="' + (simCy + 15) + '" fill="#e8a830" font-size="10" font-weight="600">LED SIMULATOR</text>';
+      h += '<text x="' + (simBoxX + simBoxW - 8) + '" y="' + (simCy + 15) + '" text-anchor="end" fill="#353850" font-size="9">ws://localhost:8080/ws</text>';
+
+      /* Placeholder rect for iframe overlay */
+      h += '<rect x="' + (simBoxX + 4) + '" y="' + (simCy + 22) + '" width="' + (simBoxW - 8) + '" height="' + (simBoxH - 26) + '" rx="4" fill="#000" id="sim-placeholder"/>';
+    }
   }
 
   svg.innerHTML = h;
+
+  /* Position the external iframe over the SVG placeholder */
+  var simIframe = document.getElementById('sim-iframe');
+  var placeholder = document.getElementById('sim-placeholder');
+  if (simActive && placeholder) {
+    /* Load iframe once */
+    if (!simLoaded) {
+      simLoaded = true;
+      simIframe.src = '/simulator?embed=1';
+    }
+    /* Map SVG coords to screen coords */
+    var svgEl = document.getElementById('topo-svg');
+    var svgRect = svgEl.getBoundingClientRect();
+    var viewBox = svgEl.viewBox.baseVal;
+    var scaleX = svgRect.width / viewBox.width;
+    var scaleY = svgRect.height / viewBox.height;
+    var pBox = placeholder.getBBox();
+    simIframe.style.display = 'block';
+    simIframe.style.left = (pBox.x * scaleX) + 'px';
+    simIframe.style.top = (pBox.y * scaleY) + 'px';
+    simIframe.style.width = (pBox.width * scaleX) + 'px';
+    simIframe.style.height = (pBox.height * scaleY) + 'px';
+  } else {
+    simIframe.style.display = 'none';
+  }
 }
 
 /* ── Trip table ── */
@@ -2356,9 +2409,15 @@ canvas {{
 }}
 a {{ color: var(--purple); text-decoration: none; }}
 a:hover {{ text-decoration: underline; }}
+/* Embed mode: hide header, compact layout */
+body.embed .header {{ display: none; }}
+body.embed .sim-container {{ min-height: auto; padding: 4px; }}
+body.embed .info {{ display: none; }}
+body.embed canvas {{ border-width: 1px; }}
 </style>
 </head>
 <body>
+<script>if(location.search.indexOf('embed=1')>=0)document.body.classList.add('embed');</script>
 <div class="header">
   <h1><span>Transit Tracker</span> &mdash; LED Simulator</h1>
   <div class="controls">
@@ -2388,7 +2447,7 @@ a:hover {{ text-decoration: underline; }}
 const PANEL_W = 64, PANEL_H = 32, NUM_PANELS = 2;
 const DISPLAY_W = PANEL_W * NUM_PANELS;
 const DISPLAY_H = PANEL_H;
-let PIXEL_SCALE = 6;
+let PIXEL_SCALE = (location.search.indexOf('embed=1') >= 0) ? 3 : 6;
 const PIXEL_GAP = 1;
 
 // ---- Glyph data from Python MicroFont ----

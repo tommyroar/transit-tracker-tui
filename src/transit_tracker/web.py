@@ -16,6 +16,60 @@ from .transit_api import TransitAPI
 log = get_logger("transit_tracker.web")
 
 
+# -- Shared API helpers (used by both legacy HTTPServer and websockets paths) --
+
+def _handle_profiles_list() -> dict:
+    """Return profiles list and active profile as a dict."""
+    from .config import get_last_config_path, list_profiles
+    active = get_last_config_path()
+    profiles = [
+        {"name": os.path.basename(p), "path": p, "active": p == active}
+        for p in list_profiles()
+    ]
+    return {"profiles": profiles, "active": active}
+
+
+def _handle_profile_activate(query: dict) -> tuple:
+    """Activate a profile by name. Returns (status_code, response_dict)."""
+    from .config import list_profiles, set_last_config_path
+    name = query.get("name", [None])[0]
+    if not name:
+        return (400, {"error": "Missing 'name' query parameter"})
+    all_profiles = list_profiles()
+    match = next((p for p in all_profiles if os.path.basename(p) == name), None)
+    if not match:
+        available = [os.path.basename(p) for p in all_profiles]
+        return (404, {"error": f"Profile '{name}' not found", "available": available})
+    set_last_config_path(match)
+    return (200, {"status": "ok", "profile": name, "path": match,
+                  "message": "Profile activated. Server will hot-reload within 30 seconds."})
+
+
+def _handle_dimming_set(query: dict) -> tuple:
+    """Update dimming settings from query params. Returns (status_code, response_dict)."""
+    from .config import DimmingEntry, load_service_settings, save_service_settings
+    settings = load_service_settings()
+    raw_entries = query.get("schedule", [])
+    if raw_entries:
+        entries = []
+        for entry in raw_entries:
+            time_str, brightness_str = entry.split(",", 1)
+            entries.append(DimmingEntry(time=time_str.strip(), brightness=int(brightness_str.strip())))
+        settings.dimming_schedule = entries
+    if "brightness" in query:
+        settings.display_brightness = int(query["brightness"][0])
+    if "device_ip" in query:
+        settings.device_ip = query["device_ip"][0]
+    save_service_settings(settings)
+    return (200, {
+        "status": "ok",
+        "dimming_schedule": [e.model_dump() for e in settings.dimming_schedule],
+        "display_brightness": settings.display_brightness,
+        "device_ip": settings.device_ip,
+        "message": "Dimming settings saved. Will take effect within 60 seconds.",
+    })
+
+
 async def resolve_stop_coordinates(config: TransitConfig) -> List[Dict[str, Any]]:
     """Fetch lat/lon for all configured stops from the OBA API."""
     api = TransitAPI(oba_api_key=config.service.oba_api_key)
@@ -584,28 +638,9 @@ class TransitWebHandler(BaseHTTPRequestHandler):
                 self._serve_dimming_get()
                 return
             if path == "/api/dimming/set":
-                from .config import DimmingEntry, load_service_settings, save_service_settings
                 try:
-                    settings = load_service_settings()
-                    raw_entries = query.get("schedule", [])
-                    if raw_entries:
-                        entries = []
-                        for entry in raw_entries:
-                            time_str, brightness_str = entry.split(",", 1)
-                            entries.append(DimmingEntry(time=time_str.strip(), brightness=int(brightness_str.strip())))
-                        settings.dimming_schedule = entries
-                    if "brightness" in query:
-                        settings.display_brightness = int(query["brightness"][0])
-                    if "device_ip" in query:
-                        settings.device_ip = query["device_ip"][0]
-                    save_service_settings(settings)
-                    self._json_response(json.dumps({
-                        "status": "ok",
-                        "dimming_schedule": [e.model_dump() for e in settings.dimming_schedule],
-                        "display_brightness": settings.display_brightness,
-                        "device_ip": settings.device_ip,
-                        "message": "Dimming settings saved. Will take effect within 60 seconds.",
-                    }))
+                    status, resp = _handle_dimming_set(query)
+                    self._json_response(json.dumps(resp), status)
                 except Exception as e:
                     self._json_error(400, str(e))
                 return
@@ -613,24 +648,11 @@ class TransitWebHandler(BaseHTTPRequestHandler):
                 self._serve_simulator()
                 return
             if path == "/api/profiles":
-                self._serve_profiles_get()
+                self._json_response(json.dumps(_handle_profiles_list()))
                 return
             if path == "/api/profile/activate":
-                from .config import list_profiles, set_last_config_path
-                name = query.get("name", [None])[0]
-                if not name:
-                    self._json_error(400, "Missing 'name' query parameter")
-                    return
-                match = next((p for p in list_profiles() if os.path.basename(p) == name), None)
-                if not match:
-                    available = [os.path.basename(p) for p in list_profiles()]
-                    self._json_error(404, f"Profile '{name}' not found. Available: {available}")
-                    return
-                set_last_config_path(match)
-                self._json_response(json.dumps({
-                    "status": "ok", "profile": name, "path": match,
-                    "message": "Profile activated. Server will hot-reload within 30 seconds.",
-                }))
+                status, resp = _handle_profile_activate(query)
+                self._json_response(json.dumps(resp), status)
                 return
 
         content = self.routes.get(path)
@@ -672,8 +694,8 @@ class TransitWebHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         log.debug("%s", args[0], extra={"component": "web"})
 
-    def _json_response(self, body: str):
-        self.send_response(200)
+    def _json_response(self, body: str, status: int = 200):
+        self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
@@ -778,16 +800,6 @@ class TransitWebHandler(BaseHTTPRequestHandler):
             "dimming_schedule": [e.model_dump() for e in entries],
             "message": "Schedule saved. Will take effect within 60 seconds.",
         }))
-
-    def _serve_profiles_get(self):
-        """Return available profiles and the currently active one."""
-        from .config import get_last_config_path, list_profiles
-        active = get_last_config_path()
-        profiles = [
-            {"name": os.path.basename(p), "path": p, "active": p == active}
-            for p in list_profiles()
-        ]
-        self._json_response(json.dumps({"profiles": profiles, "active": active}))
 
     def _serve_simulator(self):
         """Serve the web LED simulator HTML."""
@@ -920,54 +932,18 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
             }))
 
         if path == "/api/dimming/set":
-            from .config import DimmingEntry, load_service_settings, save_service_settings
             try:
-                settings = load_service_settings()
-                # Parse schedule from query: schedule=07:00,255&schedule=19:00,1
-                raw_entries = query.get("schedule", [])
-                if raw_entries:
-                    entries = []
-                    for entry in raw_entries:
-                        time_str, brightness_str = entry.split(",", 1)
-                        entries.append(DimmingEntry(time=time_str.strip(), brightness=int(brightness_str.strip())))
-                    settings.dimming_schedule = entries
-                if "brightness" in query:
-                    settings.display_brightness = int(query["brightness"][0])
-                if "device_ip" in query:
-                    settings.device_ip = query["device_ip"][0]
-                save_service_settings(settings)
-                return (200, "application/json", json.dumps({
-                    "status": "ok",
-                    "dimming_schedule": [e.model_dump() for e in settings.dimming_schedule],
-                    "display_brightness": settings.display_brightness,
-                    "device_ip": settings.device_ip,
-                    "message": "Dimming settings saved. Will take effect within 60 seconds.",
-                }))
+                status, resp = _handle_dimming_set(query)
+                return (status, "application/json", json.dumps(resp))
             except Exception as e:
                 return (400, "application/json", json.dumps({"error": str(e)}))
 
         if path == "/api/profiles":
-            from .config import get_last_config_path, list_profiles
-            active = get_last_config_path()
-            profiles = [
-                {"name": os.path.basename(p), "path": p, "active": p == active}
-                for p in list_profiles()
-            ]
-            return (200, "application/json", json.dumps({"profiles": profiles, "active": active}))
+            return (200, "application/json", json.dumps(_handle_profiles_list()))
 
         if path == "/api/profile/activate":
-            from .config import list_profiles, set_last_config_path
-            name = query.get("name", [None])[0]
-            if not name:
-                return (400, "application/json", json.dumps({"error": "Missing 'name' query parameter"}))
-            match = next((p for p in list_profiles() if os.path.basename(p) == name), None)
-            if not match:
-                available = [os.path.basename(p) for p in list_profiles()]
-                return (404, "application/json", json.dumps({"error": f"Profile '{name}' not found", "available": available}))
-            set_last_config_path(match)
-            return (200, "application/json", json.dumps({
-                "status": "ok", "profile": name, "path": match,
-                "message": "Profile activated. Server will hot-reload within 30 seconds."}))
+            status, resp = _handle_profile_activate(query)
+            return (status, "application/json", json.dumps(resp))
 
         if path == "/dashboard":
             return (200, "text/html", generate_dashboard_html())

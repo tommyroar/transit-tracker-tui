@@ -586,6 +586,26 @@ class TransitWebHandler(BaseHTTPRequestHandler):
             if path == "/simulator":
                 self._serve_simulator()
                 return
+            if path == "/api/profiles":
+                self._serve_profiles_get()
+                return
+            if path == "/api/profile/activate":
+                from .config import list_profiles, set_last_config_path
+                name = query.get("name", [None])[0]
+                if not name:
+                    self._json_error(400, "Missing 'name' query parameter")
+                    return
+                match = next((p for p in list_profiles() if os.path.basename(p) == name), None)
+                if not match:
+                    available = [os.path.basename(p) for p in list_profiles()]
+                    self._json_error(404, f"Profile '{name}' not found. Available: {available}")
+                    return
+                set_last_config_path(match)
+                self._json_response(json.dumps({
+                    "status": "ok", "profile": name, "path": match,
+                    "message": "Profile activated. Server will hot-reload within 30 seconds.",
+                }))
+                return
 
         content = self.routes.get(path)
         if content is not None:
@@ -733,6 +753,16 @@ class TransitWebHandler(BaseHTTPRequestHandler):
             "message": "Schedule saved. Will take effect within 60 seconds.",
         }))
 
+    def _serve_profiles_get(self):
+        """Return available profiles and the currently active one."""
+        from .config import get_last_config_path, list_profiles
+        active = get_last_config_path()
+        profiles = [
+            {"name": os.path.basename(p), "path": p, "active": p == active}
+            for p in list_profiles()
+        ]
+        self._json_response(json.dumps({"profiles": profiles, "active": active}))
+
     def _serve_simulator(self):
         """Serve the web LED simulator HTML."""
         html = generate_simulator_html()
@@ -818,6 +848,7 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
     }
     dynamic_routes = {
         "/api/status", "/api/metrics", "/api/logs", "/api/dimming",
+        "/api/profiles", "/api/profile/activate",
         "/dashboard", "/monitor", "/simulator",
     }
 
@@ -860,6 +891,29 @@ async def run_web(config: TransitConfig, host: str = "0.0.0.0", port: int = None
                 "display_brightness": settings.display_brightness,
                 "device_ip": settings.device_ip,
             }))
+
+        if path == "/api/profiles":
+            from .config import get_last_config_path, list_profiles
+            active = get_last_config_path()
+            profiles = [
+                {"name": os.path.basename(p), "path": p, "active": p == active}
+                for p in list_profiles()
+            ]
+            return (200, "application/json", json.dumps({"profiles": profiles, "active": active}))
+
+        if path == "/api/profile/activate":
+            from .config import list_profiles, set_last_config_path
+            name = query.get("name", [None])[0]
+            if not name:
+                return (400, "application/json", json.dumps({"error": "Missing 'name' query parameter"}))
+            match = next((p for p in list_profiles() if os.path.basename(p) == name), None)
+            if not match:
+                available = [os.path.basename(p) for p in list_profiles()]
+                return (404, "application/json", json.dumps({"error": f"Profile '{name}' not found", "available": available}))
+            set_last_config_path(match)
+            return (200, "application/json", json.dumps({
+                "status": "ok", "profile": name, "path": match,
+                "message": "Profile activated. Server will hot-reload within 30 seconds."}))
 
         if path == "/dashboard":
             return (200, "text/html", generate_dashboard_html())

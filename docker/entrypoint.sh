@@ -7,42 +7,67 @@
 # =============================================================================
 set -e
 
-CONFIG_PATH="/config/config.yaml"
 export SERVICE_SETTINGS_PATH="${SERVICE_SETTINGS_PATH:-/config/service.yaml}"
 SERVICE_YAML="$SERVICE_SETTINGS_PATH"
+PROFILES_DIR="${PROFILES_DIR:-/config/profiles}"
+export PROFILES_DIR
 
 # ---- Config discovery ----
-# If a config file is mounted at /config/config.yaml, register it so the CLI
-# picks it up via get_last_config_path().
-if [ -f "$CONFIG_PATH" ]; then
-    echo "[ENTRYPOINT] Found mounted config at $CONFIG_PATH"
-    # Inject last_config_path into service settings (create if missing)
+# If service.yaml already has a last_config_path that exists, use it.
+# Otherwise, pick the first available profile from the profiles directory.
+_resolve_default_profile() {
+    # Check if service.yaml already points to a valid profile
     if [ -f "$SERVICE_YAML" ]; then
-        if ! grep -q "last_config_path" "$SERVICE_YAML" 2>/dev/null; then
-            # Prepend — sed -i can't write to mounted volumes, so use tmp+cat
+        EXISTING=$(grep "^last_config_path:" "$SERVICE_YAML" 2>/dev/null | sed 's/^last_config_path: *//')
+        if [ -n "$EXISTING" ] && [ -f "$EXISTING" ]; then
+            echo "[ENTRYPOINT] Active profile: $EXISTING"
+            return
+        fi
+    fi
+
+    # Find a default profile in the profiles directory
+    if [ -d "$PROFILES_DIR" ]; then
+        # Prefer home.yaml, then first .yaml file
+        if [ -f "$PROFILES_DIR/home.yaml" ]; then
+            DEFAULT_PROFILE="$PROFILES_DIR/home.yaml"
+        else
+            DEFAULT_PROFILE=$(find "$PROFILES_DIR" -maxdepth 1 -name "*.yaml" ! -name "service.yaml" ! -name "service_state.json" | sort | head -1)
+        fi
+
+        if [ -n "$DEFAULT_PROFILE" ]; then
+            echo "[ENTRYPOINT] Setting default profile: $DEFAULT_PROFILE"
+            if [ -f "$SERVICE_YAML" ]; then
+                TMP=$(mktemp)
+                echo "last_config_path: $DEFAULT_PROFILE" > "$TMP"
+                grep -v "^last_config_path:" "$SERVICE_YAML" >> "$TMP"
+                cat "$TMP" > "$SERVICE_YAML"
+                rm "$TMP"
+            else
+                cat > "$SERVICE_YAML" 2>/dev/null <<EOF
+last_config_path: $DEFAULT_PROFILE
+EOF
+            fi
+            return
+        fi
+    fi
+
+    # Legacy: single config file at /config/config.yaml
+    if [ -f "/config/config.yaml" ]; then
+        echo "[ENTRYPOINT] Found legacy mounted config at /config/config.yaml"
+        if [ -f "$SERVICE_YAML" ] && ! grep -q "last_config_path" "$SERVICE_YAML" 2>/dev/null; then
             TMP=$(mktemp)
-            echo "last_config_path: $CONFIG_PATH" > "$TMP"
+            echo "last_config_path: /config/config.yaml" > "$TMP"
             cat "$SERVICE_YAML" >> "$TMP"
             cat "$TMP" > "$SERVICE_YAML"
             rm "$TMP"
         fi
-    else
-        # Try to create service.yaml; fall back to /tmp if /config is read-only
-        if ! cat > "$SERVICE_YAML" 2>/dev/null <<EOF
-last_config_path: $CONFIG_PATH
-EOF
-        then
-            export SERVICE_SETTINGS_PATH="/tmp/service.yaml"
-            SERVICE_YAML="$SERVICE_SETTINGS_PATH"
-            cat > "$SERVICE_YAML" <<EOF2
-last_config_path: $CONFIG_PATH
-EOF2
-            echo "[ENTRYPOINT] /config not writable — using $SERVICE_YAML"
-        fi
+        return
     fi
-else
-    echo "[ENTRYPOINT] No config mounted — using defaults (wss://tt.horner.tj/)"
-fi
+
+    echo "[ENTRYPOINT] No profiles found — using defaults (wss://tt.horner.tj/)"
+}
+
+_resolve_default_profile
 
 # ---- Start services ----
 echo "[ENTRYPOINT] Starting WebSocket service on :8000 ..."

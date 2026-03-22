@@ -17,7 +17,7 @@ IMAGE_NAME="transit-tracker"
 CONTAINER_NAME="transit-tracker"
 WS_PORT=8000
 HTTP_PORT=8080
-CONFIG_PATH="$PROJECT_DIR/.local/home.yaml"
+PROFILES_DIR="$PROJECT_DIR/.local"
 SERVICE_YAML="$PROJECT_DIR/.local/service.yaml"
 DETACH=false
 
@@ -28,23 +28,16 @@ while [[ $# -gt 0 ]]; do
             DETACH=true
             shift
             ;;
-        --config)
-            CONFIG_PATH="$2"
-            shift 2
-            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--detach] [--config <path>]"
+            echo "Usage: $0 [--detach]"
             exit 1
             ;;
     esac
 done
 
-# Resolve config to absolute path
-CONFIG_PATH="$(cd "$(dirname "$CONFIG_PATH")" && pwd)/$(basename "$CONFIG_PATH")"
-
-if [ ! -f "$CONFIG_PATH" ]; then
-    echo "Error: Config file not found: $CONFIG_PATH"
+if [ ! -d "$PROFILES_DIR" ]; then
+    echo "Error: Profiles directory not found: $PROFILES_DIR"
     exit 1
 fi
 
@@ -66,8 +59,9 @@ if [ "$DETACH" = true ]; then
         --restart=always \
         -p "$WS_PORT:$WS_PORT" \
         -p "$HTTP_PORT:$HTTP_PORT" \
-        -v "$CONFIG_PATH:/config/config.yaml:ro" \
+        -v "$PROFILES_DIR:/config/profiles:ro" \
         -v "$SERVICE_YAML:/config/service.yaml" \
+        -e PROFILES_DIR=/config/profiles \
         -e SERVICE_SETTINGS_PATH=/config/service.yaml \
         -e TZ=America/Los_Angeles \
         "$IMAGE_NAME"
@@ -95,8 +89,9 @@ else
         --name "$CONTAINER_NAME" \
         -p "$WS_PORT:$WS_PORT" \
         -p "$HTTP_PORT:$HTTP_PORT" \
-        -v "$CONFIG_PATH:/config/config.yaml:ro" \
+        -v "$PROFILES_DIR:/config/profiles:ro" \
         -v "$SERVICE_YAML:/config/service.yaml" \
+        -e PROFILES_DIR=/config/profiles \
         -e SERVICE_SETTINGS_PATH=/config/service.yaml \
         -e TZ=America/Los_Angeles \
         "$IMAGE_NAME"

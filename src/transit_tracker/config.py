@@ -102,11 +102,21 @@ def save_service_settings(settings: ServiceSettings):
     settings_dir = os.path.dirname(path)
     os.makedirs(settings_dir, exist_ok=True)
     data = settings.model_dump(exclude_none=True)
-    fd, tmp_path = tempfile.mkstemp(dir=settings_dir, suffix=".yaml")
+    # Use settings_dir for tempfile when possible; fall back to /tmp for
+    # container environments where the parent dir may be read-only.
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=settings_dir, suffix=".yaml")
+    except PermissionError:
+        fd, tmp_path = tempfile.mkstemp(suffix=".yaml")
     try:
         with os.fdopen(fd, "w") as f:
             yaml.safe_dump(data, f)
         os.replace(tmp_path, path)
+    except OSError:
+        # os.replace fails across filesystems; fall back to copy
+        import shutil
+        shutil.copy2(tmp_path, path)
+        os.unlink(tmp_path)
     except Exception:
         os.unlink(tmp_path)
         raise
@@ -123,7 +133,21 @@ def set_last_config_path(path: str):
 
 
 def list_profiles() -> List[str]:
-    """Lists available .yaml config files in project root and .local/."""
+    """Lists available .yaml config files in project root and .local/.
+
+    When PROFILES_DIR is set (e.g. inside a Docker container), scans that
+    directory instead of the project tree.
+    """
+    _EXCLUDE = {"service.yaml", "service_state.json", "test_isolation_config.yaml"}
+
+    profiles_dir = os.environ.get("PROFILES_DIR")
+    if profiles_dir and os.path.isdir(profiles_dir):
+        profiles = []
+        for f in os.listdir(profiles_dir):
+            if f.endswith(".yaml") and f not in _EXCLUDE:
+                profiles.append(os.path.abspath(os.path.join(profiles_dir, f)))
+        return sorted(profiles)
+
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     profiles = []
 
@@ -131,10 +155,7 @@ def list_profiles() -> List[str]:
     local_dir = os.path.join(project_root, ".local")
     if os.path.exists(local_dir):
         for f in os.listdir(local_dir):
-            if f.endswith(".yaml") and f not in [
-                "service_state.json",
-                "accurate_config.yaml",
-            ]:
+            if f.endswith(".yaml") and f not in _EXCLUDE and f != "accurate_config.yaml":
                 profiles.append(os.path.abspath(os.path.join(local_dir, f)))
 
     # Check project root

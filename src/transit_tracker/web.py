@@ -1495,9 +1495,9 @@ function renderTopo() {
       h += '<animate attributeName="stroke-dashoffset" from="0" to="-18" dur="1.2s" repeatCount="indefinite"/>';
       h += '</line>';
 
-      /* Simulator container — tight border around canvas */
-      h += '<rect x="' + simBoxX + '" y="' + simCy + '" width="' + simBoxW + '" height="' + simBoxH + '" rx="4" fill="#000" stroke="#e8a830" stroke-width="1.5" id="sim-placeholder"/>';
-      h += '<rect x="' + simBoxX + '" y="' + simCy + '" width="' + simBoxW + '" height="' + simBoxH + '" rx="4" fill="none" stroke="#e8a830" stroke-width="1" opacity="0.1" filter="url(#glow)"/>';
+      /* Simulator container — thick amber border */
+      h += '<rect x="' + simBoxX + '" y="' + simCy + '" width="' + simBoxW + '" height="' + simBoxH + '" rx="5" fill="#000" stroke="#e8a830" stroke-width="3" id="sim-placeholder"/>';
+      h += '<rect x="' + simBoxX + '" y="' + simCy + '" width="' + simBoxW + '" height="' + simBoxH + '" rx="5" fill="none" stroke="#e8a830" stroke-width="2" opacity="0.15" filter="url(#glow)"/>';
     }
   }
 

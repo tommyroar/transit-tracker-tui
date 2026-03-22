@@ -4,6 +4,8 @@ import os
 import time
 from transit_tracker.tui import profiles_menu
 
+pytestmark = pytest.mark.unit
+
 @pytest.mark.asyncio
 async def test_profiles_menu_navigation():
     # Mock data
@@ -68,7 +70,6 @@ async def test_profile_detail_submenu():
 async def test_activate_profile():
     from transit_tracker.tui import profile_detail_submenu
     from transit_tracker.config import TransitConfig
-    
     config_path = "/path/to/profile1.yaml"
     mock_config = MagicMock(spec=TransitConfig)
     mock_config.subscriptions = []

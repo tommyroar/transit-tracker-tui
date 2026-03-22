@@ -24,10 +24,20 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --dev
 
-      - name: Run Tests (including Capture Validation)
+      - name: Unit Tests
         env:
           TRANSIT_TRACKER_TESTING: "1"
-        run: uv run pytest -v -m "not docker"
+        run: uv run pytest -v -m "unit" --cov --cov-report=term-missing
+
+      - name: Integration Tests
+        env:
+          TRANSIT_TRACKER_TESTING: "1"
+        run: uv run pytest -v -m "integration"
+
+      - name: Contract Tests
+        env:
+          TRANSIT_TRACKER_TESTING: "1"
+        run: uv run pytest -v -m "contract"
 
       - name: Verify CLI Launch
         run: uv run python scripts/verify_launch.py

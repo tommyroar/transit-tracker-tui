@@ -5,6 +5,7 @@ import asyncio
 from transit_tracker.config import TransitConfig, set_last_config_path, get_last_config_path
 from transit_tracker.tui import async_main_menu
 
+pytestmark = pytest.mark.unit
 @pytest.fixture
 def mock_env(tmp_path):
     # Mock settings file

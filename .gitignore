@@ -28,5 +28,9 @@ data/gtfs/
 data/gtfs_index.sqlite
 data/route_map.html
 
+# Coverage
+.coverage
+htmlcov/
+
 # claude
 .claude/settings.local.json

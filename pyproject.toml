@@ -39,6 +39,7 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
+    "pytest-cov>=6.0",
     "ruff>=0.9.9",
 ]
 
@@ -64,5 +65,23 @@ line-ending = "auto"
 
 [tool.pytest.ini_options]
 markers = [
+    "unit: fast isolated tests with mocked dependencies",
+    "integration: tests module interactions with local resources",
+    "contract: protocol and data compatibility with reference project",
+    "e2e: full system tests requiring Docker or live endpoints",
     "docker: marks tests that require Docker (deselect with '-m \"not docker\"')",
 ]
+
+[tool.coverage.run]
+source = ["src/transit_tracker"]
+omit = [
+    "src/transit_tracker/gui.py",
+    "src/transit_tracker/simulator.py",
+    "src/transit_tracker/tui.py",
+    "src/transit_tracker/monitor.py",
+    "src/transit_tracker/capture.py",
+]
+
+[tool.coverage.report]
+fail_under = 55
+show_missing = true

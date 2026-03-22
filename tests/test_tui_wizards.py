@@ -9,6 +9,8 @@ from transit_tracker.tui import (
     change_threshold_wizard,
 )
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def mock_config():

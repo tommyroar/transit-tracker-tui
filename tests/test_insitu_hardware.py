@@ -6,6 +6,8 @@ import pytest
 from transit_tracker.config import TransitConfig
 from transit_tracker.hardware import load_hardware_config
 
+pytestmark = pytest.mark.integration
+
 # Load the captured JSON to use as our source of truth
 with open("hardware_capture.json", "r") as f:
     capture_data = json.load(f)

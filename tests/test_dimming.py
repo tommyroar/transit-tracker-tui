@@ -15,6 +15,8 @@ from transit_tracker.config import (
 )
 from transit_tracker.network.websocket_server import TransitServer
 
+pytestmark = pytest.mark.unit
+
 # ---------------------------------------------------------------------------
 # Config validation tests
 # ---------------------------------------------------------------------------

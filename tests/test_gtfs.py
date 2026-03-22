@@ -1,4 +1,5 @@
 """
+
 Tests for GTFSSchedule and its integration with TransitServer.
 Uses in-memory SQLite databases — no real GTFS files required.
 """
@@ -12,6 +13,8 @@ import pytest
 
 from transit_tracker.gtfs_schedule import GTFSSchedule
 from transit_tracker.network.websocket_server import TransitServer
+
+pytestmark = pytest.mark.integration
 
 
 # ---------------------------------------------------------------------------
@@ -466,7 +469,6 @@ async def test_ferry_fallback_not_added_when_live_data_exists(tmp_path, mock_con
     ]
 
     import unittest.mock
-
     with unittest.mock.patch("transit_tracker.network.websocket_server.time") as mock_time:
         mock_time.time.return_value = now_ts
         await server.send_update(ws)

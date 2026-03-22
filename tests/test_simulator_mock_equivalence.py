@@ -8,6 +8,7 @@ from transit_tracker.config import TransitConfig, TransitSubscription
 from transit_tracker.network.websocket_server import TransitServer
 from transit_tracker.simulator import LEDSimulator
 
+pytestmark = pytest.mark.integration
 
 def get_mock_oba_response(now_ms):
     return [

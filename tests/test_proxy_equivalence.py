@@ -6,6 +6,8 @@ import pytest
 from transit_tracker.config import TransitConfig
 from transit_tracker.network.websocket_server import TransitServer
 
+pytestmark = pytest.mark.contract
+
 
 class MockWS:
     def __init__(self, remote_addr="192.168.1.50"):

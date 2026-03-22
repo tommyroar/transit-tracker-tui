@@ -2,7 +2,9 @@ from unittest.mock import AsyncMock, patch
 
 from transit_tracker.config import TransitConfig
 from transit_tracker.tui import main_menu
+import pytest
 
+pytestmark = pytest.mark.unit
 
 def test_main_menu_service_manager_bug():
     """Reproduction test for NameError in main_menu when selecting Service Manager."""

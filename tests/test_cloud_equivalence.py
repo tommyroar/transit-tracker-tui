@@ -1,5 +1,6 @@
 """Integration test: local proxy vs cloud endpoint structural equivalence.
 
+
 Connects to both wss://tt.horner.tj (cloud) and ws://localhost:8000 (local)
 with the same subscriptions, and verifies the response schema and trip data
 are structurally identical.
@@ -15,6 +16,7 @@ import time
 import pytest
 import websockets.sync.client
 
+pytestmark = pytest.mark.e2e
 CLOUD_URL = "wss://tt.horner.tj/"
 LOCAL_URL = "ws://localhost:8000"
 

@@ -9,7 +9,8 @@ as a comment on the triggering PR or issue.
 import os
 import sys
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from github import Github
 
 SYSTEM_PROMPT = """You are an expert code reviewer embedded in a GitHub workflow.
@@ -97,14 +98,15 @@ def main() -> None:
     context = build_context(repo, pr_number, os.environ.get("EVENT_NAME", ""))
 
     # Call Gemini
-    genai.configure(api_key=gemini_api_key)
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-pro",
-        system_instruction=SYSTEM_PROMPT,
-    )
-
+    client = genai.Client(api_key=gemini_api_key)
     user_message = f"{instruction}\n\n---\n\n{context}"
-    response = model.generate_content(user_message)
+    response = client.models.generate_content(
+        model="gemini-3.1-pro-preview",
+        contents=user_message,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+        ),
+    )
     review_text = response.text.strip()
 
     # Post reply as a comment

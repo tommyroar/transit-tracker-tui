@@ -159,6 +159,8 @@ def test_save_service_settings_preserves_external_fields(tmp_path):
         assert len(loaded.dimming_schedule) == 1
 
 
+
+
 def test_migrate_legacy_fields():
     """Old-format YAML with service fields embedded gets migrated."""
     data = {

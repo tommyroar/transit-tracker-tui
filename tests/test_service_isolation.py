@@ -11,45 +11,44 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
-async def test_service_isolation_from_disk_changes():
+async def test_service_isolation_from_disk_changes(tmp_path, monkeypatch):
     """
     Validates that once the TransitServer is started with a config object,
-    modifications to the configuration files on disk have ZERO effect on 
+    modifications to the configuration files on disk have ZERO effect on
     the running service's internal state.
     """
+    # Isolate service settings from whatever is on the developer's machine
+    monkeypatch.setenv("SERVICE_SETTINGS_PATH", str(tmp_path / "service.yaml"))
+
     # 1. SETUP INITIAL CONFIG
     config_a = TransitConfig()
     config_a.api_url = "ws://localhost:8000"
     config_a.transit_tracker.base_url = "ws://localhost:8000"
-    
-    # Save it to a dummy file
-    test_config_path = "test_isolation_config.yaml"
+
+    # Save it to a temp file (bypass .local/ redirect by using an absolute path)
+    test_config_path = str(tmp_path / "test_isolation_config.yaml")
     config_a.save(test_config_path)
-    
+
     # 2. START SERVER WITH CONFIG A
     server = TransitServer(config_a)
-    
+
     # Verify initial state
     assert server.config.api_url == "ws://localhost:8000"
-    
+
     # 3. MODIFY DISK CONFIG TO CONFIG B
     with open(test_config_path, "w") as f:
         f.write("api_url: wss://tt.horner.tj/\n")
         f.write("use_local_api: false\n")
-        
+
     # 4. VALIDATE SERVICE STILL HAS CONFIG A IN MEMORY
     # The server should NOT have any file observers or re-load logic
     assert server.config.api_url == "ws://localhost:8000", "Server state changed after disk modification!"
-    
+
     # 5. VALIDATE TUI SESSION ISOLATION
     # If we load a 'new' session, it shouldn't touch the server's instance
     config_b = TransitConfig.load(test_config_path)
     assert config_b.api_url == "wss://tt.horner.tj/"
     assert server.config.api_url == "ws://localhost:8000", "TUI session load affected running server!"
-    
-    # Cleanup
-    if os.path.exists(test_config_path):
-        os.remove(test_config_path)
 
 @pytest.mark.asyncio
 async def test_sync_state_does_not_mutate_config():

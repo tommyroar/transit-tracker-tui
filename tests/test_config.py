@@ -160,6 +160,7 @@ def test_save_service_settings_preserves_external_fields(tmp_path):
 
 
 
+
 def test_migrate_legacy_fields():
     """Old-format YAML with service fields embedded gets migrated."""
     data = {

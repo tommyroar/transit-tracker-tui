@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Transit Tracker is a macOS background daemon that proxies OneBusAway API data to ESP32 LED matrix hardware via WebSocket. It supports both cloud relay mode (via `wss://tt.horner.tj/`) and local self-hosted mode.
+Transit Tracker is a background service that proxies OneBusAway API data to ESP32 LED matrix hardware via WebSocket. It supports both cloud relay mode (via `wss://tt.horner.tj/`) and local self-hosted mode. A web UI at `/transit-tracker/` provides dashboards, an LED simulator, and a REST API for configuration.
 
 ## Commands
 
@@ -39,6 +39,7 @@ trips immediately on client connect (before the OBA cache is warm).
 uv tool install .       # installs `transit-tracker` CLI to PATH
 transit-tracker         # launch TUI
 transit-tracker service # start background service (WebSocket server + client)
+transit-tracker web     # start HTTP web server with dashboard and API
 ```
 
 ## Architecture
@@ -64,10 +65,34 @@ transit-tracker service # start background service (WebSocket server + client)
 | `transit_api.py` | Async httpx client for OBA API (geocode, stops, arrivals, polylines) |
 | `network/websocket_server.py` | Local proxy — subscriptions, OBA polling, rate-limit backoff, ferry logic |
 | `network/websocket_service.py` | Background client — connects to configured API endpoint, monitors config changes |
-| `tui.py` | `rich`/`questionary` interactive configurator (1,019 lines) |
+| `web.py` | HTTP server with REST API, dashboards, LED simulator, WebSocket proxy; all routes under `/transit-tracker/` |
+| `tui.py` | `rich`/`questionary` interactive configurator — config files, device flashing, profiles, brightness |
 | `simulator.py` | 64×32 LED matrix emulator with BDF fonts |
-| `cli.py` | Entry point; `manage_service()` uses `launchctl` for daemon lifecycle |
-| `gui.py` | macOS tray icon via `rumps`; text simulator in profile submenu; WS bootstrap on startup |
+| `cli.py` | Entry point; `manage_service()` uses Docker/launchctl for daemon lifecycle |
+
+### Web API (all under `/transit-tracker/`)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/transit-tracker/` | GET | Index page with links to all pages |
+| `/transit-tracker/dashboard` | GET | Live observability dashboard |
+| `/transit-tracker/monitor` | GET | Network topology monitor |
+| `/transit-tracker/simulator` | GET | Browser-based LED matrix simulator |
+| `/transit-tracker/spec` | GET | API documentation page |
+| `/transit-tracker/ws` | WS | WebSocket proxy to internal `:8000` server |
+| `/transit-tracker/api/status` | GET | Service state (clients, rate limits, uptime) |
+| `/transit-tracker/api/metrics` | GET | Time-series metrics snapshot |
+| `/transit-tracker/api/logs` | GET | Recent log entries |
+| `/transit-tracker/api/profiles` | GET | List available profiles |
+| `/transit-tracker/api/profile/activate` | GET | Switch active profile |
+| `/transit-tracker/api/dimming` | GET/POST | Dimming schedule and brightness |
+| `/transit-tracker/api/geocode` | GET | Geocode a location query |
+| `/transit-tracker/api/routes` | GET | Find routes near a lat/lon |
+| `/transit-tracker/api/routes/<id>/stops` | GET | Get stops for a route |
+| `/transit-tracker/api/arrivals` | GET | Get arrivals for a stop |
+| `/transit-tracker/api/config/stops` | GET/POST/DELETE | View/add/remove stops in draft config |
+| `/transit-tracker/api/config/save` | POST | Save draft config to disk |
+| `/transit-tracker/api/config/settings` | GET/PATCH | View/update service settings |
 
 ### Ferry support
 - Use `wsf:` prefix for stop/route IDs (e.g., `wsf:7` = Seattle terminal)
@@ -76,17 +101,11 @@ transit-tracker service # start background service (WebSocket server + client)
 - OBA `arrivalEnabled`/`departureEnabled` per-trip flags determine whether to show arrival or departure time (origin docks show departure, destination docks show arrival)
 
 ### Rate limiting
-`TransitServer` tracks per-stop `rate_limit_until` timestamps. On 429: interval doubles (cap 600s). On recovery: interval reduces 20% per successful fetch. Throttle metrics (`throttle_total`, `api_calls_total`, `throttle_rate`) are synced to `service_state.json` and shown in the GUI dropdown. Per-event JSONL log at `~/.config/transit-tracker/throttle_log.jsonl`.
-
-### GUI text simulator
-The menu bar profile submenu shows live trip data as text lines: `ROUTE  Headsign  ◉ Xm` (◉ = realtime, ○ = scheduled). The `format_trip_line()` function in `gui.py` handles formatting. On startup, the GUI connects to `ws://localhost:8000` to fetch immediate data rather than waiting for state file polling.
-
-### GUI lifecycle
-The GUI tray icon is a subprocess of the service (`run_full_service()` in `cli.py`). When the service restarts, the GUI is killed and relaunched automatically. `service restart` uses `launchctl kickstart -k` for reliability.
+`TransitServer` tracks per-stop `rate_limit_until` timestamps. On 429: interval doubles (cap 600s). On recovery: interval reduces 20% per successful fetch. Throttle metrics (`throttle_total`, `api_calls_total`, `throttle_rate`) are synced to `service_state.json` and shown in the web dashboard. Per-event JSONL log at `~/.config/transit-tracker/throttle_log.jsonl`.
 
 ### Config (two-file system)
 - **Board subscription profiles** (`.local/*.yaml`, `data/needle_stops.yaml`): Pure stop/route data under `transit_tracker:` key. Schema: `TransitTrackerSettings` — only `base_url`, `time_display`, `scroll_headsigns`, `display_format`, `stops`, `abbreviations`. No API keys or service settings.
-- **Service settings** (`.local/service.yaml`, gitignored): `ServiceSettings` model — `oba_api_key`, `check_interval_seconds`, `request_spacing_ms`, `arrival_threshold_minutes`, `num_panels`, `panel_width`, `panel_height`, `use_local_api`, `auto_launch_gui`, `last_config_path`.
+- **Service settings** (`.local/service.yaml`, gitignored): `ServiceSettings` model — `oba_api_key`, `check_interval_seconds`, `request_spacing_ms`, `arrival_threshold_minutes`, `num_panels`, `panel_width`, `panel_height`, `use_local_api`, `last_config_path`.
 - `TransitConfig` is a runtime composite: merges both at load time. Access board settings via `config.transit_tracker.*`, service settings via `config.service.*`.
 - `config.save()` writes only the `transit_tracker:` block. Service settings persist via `save_service_settings()`.
 - Profile `.yaml` files can live in project root or `.local/`

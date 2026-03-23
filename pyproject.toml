@@ -22,13 +22,11 @@ dependencies = [
     "pyyaml>=6.0.3",
     "questionary>=2.1.1",
     "rich>=14.3.3",
-    "rumps>=0.4.0; sys_platform == 'darwin'",
     "websockets>=16.0",
 ]
 
 [project.scripts]
 transit-tracker = "transit_tracker.cli:main"
-transit-tracker-gui = "transit_tracker.gui:main"
 transit-tracker-capture = "transit_tracker.capture:main"
 
 [build-system]
@@ -60,8 +58,9 @@ select = ["E", "F", "I", "B"]
 ignore = []
 
 [tool.ruff.lint.per-file-ignores]
-# web.py contains HTML/JS/CSS template strings where line length is impractical
-"src/transit_tracker/web.py" = ["E501"]
+# web package contains HTML/JS/CSS template strings where line length is impractical
+"src/transit_tracker/web/pages.py" = ["E501"]
+"src/transit_tracker/web/spec.py" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -82,7 +81,6 @@ markers = [
 source = ["src/transit_tracker"]
 branch = true
 omit = [
-    "src/transit_tracker/gui.py",
     "src/transit_tracker/simulator.py",
     "src/transit_tracker/tui.py",
     "src/transit_tracker/monitor.py",

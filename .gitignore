@@ -29,6 +29,9 @@ data/gtfs_index.sqlite
 data/route_map.html
 data/stations.geojson
 
+# Cached API/OSM data
+cache/
+
 # Coverage
 .coverage
 htmlcov/

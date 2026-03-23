@@ -4,7 +4,6 @@ import pytest
 
 from transit_tracker.config import TransitConfig
 from transit_tracker.tui import (
-    change_api_mode_wizard,
     change_panels_wizard,
     change_threshold_wizard,
 )
@@ -20,43 +19,15 @@ def mock_config():
     config.service.num_panels = 2
     return config
 
-@pytest.mark.asyncio
-async def test_api_mode_wizard_choices(mock_config):
-    """Verify that change_api_mode_wizard uses correct default value for questionary.select."""
-    with patch("questionary.select") as mock_select, \
-         patch("questionary.text") as mock_text, \
-         patch.object(TransitConfig, "save") as mock_save, \
-         patch("transit_tracker.tui.save_service_settings"):
-        
-        # Mocking the select behavior
-        mock_instance = MagicMock()
-        mock_instance.ask_async = AsyncMock(return_value=True)
-        mock_select.return_value = mock_instance
-        
-        # Test with use_local_api = True
-        mock_config.service.use_local_api = True
-        mock_console = MagicMock()
-        await change_api_mode_wizard(mock_config, "config.yaml", mock_console)
-        
-        args, kwargs = mock_select.call_args
-        assert kwargs["default"] is True
-        
-        # Test with use_local_api = False
-        mock_config.service.use_local_api = False
-        mock_instance.ask_async = AsyncMock(return_value=False)
-        # When False, it asks for a text URL
-        mock_text.return_value.ask_async = AsyncMock(return_value="wss://test.api")
-        
-        await change_api_mode_wizard(mock_config, "config.yaml", mock_console)
-        args, kwargs = mock_select.call_args
-        assert kwargs["default"] is False
 
 @pytest.mark.asyncio
 async def test_panels_wizard_choices(mock_config):
     """Verify that change_panels_wizard uses correct default value format."""
-    with patch("questionary.select") as mock_select, \
-         patch.object(TransitConfig, "save") as mock_save, \
-         patch("transit_tracker.tui.save_service_settings"):
+    with (
+        patch("questionary.select") as mock_select,
+        patch.object(TransitConfig, "save") as mock_save,
+        patch("transit_tracker.tui.save_service_settings"),
+    ):
         mock_instance = MagicMock()
         mock_instance.ask_async = AsyncMock(return_value="3")
         mock_select.return_value = mock_instance
@@ -64,27 +35,29 @@ async def test_panels_wizard_choices(mock_config):
         mock_config.service.num_panels = 2
         mock_console = MagicMock()
         await change_panels_wizard(mock_config, "config.yaml", mock_console)
-        
+
         args, kwargs = mock_select.call_args
         choices = kwargs["choices"]
         default = kwargs["default"]
-        
+
         assert isinstance(choices[0], str)
         assert default == "2"
+
 
 @pytest.mark.asyncio
 async def test_threshold_wizard(mock_config):
     """Verify threshold wizard handles input correctly."""
-    with patch("questionary.text") as mock_text, \
-         patch.object(TransitConfig, "save") as mock_save, \
-         patch("transit_tracker.tui.save_service_settings"):
+    with (
+        patch("questionary.text") as mock_text,
+        patch.object(TransitConfig, "save") as mock_save,
+        patch("transit_tracker.tui.save_service_settings"),
+    ):
         mock_instance = MagicMock()
         mock_instance.ask_async = AsyncMock(return_value="10")
         mock_text.return_value = mock_instance
-        
+
         await change_threshold_wizard(mock_config, "config.yaml")
         assert mock_config.service.arrival_threshold_minutes == 10
-        
+
         args, kwargs = mock_text.call_args
         assert kwargs["default"] == "5"
-

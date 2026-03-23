@@ -21,6 +21,16 @@ from transit_tracker.transit_api import TransitAPI
 from transit_tracker.web import (
     PREFIX,
     TransitWebHandler,
+    _handle_config_save,
+    _handle_config_settings_get,
+    _handle_config_settings_patch,
+    _handle_config_stops_delete,
+    _handle_config_stops_get,
+    _handle_config_stops_post,
+    _handle_dimming_set,
+    _handle_profile_activate,
+    _handle_profiles_list,
+    _reset_draft,
     generate_api_spec,
     generate_dashboard_html,
     generate_index_html,
@@ -514,3 +524,254 @@ def test_simulator_html_has_trip_processing():
     html = generate_simulator_html()
     assert "processDepartures" in html
     assert "diversity" in html.lower() or "stop_id" in html
+
+
+# --- Profile API helpers ---
+
+
+def test_handle_profiles_list():
+    """profiles list returns profiles with active flag."""
+    p1 = "transit_tracker.config.get_last_config_path"
+    p2 = "transit_tracker.config.list_profiles"
+    with (
+        patch(p1, return_value="/a/b.yaml"),
+        patch(p2, return_value=["/a/b.yaml", "/a/c.yaml"]),
+    ):
+        result = _handle_profiles_list()
+    assert len(result["profiles"]) == 2
+    assert result["profiles"][0]["active"] is True
+    assert result["profiles"][1]["active"] is False
+    assert result["active"] == "/a/b.yaml"
+
+
+def test_handle_profile_activate_missing_name():
+    """activate without name returns 400."""
+    status, body = _handle_profile_activate({})
+    assert status == 400
+    assert "error" in body
+
+
+def test_handle_profile_activate_not_found():
+    """activate with unknown name returns 404."""
+    with patch("transit_tracker.config.list_profiles", return_value=["/a/b.yaml"]):
+        status, body = _handle_profile_activate({"name": ["nope.yaml"]})
+    assert status == 404
+    assert "available" in body
+
+
+def test_handle_profile_activate_success():
+    """activate with valid name returns 200."""
+    with (
+        patch("transit_tracker.config.list_profiles", return_value=["/a/b.yaml"]),
+        patch("transit_tracker.config.set_last_config_path") as mock_set,
+    ):
+        status, body = _handle_profile_activate({"name": ["b.yaml"]})
+    assert status == 200
+    assert body["profile"] == "b.yaml"
+    mock_set.assert_called_once_with("/a/b.yaml")
+
+
+# --- Dimming set helper ---
+
+
+def test_handle_dimming_set_brightness():
+    """dimming set updates brightness."""
+    mock_settings = patch("transit_tracker.config.load_service_settings")
+    mock_save = patch("transit_tracker.config.save_service_settings")
+    with mock_settings as m_load, mock_save as m_save:
+        from unittest.mock import MagicMock
+
+        settings = MagicMock()
+        settings.dimming_schedule = []
+        settings.display_brightness = 100
+        settings.device_ip = None
+        m_load.return_value = settings
+        status, body = _handle_dimming_set({"brightness": ["50"]})
+    assert status == 200
+    assert settings.display_brightness == 50
+    m_save.assert_called_once()
+
+
+# --- Draft config (stop CRUD) helpers ---
+
+
+def test_handle_config_stops_get(mock_config):
+    """config stops get returns stops from draft."""
+    import transit_tracker.web as web_mod
+
+    web_mod._draft_config = mock_config
+    web_mod._draft_dirty = False
+    result = _handle_config_stops_get()
+    assert len(result["stops"]) == 2
+    assert result["stops"][0]["stop_id"] == "st:1_8494"
+    assert result["dirty"] is False
+    web_mod._draft_config = None
+
+
+def test_handle_config_stops_post(mock_config):
+    """config stops post adds a stop to draft."""
+    import transit_tracker.web as web_mod
+
+    web_mod._draft_config = mock_config
+    web_mod._draft_dirty = False
+    status, body = _handle_config_stops_post(
+        {
+            "stop_id": "st:1_9999",
+            "routes": ["st:40_100"],
+            "label": "Test Stop",
+        }
+    )
+    assert status == 200
+    assert body["stop"]["stop_id"] == "st:1_9999"
+    assert web_mod._draft_dirty is True
+    assert len(mock_config.transit_tracker.stops) == 3
+    web_mod._draft_config = None
+
+
+def test_handle_config_stops_post_missing_id():
+    """config stops post without stop_id returns 400."""
+    import transit_tracker.web as web_mod
+
+    web_mod._draft_config = TransitConfig(transit_tracker={"stops": []})
+    status, body = _handle_config_stops_post({})
+    assert status == 400
+    web_mod._draft_config = None
+
+
+def test_handle_config_stops_delete_by_index(mock_config):
+    """config stops delete by index removes correct stop."""
+    import transit_tracker.web as web_mod
+
+    web_mod._draft_config = mock_config
+    web_mod._draft_dirty = False
+    original_count = len(mock_config.transit_tracker.stops)
+    status, body = _handle_config_stops_delete({"index": 0})
+    assert status == 200
+    assert len(mock_config.transit_tracker.stops) == original_count - 1
+    assert web_mod._draft_dirty is True
+    web_mod._draft_config = None
+
+
+def test_handle_config_stops_delete_by_stop_id(mock_config):
+    """config stops delete by stop_id removes correct stop."""
+    import transit_tracker.web as web_mod
+
+    web_mod._draft_config = mock_config
+    web_mod._draft_dirty = False
+    status, body = _handle_config_stops_delete({"stop_id": "st:1_1920"})
+    assert status == 200
+    assert body["removed"]["stop_id"] == "st:1_1920"
+    web_mod._draft_config = None
+
+
+def test_handle_config_stops_delete_not_found():
+    """config stops delete with unknown stop_id returns 404."""
+    import transit_tracker.web as web_mod
+
+    web_mod._draft_config = TransitConfig(transit_tracker={"stops": []})
+    status, body = _handle_config_stops_delete({"stop_id": "nope"})
+    assert status == 404
+    web_mod._draft_config = None
+
+
+def test_handle_config_stops_delete_no_params():
+    """config stops delete without params returns 400."""
+    import transit_tracker.web as web_mod
+
+    web_mod._draft_config = TransitConfig(transit_tracker={"stops": []})
+    status, body = _handle_config_stops_delete({})
+    assert status == 400
+    web_mod._draft_config = None
+
+
+# --- Config save helper ---
+
+
+def test_handle_config_save_with_path():
+    """config save writes draft to specified path."""
+    from unittest.mock import MagicMock
+
+    import transit_tracker.web as web_mod
+
+    mock_draft = MagicMock()
+    web_mod._draft_config = mock_draft
+    web_mod._draft_dirty = True
+    status, body = _handle_config_save({"path": "/tmp/test.yaml"})
+    assert status == 200
+    mock_draft.save.assert_called_once_with("/tmp/test.yaml")
+    assert web_mod._draft_dirty is False
+    web_mod._draft_config = None
+
+
+def test_handle_config_save_no_path_no_active():
+    """config save without path and no active profile returns 400."""
+    import transit_tracker.web as web_mod
+
+    web_mod._draft_config = TransitConfig(transit_tracker={"stops": []})
+    web_mod._draft_dirty = True
+    with patch("transit_tracker.config.get_last_config_path", return_value=None):
+        status, body = _handle_config_save({})
+    assert status == 400
+    web_mod._draft_config = None
+
+
+# --- Config settings helpers ---
+
+
+def test_handle_config_settings_get():
+    """config settings get returns service settings."""
+    from unittest.mock import MagicMock
+
+    load = "transit_tracker.config.load_service_settings"
+    mock_settings = MagicMock()
+    mock_settings.model_dump.return_value = {
+        "check_interval_seconds": 30,
+    }
+    with patch(load, return_value=mock_settings):
+        result = _handle_config_settings_get()
+    assert result == {"check_interval_seconds": 30}
+
+
+def test_handle_config_settings_patch_valid():
+    """config settings patch updates allowed fields."""
+    from unittest.mock import MagicMock
+
+    load = "transit_tracker.config.load_service_settings"
+    save = "transit_tracker.config.save_service_settings"
+    mock_settings = MagicMock()
+    mock_settings.check_interval_seconds = 30
+    with patch(load, return_value=mock_settings), patch(save) as mock_save:
+        status, body = _handle_config_settings_patch(
+            {"check_interval_seconds": 60},
+        )
+    assert status == 200
+    assert "check_interval_seconds" in body["updated"]
+    mock_save.assert_called_once()
+
+
+def test_handle_config_settings_patch_invalid():
+    """config settings patch with no valid fields returns 400."""
+    from unittest.mock import MagicMock
+
+    load = "transit_tracker.config.load_service_settings"
+    mock_settings = MagicMock()
+    with patch(load, return_value=mock_settings):
+        status, body = _handle_config_settings_patch(
+            {"oba_api_key": "secret"},
+        )
+    assert status == 400
+    assert "allowed" in body
+
+
+# --- Draft reset ---
+
+
+def test_reset_draft():
+    """reset_draft clears the cached draft."""
+    import transit_tracker.web as web_mod
+
+    web_mod._draft_config = "something"
+    web_mod._draft_dirty = True
+    _reset_draft()
+    assert web_mod._draft_config is None
+    assert web_mod._draft_dirty is False

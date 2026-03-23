@@ -133,7 +133,7 @@ async def test_resolve_stop_coordinates(mock_config):
     )
     mock_api.close = AsyncMock()
 
-    with patch("transit_tracker.web.TransitAPI", return_value=mock_api):
+    with patch("transit_tracker.web.api_handlers.TransitAPI", return_value=mock_api):
         stops = await resolve_stop_coordinates(mock_config)
 
     assert len(stops) == 2
@@ -162,7 +162,7 @@ async def test_resolve_stop_coordinates_handles_api_errors(mock_config):
     )
     mock_api.close = AsyncMock()
 
-    with patch("transit_tracker.web.TransitAPI", return_value=mock_api):
+    with patch("transit_tracker.web.api_handlers.TransitAPI", return_value=mock_api):
         stops = await resolve_stop_coordinates(mock_config)
 
     assert len(stops) == 1
@@ -176,7 +176,7 @@ async def test_resolve_stop_coordinates_handles_not_found(mock_config):
     mock_api.get_stop = AsyncMock(side_effect=[None, None])
     mock_api.close = AsyncMock()
 
-    with patch("transit_tracker.web.TransitAPI", return_value=mock_api):
+    with patch("transit_tracker.web.api_handlers.TransitAPI", return_value=mock_api):
         stops = await resolve_stop_coordinates(mock_config)
 
     assert len(stops) == 0
@@ -597,7 +597,7 @@ def test_handle_dimming_set_brightness():
 
 def test_handle_config_stops_get(mock_config):
     """config stops get returns stops from draft."""
-    import transit_tracker.web as web_mod
+    import transit_tracker.web.api_handlers as web_mod
 
     web_mod._draft_config = mock_config
     web_mod._draft_dirty = False
@@ -610,7 +610,7 @@ def test_handle_config_stops_get(mock_config):
 
 def test_handle_config_stops_post(mock_config):
     """config stops post adds a stop to draft."""
-    import transit_tracker.web as web_mod
+    import transit_tracker.web.api_handlers as web_mod
 
     web_mod._draft_config = mock_config
     web_mod._draft_dirty = False
@@ -630,7 +630,7 @@ def test_handle_config_stops_post(mock_config):
 
 def test_handle_config_stops_post_missing_id():
     """config stops post without stop_id returns 400."""
-    import transit_tracker.web as web_mod
+    import transit_tracker.web.api_handlers as web_mod
 
     web_mod._draft_config = TransitConfig(transit_tracker={"stops": []})
     status, body = _handle_config_stops_post({})
@@ -640,7 +640,7 @@ def test_handle_config_stops_post_missing_id():
 
 def test_handle_config_stops_delete_by_index(mock_config):
     """config stops delete by index removes correct stop."""
-    import transit_tracker.web as web_mod
+    import transit_tracker.web.api_handlers as web_mod
 
     web_mod._draft_config = mock_config
     web_mod._draft_dirty = False
@@ -654,7 +654,7 @@ def test_handle_config_stops_delete_by_index(mock_config):
 
 def test_handle_config_stops_delete_by_stop_id(mock_config):
     """config stops delete by stop_id removes correct stop."""
-    import transit_tracker.web as web_mod
+    import transit_tracker.web.api_handlers as web_mod
 
     web_mod._draft_config = mock_config
     web_mod._draft_dirty = False
@@ -666,7 +666,7 @@ def test_handle_config_stops_delete_by_stop_id(mock_config):
 
 def test_handle_config_stops_delete_not_found():
     """config stops delete with unknown stop_id returns 404."""
-    import transit_tracker.web as web_mod
+    import transit_tracker.web.api_handlers as web_mod
 
     web_mod._draft_config = TransitConfig(transit_tracker={"stops": []})
     status, body = _handle_config_stops_delete({"stop_id": "nope"})
@@ -676,7 +676,7 @@ def test_handle_config_stops_delete_not_found():
 
 def test_handle_config_stops_delete_no_params():
     """config stops delete without params returns 400."""
-    import transit_tracker.web as web_mod
+    import transit_tracker.web.api_handlers as web_mod
 
     web_mod._draft_config = TransitConfig(transit_tracker={"stops": []})
     status, body = _handle_config_stops_delete({})
@@ -691,7 +691,7 @@ def test_handle_config_save_with_path():
     """config save writes draft to specified path."""
     from unittest.mock import MagicMock
 
-    import transit_tracker.web as web_mod
+    import transit_tracker.web.api_handlers as web_mod
 
     mock_draft = MagicMock()
     web_mod._draft_config = mock_draft
@@ -705,7 +705,7 @@ def test_handle_config_save_with_path():
 
 def test_handle_config_save_no_path_no_active():
     """config save without path and no active profile returns 400."""
-    import transit_tracker.web as web_mod
+    import transit_tracker.web.api_handlers as web_mod
 
     web_mod._draft_config = TransitConfig(transit_tracker={"stops": []})
     web_mod._draft_dirty = True
@@ -768,7 +768,7 @@ def test_handle_config_settings_patch_invalid():
 
 def test_reset_draft():
     """reset_draft clears the cached draft."""
-    import transit_tracker.web as web_mod
+    import transit_tracker.web.api_handlers as web_mod
 
     web_mod._draft_config = "something"
     web_mod._draft_dirty = True

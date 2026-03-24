@@ -14,11 +14,15 @@ import sqlite3
 import time
 from typing import Optional
 
-# Path relative to this file: src/transit_tracker/gtfs_schedule.py
-# data/ is at project root (4 levels up from src/transit_tracker/)
+# Resolve the GTFS index path.  Priority:
+#   1. GTFS_DB_PATH env var  (container volume mount)
+#   2. data/gtfs_index.sqlite relative to project root  (local dev)
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_HERE)))
-DEFAULT_DB_PATH = os.path.join(_PROJECT_ROOT, "data", "gtfs_index.sqlite")
+DEFAULT_DB_PATH = os.environ.get(
+    "GTFS_DB_PATH",
+    os.path.join(_PROJECT_ROOT, "data", "gtfs_index.sqlite"),
+)
 
 
 class GTFSSchedule:

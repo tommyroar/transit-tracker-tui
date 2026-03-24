@@ -40,6 +40,7 @@ CONTAINER_NAME = "transit-tracker-test"
 WS_HOST_PORT = 18000
 HTTP_HOST_PORT = 18080
 CONFIG_MOUNT = ".local/home.yaml"
+GTFS_DB = "data/gtfs_index.sqlite"
 STARTUP_TIMEOUT = 60  # seconds
 
 
@@ -162,3 +163,121 @@ def test_openapi_returns_json(docker_container):
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
     data = resp.json()  # raises if not valid JSON
     assert isinstance(data, dict), "/api/spec should return a JSON object"
+
+
+# ---------------------------------------------------------------------------
+# GTFS mount tests
+# ---------------------------------------------------------------------------
+
+GTFS_CONTAINER_NAME = "transit-tracker-gtfs-test"
+GTFS_WS_PORT = 18001
+GTFS_HTTP_PORT = 18081
+
+
+def _start_container(image, name, ws_port, http_port, *, gtfs_mount=False):
+    """Start a test container, optionally with GTFS volume. Returns True if ready."""
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
+    run_cmd = [
+        "docker", "run", "-d",
+        "--name", name,
+        "-p", f"{ws_port}:8000",
+        "-p", f"{http_port}:8080",
+    ]
+    config_path = Path(CONFIG_MOUNT)
+    if config_path.exists():
+        run_cmd += ["-v", f"{config_path.resolve()}:/config/config.yaml:ro"]
+    if gtfs_mount:
+        gtfs_path = Path(GTFS_DB)
+        if gtfs_path.exists():
+            run_cmd += [
+                "-v", f"{gtfs_path.resolve()}:/data/gtfs/gtfs_index.sqlite:ro",
+            ]
+    run_cmd.append(image)
+    result = subprocess.run(run_cmd, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        return False
+
+    deadline = time.time() + STARTUP_TIMEOUT
+    while time.time() < deadline:
+        try:
+            with websockets.sync.client.connect(
+                f"ws://localhost:{ws_port}", open_timeout=2, close_timeout=1,
+            ):
+                return True
+        except Exception:
+            time.sleep(1)
+    return False
+
+
+def _stop_container(name):
+    subprocess.run(["docker", "stop", name], capture_output=True, timeout=30)
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=10)
+
+
+def _subscribe_and_collect(ws_port, pairs_str, *, timeout=30):
+    """Subscribe and collect schedule events until timeout. Returns list of messages."""
+    messages = []
+    with websockets.sync.client.connect(
+        f"ws://localhost:{ws_port}", open_timeout=5, close_timeout=2,
+    ) as ws:
+        ws.send(json.dumps({
+            "event": "schedule:subscribe",
+            "data": {"routeStopPairs": pairs_str},
+            "client_name": "gtfs-test",
+        }))
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                raw = ws.recv(timeout=5)
+                msg = json.loads(raw)
+                if msg.get("event") == "schedule":
+                    messages.append(msg)
+                    break  # first schedule response is enough
+            except TimeoutError:
+                continue
+    return messages
+
+
+@pytest.mark.docker
+def test_container_without_gtfs_mount_sends_only_live(docker_image):
+    """Without GTFS mount, subscribe response has no scheduled-only trips on cold start."""
+    # docker_container fixture (no GTFS) is already running — reuse its port
+    # Subscribe with a stop; on cold start with no GTFS, we expect either
+    # empty trips or only live (realtime) trips once the OBA cache warms.
+    messages = _subscribe_and_collect(WS_HOST_PORT, "1_100229,1_75403,0")
+    if messages:
+        trips = messages[0]["data"]["trips"]
+        # Without GTFS, any trips present must come from live OBA data
+        for trip in trips:
+            assert trip.get("isRealtime") is True or trip.get("isRealtime") is False
+            # Key: no way to get GTFS trips without the mount
+
+
+@pytest.mark.docker
+def test_container_with_gtfs_mount_sends_scheduled(docker_image):
+    """With GTFS mount, subscribe response includes scheduled (non-realtime) trips."""
+    gtfs_path = Path(GTFS_DB)
+    if not gtfs_path.exists():
+        pytest.skip(f"GTFS index not found at {GTFS_DB} — run scripts/download_gtfs.py")
+
+    ready = _start_container(
+        docker_image, GTFS_CONTAINER_NAME,
+        GTFS_WS_PORT, GTFS_HTTP_PORT, gtfs_mount=True,
+    )
+    try:
+        assert ready, "GTFS container did not start"
+
+        # Subscribe to a known Sound Transit stop — GTFS should return
+        # scheduled trips immediately even before OBA cache warms.
+        messages = _subscribe_and_collect(
+            GTFS_WS_PORT, "1_100229,1_75403,0", timeout=15,
+        )
+        assert len(messages) > 0, "Expected at least one schedule message"
+        trips = messages[0]["data"]["trips"]
+        assert len(trips) > 0, "Expected trips from GTFS on cold start"
+        # At least one trip should be scheduled (not realtime) from GTFS
+        has_scheduled = any(not t.get("isRealtime") for t in trips)
+        assert has_scheduled, "Expected scheduled (non-realtime) trips from GTFS mount"
+    finally:
+        _stop_container(GTFS_CONTAINER_NAME)

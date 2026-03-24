@@ -19,6 +19,7 @@ WS_PORT=8000
 HTTP_PORT=8080
 PROFILES_DIR="$PROJECT_DIR/.local"
 SERVICE_YAML="$PROJECT_DIR/.local/service.yaml"
+GTFS_DB="$PROJECT_DIR/data/gtfs_index.sqlite"
 DETACH=false
 
 # ---- Parse arguments ----
@@ -43,6 +44,16 @@ fi
 
 cd "$PROJECT_DIR"
 
+# ---- GTFS static schedule (optional) ----
+GTFS_MOUNT=()
+if [ -f "$GTFS_DB" ]; then
+    echo "GTFS index found — scheduled trips will be merged with live data."
+    GTFS_MOUNT=(-v "$GTFS_DB:/data/gtfs/gtfs_index.sqlite:ro")
+else
+    echo "No GTFS index at $GTFS_DB — only live data will be served."
+    echo "  Run 'uv run python scripts/download_gtfs.py' to build it."
+fi
+
 # ---- Build image if not present ----
 if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
     echo "Image '$IMAGE_NAME' not found — building..."
@@ -62,6 +73,7 @@ if [ "$DETACH" = true ]; then
         -p "$HTTP_PORT:$HTTP_PORT" \
         -v "$PROFILES_DIR:/config/profiles:ro" \
         -v "$SERVICE_YAML:/config/service.yaml" \
+        "${GTFS_MOUNT[@]}" \
         -e PROFILES_DIR=/config/profiles \
         -e SERVICE_SETTINGS_PATH=/config/service.yaml \
         -e TZ=America/Los_Angeles \
@@ -92,6 +104,7 @@ else
         -p "$HTTP_PORT:$HTTP_PORT" \
         -v "$PROFILES_DIR:/config/profiles:ro" \
         -v "$SERVICE_YAML:/config/service.yaml" \
+        "${GTFS_MOUNT[@]}" \
         -e PROFILES_DIR=/config/profiles \
         -e SERVICE_SETTINGS_PATH=/config/service.yaml \
         -e TZ=America/Los_Angeles \

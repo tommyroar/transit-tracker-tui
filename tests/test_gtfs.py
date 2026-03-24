@@ -415,8 +415,8 @@ async def test_ferry_fallback_when_no_live_data(tmp_path, mock_config):
 
 
 @pytest.mark.asyncio
-async def test_ferry_fallback_not_added_when_live_data_exists(tmp_path, mock_config):
-    """When ferry has live (realtime) OBA data, GTFS should NOT duplicate trips."""
+async def test_live_dedup_same_trip_id(tmp_path, mock_config):
+    """When live OBA and GTFS have the same tripId, only the live version appears."""
     import datetime
 
     tuesday = datetime.date(2026, 3, 17)
@@ -428,21 +428,21 @@ async def test_ferry_fallback_not_added_when_live_data_exists(tmp_path, mock_con
         services=[("weekday", 1, 1, 1, 1, 1, 0, 0, "20260101", "20261231")],
         routes=[("WSF028", "Seattle-BI", None, None, 4)],
         departures=[
-            ("7", int(8 * 3600 + 600), "weekday", "gtfs_ferry", "WSF028", "Bainbridge", 0),
+            # Same trip ID as the live OBA data below (after prefix stripping)
+            ("7", int(8 * 3600 + 600), "weekday", "ferry_trip_1", "WSF028", "Bainbridge", 0),
         ],
     )
 
     server = TransitServer(mock_config)
     server.gtfs = GTFSSchedule(db_path=db_path)
 
-    # Live realtime OBA data exists for this ferry stop
     import time as real_time
 
     server.cache["95_7"] = (
         real_time.time(),
         [
             {
-                "tripId": "live_ferry_trip",
+                "tripId": "95_ferry_trip_1",  # matches GTFS "ferry_trip_1" after prefix strip
                 "routeId": "95_WSF028",
                 "arrivalTime": int(now_ts + 600),
                 "departureTime": int(now_ts + 600),
@@ -451,11 +451,11 @@ async def test_ferry_fallback_not_added_when_live_data_exists(tmp_path, mock_con
                 "predictedArrivalTime": int((now_ts + 600) * 1000),
                 "predictedDepartureTime": int((now_ts + 600) * 1000),
                 "isRealtime": True,
-                "vehicleId": "95_28",  # Live vehicle = Sealth
+                "vehicleId": "95_28",
                 "headsign": "Bainbridge Island",
                 "routeName": "WSF",
                 "departureEnabled": True,
-                "arrivalEnabled": True,  # both enabled so direction filter passes
+                "arrivalEnabled": True,
             }
         ],
     )
@@ -477,11 +477,355 @@ async def test_ferry_fallback_not_added_when_live_data_exists(tmp_path, mock_con
     payload = json.loads(ws.send.call_args[0][0])
     trips = payload["data"]["trips"]
 
-    # Live trip should be present
-    trip_ids = [t["tripId"] for t in trips]
-    assert "live_ferry_trip" in trip_ids
+    # Only the live trip should appear — GTFS duplicate suppressed
+    assert len(trips) == 1
+    assert trips[0]["isRealtime"] is True
+    assert trips[0]["tripId"] == "95_ferry_trip_1"
 
-    # No GTFS duplicates (should not have gtfs_ferry alongside live trip)
-    gtfs_trips = [t for t in trips if t.get("isRealtime") is False]
-    # When live data exists, GTFS fallback should not trigger
-    assert len(gtfs_trips) == 0
+
+# ---------------------------------------------------------------------------
+# Merge behavior tests: GTFS + live data
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_merge_live_and_gtfs_trips(tmp_path, mock_config):
+    """Live trip A + GTFS trips A,B → output has live A + scheduled B (no duplicate A)."""
+    import datetime
+
+    tuesday = datetime.date(2026, 3, 17)
+    midnight = datetime.datetime.combine(tuesday, datetime.time.min).timestamp()
+    now_ts = midnight + 8 * 3600
+
+    db_path = make_gtfs_db(
+        tmp_path,
+        services=[("weekday", 1, 1, 1, 1, 1, 0, 0, "20260101", "20261231")],
+        routes=[("100", "100", None, "FF0000", 3)],
+        departures=[
+            ("12345", int(8 * 3600 + 300), "weekday", "tripA", "100", "Downtown", 0),
+            ("12345", int(8 * 3600 + 900), "weekday", "tripB", "100", "Airport", 0),
+        ],
+    )
+
+    server = TransitServer(mock_config)
+    server.gtfs = GTFSSchedule(db_path=db_path)
+
+    import time as real_time
+    server.cache["1_12345"] = (
+        real_time.time(),
+        [
+            {
+                "tripId": "1_tripA",
+                "routeId": "1_100",
+                "arrivalTime": int(now_ts + 300),
+                "departureTime": int(now_ts + 300),
+                "isRealtime": True,
+                "headsign": "Downtown",
+                "routeName": "100",
+                "vehicleId": "1_5678",
+            }
+        ],
+    )
+
+    ws = AsyncMock()
+    ws.send = AsyncMock()
+    ws.remote_address = ("192.168.1.100", 12345)
+    server.client_limits[ws] = 5
+    server.subscriptions[ws] = [{"routeId": "1_100", "stopId": "1_12345", "offset": 0}]
+
+    import unittest.mock
+    with unittest.mock.patch("transit_tracker.network.websocket_server.time") as mock_time:
+        mock_time.time.return_value = now_ts
+        await server.send_update(ws)
+
+    ws.send.assert_called_once()
+    payload = json.loads(ws.send.call_args[0][0])
+    trips = payload["data"]["trips"]
+
+    trip_ids = [t["tripId"] for t in trips]
+    # Live tripA present
+    assert "1_tripA" in trip_ids
+    # GTFS tripB present (gap-fill)
+    assert "1_tripB" in trip_ids
+    # No duplicate tripA
+    assert trip_ids.count("1_tripA") == 1
+
+    # Verify realtime flags
+    trip_map = {t["tripId"]: t for t in trips}
+    assert trip_map["1_tripA"]["isRealtime"] is True
+    assert trip_map["1_tripB"]["isRealtime"] is False
+
+
+@pytest.mark.asyncio
+async def test_merge_no_gtfs_db_unchanged_behavior(tmp_path, mock_config):
+    """Without GTFS DB, only live cache data is sent — identical to legacy behavior."""
+    server = TransitServer(mock_config)
+    server.gtfs = GTFSSchedule(db_path=str(tmp_path / "missing.sqlite"))
+
+    now_ts = int(time.time())
+    server.cache["1_12345"] = (
+        time.time(),
+        [
+            {
+                "tripId": "1_trip1",
+                "routeId": "1_100",
+                "arrivalTime": now_ts + 600,
+                "departureTime": now_ts + 600,
+                "isRealtime": True,
+                "headsign": "Downtown",
+                "routeName": "100",
+                "vehicleId": "1_999",
+            }
+        ],
+    )
+
+    ws = AsyncMock()
+    ws.send = AsyncMock()
+    ws.remote_address = ("192.168.1.100", 12345)
+    server.subscriptions[ws] = [{"routeId": "1_100", "stopId": "1_12345", "offset": 0}]
+
+    await server.send_update(ws)
+
+    ws.send.assert_called_once()
+    payload = json.loads(ws.send.call_args[0][0])
+    trips = payload["data"]["trips"]
+    assert len(trips) == 1
+    assert trips[0]["tripId"] == "1_trip1"
+    assert trips[0]["isRealtime"] is True
+
+
+@pytest.mark.asyncio
+async def test_merge_gtfs_trip_id_gets_agency_prefix(tmp_path, mock_config):
+    """GTFS-only trips should have agency-prefixed tripId in the output message."""
+    import datetime
+
+    tuesday = datetime.date(2026, 3, 17)
+    midnight = datetime.datetime.combine(tuesday, datetime.time.min).timestamp()
+    now_ts = midnight + 8 * 3600
+
+    db_path = make_gtfs_db(
+        tmp_path,
+        services=[("weekday", 1, 1, 1, 1, 1, 0, 0, "20260101", "20261231")],
+        routes=[("100", "100", None, None, 3)],
+        departures=[
+            ("12345", int(8 * 3600 + 600), "weekday", "trip99", "100", "Downtown", 0),
+        ],
+    )
+
+    server = TransitServer(mock_config)
+    server.gtfs = GTFSSchedule(db_path=db_path)
+    # Empty cache — GTFS-only
+
+    ws = AsyncMock()
+    ws.send = AsyncMock()
+    ws.remote_address = ("192.168.1.100", 12345)
+    server.client_limits[ws] = 1
+    server.subscriptions[ws] = [{"routeId": "1_100", "stopId": "1_12345", "offset": 0}]
+
+    import unittest.mock
+    with unittest.mock.patch("transit_tracker.network.websocket_server.time") as mock_time:
+        mock_time.time.return_value = now_ts
+        await server.send_update(ws)
+
+    ws.send.assert_called_once()
+    payload = json.loads(ws.send.call_args[0][0])
+    trips = payload["data"]["trips"]
+    assert len(trips) == 1
+    # tripId should be agency-prefixed, not bare
+    assert trips[0]["tripId"] == "1_trip99"
+    assert trips[0]["routeId"] == "1_100"
+
+
+@pytest.mark.asyncio
+async def test_merge_sorts_by_arrival_time(tmp_path, mock_config):
+    """Mixed live and GTFS trips should be sorted by arrivalTime in the output."""
+    import datetime
+
+    tuesday = datetime.date(2026, 3, 17)
+    midnight = datetime.datetime.combine(tuesday, datetime.time.min).timestamp()
+    now_ts = midnight + 8 * 3600
+
+    db_path = make_gtfs_db(
+        tmp_path,
+        services=[("weekday", 1, 1, 1, 1, 1, 0, 0, "20260101", "20261231")],
+        routes=[("100", "100", None, None, 3)],
+        departures=[
+            # GTFS trip at 8:05 (between the two live trips)
+            ("12345", int(8 * 3600 + 300), "weekday", "gtfs_mid", "100", "Mid", 0),
+            # GTFS trip at 8:20 (after both live trips)
+            ("12345", int(8 * 3600 + 1200), "weekday", "gtfs_late", "100", "Late", 0),
+        ],
+    )
+
+    server = TransitServer(mock_config)
+    server.gtfs = GTFSSchedule(db_path=db_path)
+
+    import time as real_time
+    server.cache["1_12345"] = (
+        real_time.time(),
+        [
+            {
+                "tripId": "1_live_early",
+                "routeId": "1_100",
+                "arrivalTime": int(now_ts + 120),  # 8:02
+                "departureTime": int(now_ts + 120),
+                "isRealtime": True,
+                "headsign": "Early",
+                "routeName": "100",
+                "vehicleId": "1_111",
+            },
+            {
+                "tripId": "1_live_mid2",
+                "routeId": "1_100",
+                "arrivalTime": int(now_ts + 600),  # 8:10
+                "departureTime": int(now_ts + 600),
+                "isRealtime": True,
+                "headsign": "Mid2",
+                "routeName": "100",
+                "vehicleId": "1_222",
+            },
+        ],
+    )
+
+    ws = AsyncMock()
+    ws.send = AsyncMock()
+    ws.remote_address = ("192.168.1.100", 12345)
+    server.client_limits[ws] = 10
+    server.subscriptions[ws] = [{"routeId": "1_100", "stopId": "1_12345", "offset": 0}]
+
+    import unittest.mock
+    with unittest.mock.patch("transit_tracker.network.websocket_server.time") as mock_time:
+        mock_time.time.return_value = now_ts
+        await server.send_update(ws)
+
+    ws.send.assert_called_once()
+    payload = json.loads(ws.send.call_args[0][0])
+    trips = payload["data"]["trips"]
+
+    # Should be sorted by arrivalTime
+    arrival_times = [t["arrivalTime"] for t in trips]
+    assert arrival_times == sorted(arrival_times)
+    # Should have at least live + GTFS trips
+    assert len(trips) >= 3
+
+
+@pytest.mark.asyncio
+async def test_subscribe_immediate_gtfs_then_merge_after_cache_warm(tmp_path, mock_config):
+    """Phase 1: empty cache → GTFS trips. Phase 2: cache warm → merged output."""
+    import datetime
+
+    tuesday = datetime.date(2026, 3, 17)
+    midnight = datetime.datetime.combine(tuesday, datetime.time.min).timestamp()
+    now_ts = midnight + 8 * 3600
+
+    db_path = make_gtfs_db(
+        tmp_path,
+        services=[("weekday", 1, 1, 1, 1, 1, 0, 0, "20260101", "20261231")],
+        routes=[("100", "100", None, None, 3)],
+        departures=[
+            ("12345", int(8 * 3600 + 300), "weekday", "tripA", "100", "Downtown", 0),
+            ("12345", int(8 * 3600 + 900), "weekday", "tripB", "100", "Airport", 0),
+        ],
+    )
+
+    server = TransitServer(mock_config)
+    server.gtfs = GTFSSchedule(db_path=db_path)
+
+    ws = AsyncMock()
+    ws.send = AsyncMock()
+    ws.remote_address = ("192.168.1.100", 12345)
+    server.client_limits[ws] = 5
+    server.subscriptions[ws] = [{"routeId": "1_100", "stopId": "1_12345", "offset": 0}]
+
+    import unittest.mock
+
+    # Phase 1: empty cache — should get GTFS-only trips
+    with unittest.mock.patch("transit_tracker.network.websocket_server.time") as mock_time:
+        mock_time.time.return_value = now_ts
+        await server.send_update(ws)
+
+    payload1 = json.loads(ws.send.call_args[0][0])
+    trips1 = payload1["data"]["trips"]
+    assert len(trips1) >= 1
+    assert all(t["isRealtime"] is False for t in trips1)
+
+    # Phase 2: cache warm with live tripA
+    import time as real_time
+    server.cache["1_12345"] = (
+        real_time.time(),
+        [
+            {
+                "tripId": "1_tripA",
+                "routeId": "1_100",
+                "arrivalTime": int(now_ts + 300),
+                "departureTime": int(now_ts + 300),
+                "isRealtime": True,
+                "headsign": "Downtown",
+                "routeName": "100",
+                "vehicleId": "1_5678",
+            }
+        ],
+    )
+
+    ws.send.reset_mock()
+    with unittest.mock.patch("transit_tracker.network.websocket_server.time") as mock_time:
+        mock_time.time.return_value = now_ts
+        await server.send_update(ws)
+
+    payload2 = json.loads(ws.send.call_args[0][0])
+    trips2 = payload2["data"]["trips"]
+
+    trip_map = {t["tripId"]: t for t in trips2}
+    # Live tripA supersedes GTFS tripA
+    assert "1_tripA" in trip_map
+    assert trip_map["1_tripA"]["isRealtime"] is True
+    # GTFS tripB still present as gap-fill
+    assert "1_tripB" in trip_map
+    assert trip_map["1_tripB"]["isRealtime"] is False
+
+
+# ---------------------------------------------------------------------------
+# Contract tests: message schema
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.contract
+@pytest.mark.asyncio
+async def test_scheduled_message_schema_matches_live(tmp_path, mock_config):
+    """Scheduled trip dicts must have all fields that live trips have."""
+    import datetime
+
+    tuesday = datetime.date(2026, 3, 17)
+    midnight = datetime.datetime.combine(tuesday, datetime.time.min).timestamp()
+    now_ts = midnight + 8 * 3600
+
+    db_path = make_gtfs_db(
+        tmp_path,
+        services=[("weekday", 1, 1, 1, 1, 1, 0, 0, "20260101", "20261231")],
+        routes=[("100", "100", None, "FF0000", 3)],
+        departures=[
+            ("12345", int(8 * 3600 + 600), "weekday", "sched_trip", "100", "Downtown", 0),
+        ],
+    )
+
+    server = TransitServer(mock_config)
+    server.gtfs = GTFSSchedule(db_path=db_path)
+
+    ws = AsyncMock()
+    ws.send = AsyncMock()
+    ws.remote_address = ("192.168.1.100", 12345)
+    server.subscriptions[ws] = [{"routeId": "1_100", "stopId": "1_12345", "offset": 0}]
+
+    import unittest.mock
+    with unittest.mock.patch("transit_tracker.network.websocket_server.time") as mock_time:
+        mock_time.time.return_value = now_ts
+        await server.send_update(ws)
+
+    payload = json.loads(ws.send.call_args[0][0])
+    trips = payload["data"]["trips"]
+    assert len(trips) > 0
+
+    required_fields = {"tripId", "routeId", "routeName", "routeColor", "stopId",
+                       "headsign", "arrivalTime", "departureTime", "isRealtime"}
+    for trip in trips:
+        assert required_fields.issubset(trip.keys()), f"Missing fields: {required_fields - trip.keys()}"

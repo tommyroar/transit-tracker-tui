@@ -36,6 +36,19 @@ docker logs transit-tracker --tail 20        # recent logs
 - Without a mount, the container connects to `wss://tt.horner.tj/` (public API)
 - Production config: `.local/home.yaml`
 
+## GTFS Static Schedule
+
+Mount the GTFS SQLite index to enable scheduled trip merging alongside live data:
+
+```
+-v $(pwd)/data/gtfs_index.sqlite:/data/gtfs/gtfs_index.sqlite:ro
+```
+
+- **With mount**: boards receive GTFS scheduled trips immediately on subscribe and as gap-fill between live updates. Live trips always supersede scheduled trips for the same `tripId`.
+- **Without mount**: only live OBA data is sent (identical to previous behavior).
+- Build the index: `uv run python scripts/download_gtfs.py`
+- The `start_container.sh` script auto-detects the file and adds the mount if present.
+
 ## Container Management
 
 Managed directly by Docker restart policy:
@@ -44,6 +57,7 @@ Managed directly by Docker restart policy:
 docker run -d --name transit-tracker --restart=always \
   -p 8000:8000 -p 8081:8080 \
   -v $(pwd)/.local/home.yaml:/config/config.yaml:ro \
+  -v $(pwd)/data/gtfs_index.sqlite:/data/gtfs/gtfs_index.sqlite:ro \
   transit-tracker:latest
 ```
 

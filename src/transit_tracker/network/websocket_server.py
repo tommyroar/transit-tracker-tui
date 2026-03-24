@@ -403,30 +403,41 @@ class TransitServer:
         for stop_id, stop_subs in stop_to_subs.items():
             try:
                 clean_stop_id = self.normalize_id(stop_id)
-                # Pull from cache (immediate hit if refresh_all_data just ran)
-                # Note: We use a non-raising version for broadcast so it doesn't fail the loop
-                if clean_stop_id in self.cache:
-                    arrivals = self.cache[clean_stop_id][1]
-                elif self.gtfs is not None and self.gtfs.is_available():
-                    # Cache miss — use GTFS static schedule as immediate fallback
+                # Always start with live OBA data (may be empty on cold start).
+                # Copy the list so GTFS appends below don't mutate the cache.
+                live_arrivals = list(self.cache[clean_stop_id][1]) if clean_stop_id in self.cache else []
+
+                # Merge GTFS scheduled trips when the static DB is available.
+                # Live trips supersede GTFS trips with the same tripId.
+                if self.gtfs is not None and self.gtfs.is_available():
                     route_ids = {self.normalize_id(s.get("routeId", "")) for s in stop_subs}
-                    arrivals = self.gtfs.get_next_departures(
+                    gtfs_arrivals = self.gtfs.get_next_departures(
                         stop_id=clean_stop_id,
                         route_ids=route_ids,
                         now=time.time(),
                         count=10,
                     )
-                    # GTFS returns bare (un-prefixed) route IDs; restore the agency prefix
-                    # from the stop_id so the route is_match check below works correctly.
+                    # GTFS returns bare (un-prefixed) IDs; restore the agency prefix
+                    # from the stop_id so route matching and client output are consistent.
                     agency_pfx = clean_stop_id.split("_", 1)[0] if "_" in clean_stop_id and clean_stop_id.split("_", 1)[0].isdigit() else ""
                     if agency_pfx:
-                        for arr in arrivals:
-                            r = arr.get("routeId", "")
-                            if r and "_" not in r:
-                                arr["routeId"] = f"{agency_pfx}_{r}"
-                else:
-                    # Cache miss — data_refresh_loop will populate shortly; skip for now
-                    arrivals = []
+                        for arr in gtfs_arrivals:
+                            if arr.get("routeId") and "_" not in arr["routeId"]:
+                                arr["routeId"] = f"{agency_pfx}_{arr['routeId']}"
+                            if arr.get("tripId") and "_" not in arr["tripId"]:
+                                arr["tripId"] = f"{agency_pfx}_{arr['tripId']}"
+
+                    # Dedup: live trips win over GTFS trips with the same tripId
+                    live_trip_ids = {
+                        GTFSSchedule._strip_agency_prefix(a.get("tripId", ""))
+                        for a in live_arrivals if a.get("tripId")
+                    }
+                    for gtfs_trip in gtfs_arrivals:
+                        bare_tid = GTFSSchedule._strip_agency_prefix(gtfs_trip.get("tripId", ""))
+                        if bare_tid and bare_tid not in live_trip_ids:
+                            live_arrivals.append(gtfs_trip)
+
+                arrivals = live_arrivals
 
                 route_to_sub = {self.normalize_id(s.get("routeId")): s for s in stop_subs}
                 relevant_routes = set(route_to_sub.keys())

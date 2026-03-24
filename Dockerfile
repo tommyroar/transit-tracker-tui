@@ -58,6 +58,11 @@ RUN chmod +x /app/entrypoint.sh
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
+# GTFS static schedule: mount the SQLite index at /data/gtfs/gtfs_index.sqlite
+# to enable scheduled trip merging.  Without the mount, only live data is sent.
+#   docker run -v ./data/gtfs_index.sqlite:/data/gtfs/gtfs_index.sqlite:ro ...
+ENV GTFS_DB_PATH="/data/gtfs/gtfs_index.sqlite"
+
 # Ports: 8000 = WebSocket, 8080 = HTTP
 EXPOSE 8000 8080
 

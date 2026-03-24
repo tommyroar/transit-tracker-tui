@@ -1,11 +1,13 @@
 """
-GTFS static schedule lookup for wake-up messages and ferry fallback.
+GTFS static schedule lookup — merged alongside live OBA data every broadcast.
 
-The index is built by scripts/download_gtfs.py and stored at data/gtfs_index.sqlite.
+The index is built by scripts/download_gtfs.py and stored at data/gtfs_index.sqlite
+(overridable via GTFS_DB_PATH env var for container volume mounts).
+
 At runtime, this module queries the SQLite index for the next scheduled departures
-from a given stop, used in two scenarios:
-  1. Wake-up: send immediate GTFS data when OBA cache is empty (client just connected)
-  2. Ferry fallback: always show next scheduled ferry when no live OBA data is available
+from a given stop.  The WebSocket server merges these with live OBA arrivals on every
+broadcast: live trips supersede GTFS trips with the same tripId, and GTFS fills gaps
+where live data is missing.  Without the DB, the server sends only live data.
 """
 
 import datetime
@@ -14,11 +16,15 @@ import sqlite3
 import time
 from typing import Optional
 
-# Path relative to this file: src/transit_tracker/gtfs_schedule.py
-# data/ is at project root (4 levels up from src/transit_tracker/)
+# Resolve the GTFS index path.  Priority:
+#   1. GTFS_DB_PATH env var  (container volume mount)
+#   2. data/gtfs_index.sqlite relative to project root  (local dev)
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_HERE)))
-DEFAULT_DB_PATH = os.path.join(_PROJECT_ROOT, "data", "gtfs_index.sqlite")
+DEFAULT_DB_PATH = os.environ.get(
+    "GTFS_DB_PATH",
+    os.path.join(_PROJECT_ROOT, "data", "gtfs_index.sqlite"),
+)
 
 
 class GTFSSchedule:

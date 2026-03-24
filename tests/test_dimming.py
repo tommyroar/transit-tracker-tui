@@ -183,11 +183,23 @@ def dimming_config():
     config.service.oba_api_key = None
     config.transit_tracker.abbreviations = []
     config.service.device_ip = "192.168.5.248"
-    config.service.dimming_schedule = [
-        DimmingEntry(time="07:00", brightness=128),
-        DimmingEntry(time="22:00", brightness=20),
-    ]
+
+    # Daylight mode enabled with test schedule
+    config.service.daylight_dimming_enabled = True
+    config.service.daylight_dimming_timezone = "America/Los_Angeles"
+    config.service.dawn_ramp_minutes = 30
+    config.service.dawn_ramp_steps = 6
+    config.service.dusk_ramp_minutes = 60
+    config.service.dusk_ramp_steps = 6
+    config.service.dimming_schedule = []
     return config
+
+
+# Fixed schedule used by integration tests to decouple from astral computation
+_TEST_SCHEDULE = [
+    DimmingEntry(time="07:00", brightness=128),
+    DimmingEntry(time="22:00", brightness=20),
+]
 
 
 @pytest.mark.asyncio
@@ -198,7 +210,12 @@ async def test_apply_posts_to_esphome(dimming_config):
 
     mock_client = AsyncMock()
 
-    with patch("datetime.datetime") as mock_dt:
+    _patch_build = patch(
+        "transit_tracker.network.websocket_server"
+        ".build_daylight_schedule",
+        return_value=_TEST_SCHEDULE,
+    )
+    with _patch_build, patch("datetime.datetime") as mock_dt:
         mock_dt.now.return_value.time.return_value = datetime.time(23, 0)
         await server._apply_dimming_schedule(mock_client)
 
@@ -223,7 +240,12 @@ async def test_apply_broadcasts_ws(dimming_config):
 
     mock_client = AsyncMock()
 
-    with patch("datetime.datetime") as mock_dt:
+    _patch_build = patch(
+        "transit_tracker.network.websocket_server"
+        ".build_daylight_schedule",
+        return_value=_TEST_SCHEDULE,
+    )
+    with _patch_build, patch("datetime.datetime") as mock_dt:
         mock_dt.now.return_value.time.return_value = datetime.time(23, 0)
         await server._apply_dimming_schedule(mock_client)
 
@@ -235,9 +257,9 @@ async def test_apply_broadcasts_ws(dimming_config):
 
 
 @pytest.mark.asyncio
-async def test_apply_skips_when_no_schedule(dimming_config):
-    """No schedule means no POST and no broadcast."""
-    dimming_config.service.dimming_schedule = []
+async def test_apply_skips_when_disabled(dimming_config):
+    """Daylight mode disabled means no POST and no broadcast."""
+    dimming_config.service.daylight_dimming_enabled = False
     server = TransitServer(dimming_config)
     mock_client = AsyncMock()
 
@@ -256,7 +278,12 @@ async def test_apply_manual_override_respected(dimming_config):
 
     mock_client = AsyncMock()
 
-    with patch("datetime.datetime") as mock_dt:
+    _patch_build = patch(
+        "transit_tracker.network.websocket_server"
+        ".build_daylight_schedule",
+        return_value=_TEST_SCHEDULE,
+    )
+    with _patch_build, patch("datetime.datetime") as mock_dt:
         mock_dt.now.return_value.time.return_value = datetime.time(23, 0)
         result = await server._apply_dimming_schedule(mock_client)
 
@@ -276,7 +303,12 @@ async def test_apply_override_cleared_on_transition(dimming_config):
     mock_client = AsyncMock()
 
     # Move to daytime — schedule target is 128, different from last_scheduled (20)
-    with patch("datetime.datetime") as mock_dt:
+    _patch_build = patch(
+        "transit_tracker.network.websocket_server"
+        ".build_daylight_schedule",
+        return_value=_TEST_SCHEDULE,
+    )
+    with _patch_build, patch("datetime.datetime") as mock_dt:
         mock_dt.now.return_value.time.return_value = datetime.time(12, 0)
         result = await server._apply_dimming_schedule(mock_client)
 
@@ -295,7 +327,12 @@ async def test_apply_handles_http_failure(dimming_config):
     mock_client = AsyncMock()
     mock_client.post.side_effect = Exception("Connection refused")
 
-    with patch("datetime.datetime") as mock_dt:
+    _patch_build = patch(
+        "transit_tracker.network.websocket_server"
+        ".build_daylight_schedule",
+        return_value=_TEST_SCHEDULE,
+    )
+    with _patch_build, patch("datetime.datetime") as mock_dt:
         mock_dt.now.return_value.time.return_value = datetime.time(23, 0)
         # Should not raise
         result = await server._apply_dimming_schedule(mock_client)
@@ -317,7 +354,12 @@ async def test_apply_no_device_ip_skips_post(dimming_config):
 
     mock_client = AsyncMock()
 
-    with patch("datetime.datetime") as mock_dt:
+    _patch_build = patch(
+        "transit_tracker.network.websocket_server"
+        ".build_daylight_schedule",
+        return_value=_TEST_SCHEDULE,
+    )
+    with _patch_build, patch("datetime.datetime") as mock_dt:
         mock_dt.now.return_value.time.return_value = datetime.time(23, 0)
         result = await server._apply_dimming_schedule(mock_client)
 
@@ -334,7 +376,12 @@ async def test_apply_no_change_when_already_at_target(dimming_config):
 
     mock_client = AsyncMock()
 
-    with patch("datetime.datetime") as mock_dt:
+    _patch_build = patch(
+        "transit_tracker.network.websocket_server"
+        ".build_daylight_schedule",
+        return_value=_TEST_SCHEDULE,
+    )
+    with _patch_build, patch("datetime.datetime") as mock_dt:
         mock_dt.now.return_value.time.return_value = datetime.time(23, 0)
         result = await server._apply_dimming_schedule(mock_client)
 

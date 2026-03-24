@@ -17,8 +17,8 @@ from rich.table import Table
 from rich.text import Text
 
 from .config import (
-    DimmingEntry,
     TransitConfig,
+    build_daylight_schedule,
     get_last_config_path,
     set_last_config_path,
     list_profiles,
@@ -473,68 +473,119 @@ async def change_brightness_wizard(
 async def manage_dimming_schedule_wizard(
     config: TransitConfig, config_path: str, console: Console
 ):
-    while True:
-        schedule = config.service.dimming_schedule
-        entry_lines = [
-            f"{e.time}  ->  {e.brightness}"
-            for e in sorted(schedule, key=lambda e: e.time)
-        ]
+    import datetime as _dt
 
-        choices = entry_lines + ["-- Add entry", "-- Clear all", "-- Back"]
+    while True:
+        svc = config.service
+        if svc.daylight_dimming_enabled:
+            status = f"[green]ON[/green] ({svc.daylight_dimming_timezone})"
+            schedule = build_daylight_schedule(
+                dt=_dt.date.today(),
+                timezone=svc.daylight_dimming_timezone,
+                dawn_ramp_minutes=svc.dawn_ramp_minutes,
+                dawn_ramp_steps=svc.dawn_ramp_steps,
+                dusk_ramp_minutes=svc.dusk_ramp_minutes,
+                dusk_ramp_steps=svc.dusk_ramp_steps,
+            )
+            schedule_lines = [
+                f"  {e.time}  ->  {e.brightness}" for e in sorted(schedule, key=lambda e: e.time)
+            ]
+            rprint(f"\nDaylight mode: {status}")
+            rprint(f"  Dawn ramp: {svc.dawn_ramp_minutes} min / {svc.dawn_ramp_steps} steps")
+            rprint(f"  Dusk ramp: {svc.dusk_ramp_minutes} min / {svc.dusk_ramp_steps} steps")
+            rprint("  Today's schedule:")
+            for line in schedule_lines:
+                rprint(line)
+        else:
+            status = "[red]OFF[/red]"
+            rprint(f"\nDaylight mode: {status}")
+
+        choices = []
+        if not svc.daylight_dimming_enabled:
+            choices.append("Enable daylight mode")
+        else:
+            choices.append("Disable daylight mode")
+            choices.append("Change timezone")
+            choices.append("Configure ramp")
+        choices.append("Back")
+
         action = await questionary.select(
-            "Brightness Schedule  (select an entry to remove it):",
+            "Daylight Dimming:",
             choices=choices,
         ).ask_async()
 
-        if action is None or action == "-- Back":
+        if action is None or action == "Back":
             break
 
-        elif action == "-- Add entry":
-            time_val = await questionary.text(
-                "Time (HH:MM, 24-hour):",
+        elif action == "Enable daylight mode":
+            tz = await questionary.text(
+                "Timezone (IANA format):",
+                default=svc.daylight_dimming_timezone,
+            ).ask_async()
+            if tz:
+                svc.daylight_dimming_enabled = True
+                svc.daylight_dimming_timezone = tz
+                save_service_settings(svc)
+                rprint(f"[green]Daylight mode enabled ({tz}).[/green]")
+
+        elif action == "Disable daylight mode":
+            svc.daylight_dimming_enabled = False
+            save_service_settings(svc)
+            rprint("[green]Daylight mode disabled.[/green]")
+
+        elif action == "Change timezone":
+            tz = await questionary.text(
+                "Timezone (IANA format):",
+                default=svc.daylight_dimming_timezone,
+            ).ask_async()
+            if tz:
+                svc.daylight_dimming_timezone = tz
+                save_service_settings(svc)
+                rprint(f"[green]Timezone set to {tz}.[/green]")
+
+        elif action == "Configure ramp":
+            dawn_min = await questionary.text(
+                "Dawn ramp minutes (5-120):",
+                default=str(svc.dawn_ramp_minutes),
                 validate=lambda v: (
-                    bool(re.match(r"^\d{2}:\d{2}$", v)) or "Use HH:MM format"
+                    (v.isdigit() and 5 <= int(v) <= 120) or "Enter 5-120"
                 ),
             ).ask_async()
-            if not time_val:
+            if not dawn_min:
                 continue
-            brightness_val = await questionary.text(
-                "Brightness (0-255):",
+            dawn_steps = await questionary.text(
+                "Dawn ramp steps (2-20):",
+                default=str(svc.dawn_ramp_steps),
                 validate=lambda v: (
-                    (v.isdigit() and 0 <= int(v) <= 255)
-                    or "Enter a value from 0 to 255"
+                    (v.isdigit() and 2 <= int(v) <= 20) or "Enter 2-20"
                 ),
             ).ask_async()
-            if not brightness_val:
+            if not dawn_steps:
                 continue
-            try:
-                entry = DimmingEntry(time=time_val, brightness=int(brightness_val))
-                config.service.dimming_schedule.append(entry)
-                save_service_settings(config.service)
-                rprint(f"[green]Added {entry.time} -> {entry.brightness}.[/green]")
-            except Exception as e:
-                rprint(f"[red]Invalid entry: {e}[/red]")
-
-        elif action == "-- Clear all":
-            confirmed = await questionary.confirm(
-                "Remove all schedule entries?"
+            dusk_min = await questionary.text(
+                "Dusk ramp minutes (5-120):",
+                default=str(svc.dusk_ramp_minutes),
+                validate=lambda v: (
+                    (v.isdigit() and 5 <= int(v) <= 120) or "Enter 5-120"
+                ),
             ).ask_async()
-            if confirmed:
-                config.service.dimming_schedule = []
-                save_service_settings(config.service)
-                rprint("[green]Schedule cleared.[/green]")
-
-        elif action in entry_lines:
-            idx = entry_lines.index(action)
-            sorted_entries = sorted(schedule, key=lambda e: e.time)
-            entry = sorted_entries[idx]
-            confirmed = await questionary.confirm(
-                f"Remove {entry.time} -> {entry.brightness}?"
+            if not dusk_min:
+                continue
+            dusk_steps = await questionary.text(
+                "Dusk ramp steps (2-20):",
+                default=str(svc.dusk_ramp_steps),
+                validate=lambda v: (
+                    (v.isdigit() and 2 <= int(v) <= 20) or "Enter 2-20"
+                ),
             ).ask_async()
-            if confirmed:
-                config.service.dimming_schedule.remove(entry)
-                save_service_settings(config.service)
-                rprint(f"[green]Removed {entry.time} -> {entry.brightness}.[/green]")
+            if not dusk_steps:
+                continue
+            svc.dawn_ramp_minutes = int(dawn_min)
+            svc.dawn_ramp_steps = int(dawn_steps)
+            svc.dusk_ramp_minutes = int(dusk_min)
+            svc.dusk_ramp_steps = int(dusk_steps)
+            save_service_settings(svc)
+            rprint("[green]Ramp settings updated.[/green]")
 
 
 def make_dashboard(config: TransitConfig, config_path: str) -> Panel:

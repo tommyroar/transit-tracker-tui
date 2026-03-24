@@ -12,8 +12,12 @@ import httpx
 import websockets
 
 from ..config import (
-    TransitConfig, evaluate_dimming_schedule, get_last_config_path,
-    load_service_settings, _resolve_settings_path,
+    TransitConfig,
+    _resolve_settings_path,
+    build_daylight_schedule,
+    evaluate_dimming_schedule,
+    get_last_config_path,
+    load_service_settings,
 )
 from ..display import format_trip_line
 from ..gtfs_schedule import GTFSSchedule
@@ -565,8 +569,20 @@ class TransitServer:
 
     async def _apply_dimming_schedule(self, http_client: httpx.AsyncClient):
         """Single iteration of dimming schedule check. Returns True if brightness changed."""
-        schedule = self.config.service.dimming_schedule
-        device_ip = self.config.service.device_ip
+        svc = self.config.service
+        device_ip = svc.device_ip
+
+        if svc.daylight_dimming_enabled:
+            schedule = build_daylight_schedule(
+                dt=datetime.date.today(),
+                timezone=svc.daylight_dimming_timezone,
+                dawn_ramp_minutes=svc.dawn_ramp_minutes,
+                dawn_ramp_steps=svc.dawn_ramp_steps,
+                dusk_ramp_minutes=svc.dusk_ramp_minutes,
+                dusk_ramp_steps=svc.dusk_ramp_steps,
+            )
+        else:
+            return False
 
         if not schedule:
             return False

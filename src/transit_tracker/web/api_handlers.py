@@ -65,9 +65,8 @@ def _handle_profile_activate(query: dict) -> tuple:
 
 
 def _handle_dimming_set(query: dict) -> tuple:
-    """Update dimming settings from query params."""
+    """Update dimming settings from query params (legacy endpoint)."""
     from ..config import (
-        DimmingEntry,
         load_service_settings,
         save_service_settings,
     )
@@ -78,30 +77,20 @@ def _handle_dimming_set(query: dict) -> tuple:
         extra={"component": "web"},
     )
     settings = load_service_settings()
-    raw_entries = query.get("schedule", [])
-    if raw_entries:
-        entries = []
-        for entry in raw_entries:
-            time_str, brightness_str = entry.split(",", 1)
-            entries.append(
-                DimmingEntry(
-                    time=time_str.strip(),
-                    brightness=int(brightness_str.strip()),
-                )
-            )
-        settings.dimming_schedule = entries
     if "brightness" in query:
         settings.display_brightness = int(query["brightness"][0])
     if "device_ip" in query:
         settings.device_ip = query["device_ip"][0]
+    if "daylight" in query:
+        settings.daylight_dimming_enabled = query["daylight"][0].lower() in ("1", "true")
+    if "timezone" in query:
+        settings.daylight_dimming_timezone = query["timezone"][0]
     save_service_settings(settings)
     return (
         200,
         {
             "status": "ok",
-            "dimming_schedule": [
-                e.model_dump() for e in settings.dimming_schedule
-            ],
+            "daylight_dimming_enabled": settings.daylight_dimming_enabled,
             "display_brightness": settings.display_brightness,
             "device_ip": settings.device_ip,
             "message": "Dimming settings saved. Will take effect within 60 seconds.",

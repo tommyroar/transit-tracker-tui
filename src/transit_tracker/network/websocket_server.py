@@ -403,8 +403,9 @@ class TransitServer:
         for stop_id, stop_subs in stop_to_subs.items():
             try:
                 clean_stop_id = self.normalize_id(stop_id)
-                # Always start with live OBA data (may be empty on cold start)
-                live_arrivals = self.cache[clean_stop_id][1] if clean_stop_id in self.cache else []
+                # Always start with live OBA data (may be empty on cold start).
+                # Copy the list so GTFS appends below don't mutate the cache.
+                live_arrivals = list(self.cache[clean_stop_id][1]) if clean_stop_id in self.cache else []
 
                 # Merge GTFS scheduled trips when the static DB is available.
                 # Live trips supersede GTFS trips with the same tripId.

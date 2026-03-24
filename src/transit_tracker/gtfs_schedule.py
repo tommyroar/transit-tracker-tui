@@ -1,11 +1,13 @@
 """
-GTFS static schedule lookup for wake-up messages and ferry fallback.
+GTFS static schedule lookup — merged alongside live OBA data every broadcast.
 
-The index is built by scripts/download_gtfs.py and stored at data/gtfs_index.sqlite.
+The index is built by scripts/download_gtfs.py and stored at data/gtfs_index.sqlite
+(overridable via GTFS_DB_PATH env var for container volume mounts).
+
 At runtime, this module queries the SQLite index for the next scheduled departures
-from a given stop, used in two scenarios:
-  1. Wake-up: send immediate GTFS data when OBA cache is empty (client just connected)
-  2. Ferry fallback: always show next scheduled ferry when no live OBA data is available
+from a given stop.  The WebSocket server merges these with live OBA arrivals on every
+broadcast: live trips supersede GTFS trips with the same tripId, and GTFS fills gaps
+where live data is missing.  Without the DB, the server sends only live data.
 """
 
 import datetime

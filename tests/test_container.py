@@ -248,10 +248,10 @@ def test_container_without_gtfs_mount_sends_only_live(docker_image):
     messages = _subscribe_and_collect(WS_HOST_PORT, "1_100229,1_75403,0")
     if messages:
         trips = messages[0]["data"]["trips"]
-        # Without GTFS, any trips present must come from live OBA data
-        for trip in trips:
-            assert trip.get("isRealtime") is True or trip.get("isRealtime") is False
-            # Key: no way to get GTFS trips without the mount
+        # Without GTFS mount, all trips must be live (realtime) — no scheduled-only trips
+        assert all(
+            t.get("isRealtime") is True for t in trips
+        ), "Without GTFS mount, all trips should be realtime"
 
 
 @pytest.mark.docker

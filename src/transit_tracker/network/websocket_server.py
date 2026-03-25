@@ -5,6 +5,7 @@ import os
 import random
 import re
 import time
+import zoneinfo
 from collections import defaultdict
 from typing import Any, Dict
 
@@ -587,7 +588,8 @@ class TransitServer:
         if not schedule:
             return False
 
-        now_time = datetime.datetime.now().time()
+        tz = zoneinfo.ZoneInfo(svc.daylight_dimming_timezone)
+        now_time = datetime.datetime.now(tz).time()
         target = evaluate_dimming_schedule(schedule, now_time)
 
         if target is None:

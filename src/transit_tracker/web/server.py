@@ -46,6 +46,18 @@ log = get_logger("transit_tracker.web")
 # All routes are served under this prefix
 PREFIX = "/transit-tracker"
 
+# Daylight dimming fields accepted via POST /api/dimming
+_DAYLIGHT_FIELDS: Dict[str, type] = {
+    "daylight_dimming_enabled": bool,
+    "daylight_dimming_timezone": str,
+    "daylight_latitude": float,
+    "daylight_longitude": float,
+    "dawn_ramp_minutes": int,
+    "dawn_ramp_steps": int,
+    "dusk_ramp_minutes": int,
+    "dusk_ramp_steps": int,
+}
+
 
 class TransitWebHandler(BaseHTTPRequestHandler):
     """HTTP request handler with a routes dict for extensibility."""
@@ -223,27 +235,36 @@ class TransitWebHandler(BaseHTTPRequestHandler):
         )
 
     def _serve_dimming_get(self):
-        """Return the current dimming schedule from service settings."""
-        from ..config import load_service_settings
+        """Return the current daylight dimming settings."""
+        import datetime as _dt
+        from ..config import build_daylight_schedule, load_service_settings
 
         settings = load_service_settings()
-        self._json_response(
-            json.dumps(
-                {
-                    "dimming_schedule": [
-                        e.model_dump()
-                        for e in settings.dimming_schedule
-                    ],
-                    "display_brightness": settings.display_brightness,
-                    "device_ip": settings.device_ip,
-                }
+        resp = {
+            "daylight_dimming_enabled": settings.daylight_dimming_enabled,
+            "daylight_dimming_timezone": settings.daylight_dimming_timezone,
+            "dawn_ramp_minutes": settings.dawn_ramp_minutes,
+            "dawn_ramp_steps": settings.dawn_ramp_steps,
+            "dusk_ramp_minutes": settings.dusk_ramp_minutes,
+            "dusk_ramp_steps": settings.dusk_ramp_steps,
+            "display_brightness": settings.display_brightness,
+            "device_ip": settings.device_ip,
+        }
+        if settings.daylight_dimming_enabled:
+            schedule = build_daylight_schedule(
+                dt=_dt.date.today(),
+                timezone=settings.daylight_dimming_timezone,
+                dawn_ramp_minutes=settings.dawn_ramp_minutes,
+                dawn_ramp_steps=settings.dawn_ramp_steps,
+                dusk_ramp_minutes=settings.dusk_ramp_minutes,
+                dusk_ramp_steps=settings.dusk_ramp_steps,
             )
-        )
+            resp["computed_schedule"] = [e.model_dump() for e in schedule]
+        self._json_response(json.dumps(resp))
 
     def _handle_dimming_post(self):
-        """Update the dimming schedule via REST, persisting to service.yaml."""
+        """Update daylight dimming settings via REST, persisting to service.yaml."""
         from ..config import (
-            DimmingEntry,
             load_service_settings,
             save_service_settings,
         )
@@ -257,31 +278,28 @@ class TransitWebHandler(BaseHTTPRequestHandler):
             self._json_error(400, f"Invalid JSON: {e}")
             return
 
-        try:
-            entries = [
-                DimmingEntry.model_validate(e)
-                for e in data.get("dimming_schedule", [])
-            ]
-        except Exception as e:
-            self._json_error(400, f"Validation error: {e}")
-            return
-
         settings = load_service_settings()
-        settings.dimming_schedule = entries
+        updates = {}
+        for field, typ in _DAYLIGHT_FIELDS.items():
+            if field in data:
+                updates[field] = typ(data[field])
         if "device_ip" in data:
-            settings.device_ip = data["device_ip"]
+            updates["device_ip"] = data["device_ip"]
         if "display_brightness" in data:
-            settings.display_brightness = int(data["display_brightness"])
+            updates["display_brightness"] = int(data["display_brightness"])
+        if updates:
+            from ..config import ServiceSettings
+            settings = ServiceSettings.model_validate(
+                {**settings.model_dump(), **updates}
+            )
         save_service_settings(settings)
 
         self._json_response(
             json.dumps(
                 {
                     "status": "ok",
-                    "dimming_schedule": [
-                        e.model_dump() for e in entries
-                    ],
-                    "message": "Schedule saved. Will take effect within 60 seconds.",
+                    "daylight_dimming_enabled": settings.daylight_dimming_enabled,
+                    "message": "Dimming settings saved. Will take effect within 60 seconds.",
                 }
             )
         )
@@ -453,23 +471,31 @@ async def run_web(
             )
 
         if path == f"{PREFIX}/api/dimming":
-            from ..config import load_service_settings
+            import datetime as _dt
+            from ..config import build_daylight_schedule, load_service_settings
 
             settings = load_service_settings()
-            return (
-                200,
-                "application/json",
-                json.dumps(
-                    {
-                        "dimming_schedule": [
-                            e.model_dump()
-                            for e in settings.dimming_schedule
-                        ],
-                        "display_brightness": settings.display_brightness,
-                        "device_ip": settings.device_ip,
-                    }
-                ),
-            )
+            resp = {
+                "daylight_dimming_enabled": settings.daylight_dimming_enabled,
+                "daylight_dimming_timezone": settings.daylight_dimming_timezone,
+                "dawn_ramp_minutes": settings.dawn_ramp_minutes,
+                "dawn_ramp_steps": settings.dawn_ramp_steps,
+                "dusk_ramp_minutes": settings.dusk_ramp_minutes,
+                "dusk_ramp_steps": settings.dusk_ramp_steps,
+                "display_brightness": settings.display_brightness,
+                "device_ip": settings.device_ip,
+            }
+            if settings.daylight_dimming_enabled:
+                schedule = build_daylight_schedule(
+                    dt=_dt.date.today(),
+                    timezone=settings.daylight_dimming_timezone,
+                    dawn_ramp_minutes=settings.dawn_ramp_minutes,
+                    dawn_ramp_steps=settings.dawn_ramp_steps,
+                    dusk_ramp_minutes=settings.dusk_ramp_minutes,
+                    dusk_ramp_steps=settings.dusk_ramp_steps,
+                )
+                resp["computed_schedule"] = [e.model_dump() for e in schedule]
+            return (200, "application/json", json.dumps(resp))
 
         if path == f"{PREFIX}/api/dimming/set":
             try:
@@ -556,41 +582,42 @@ async def run_web(
 
         if path == f"{PREFIX}/api/dimming":
             from ..config import (
-                DimmingEntry,
                 load_service_settings,
                 save_service_settings,
             )
 
+            settings = load_service_settings()
+            updates = {}
+            for field, typ in _DAYLIGHT_FIELDS.items():
+                if field in data:
+                    updates[field] = typ(data[field])
+            if "device_ip" in data:
+                updates["device_ip"] = data["device_ip"]
+            if "display_brightness" in data:
+                updates["display_brightness"] = int(
+                    data["display_brightness"]
+                )
+            if updates:
+                from ..config import ServiceSettings
+                settings = ServiceSettings.model_validate(
+                    {**settings.model_dump(), **updates}
+                )
             try:
-                entries = [
-                    DimmingEntry.model_validate(e)
-                    for e in data.get("dimming_schedule", [])
-                ]
+                save_service_settings(settings)
             except Exception as e:
                 return (
                     400,
                     "application/json",
-                    json.dumps({"error": f"Validation error: {e}"}),
+                    json.dumps({"error": f"Save failed: {e}"}),
                 )
-            settings = load_service_settings()
-            settings.dimming_schedule = entries
-            if "device_ip" in data:
-                settings.device_ip = data["device_ip"]
-            if "display_brightness" in data:
-                settings.display_brightness = int(
-                    data["display_brightness"]
-                )
-            save_service_settings(settings)
             return (
                 200,
                 "application/json",
                 json.dumps(
                     {
                         "status": "ok",
-                        "dimming_schedule": [
-                            e.model_dump() for e in entries
-                        ],
-                        "message": "Schedule saved. Takes effect within 60s.",
+                        "daylight_dimming_enabled": settings.daylight_dimming_enabled,
+                        "message": "Dimming settings saved. Takes effect within 60s.",
                     }
                 ),
             )

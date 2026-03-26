@@ -67,6 +67,16 @@ class ServiceSettings(BaseModel):
     device_ip: Optional[str] = None
     dimming_schedule: List[DimmingEntry] = Field(default_factory=list)
 
+    # Daylight-based automatic dimming
+    daylight_dimming_enabled: bool = False
+    daylight_dimming_timezone: str = "America/Los_Angeles"
+    daylight_latitude: Optional[float] = None
+    daylight_longitude: Optional[float] = None
+    dawn_ramp_minutes: int = Field(default=30, ge=5, le=120)
+    dawn_ramp_steps: int = Field(default=6, ge=2, le=20)
+    dusk_ramp_minutes: int = Field(default=60, ge=5, le=120)
+    dusk_ramp_steps: int = Field(default=6, ge=2, le=20)
+
 
 def _resolve_settings_path() -> str:
     """Return the path to the service settings file.
@@ -405,6 +415,87 @@ class TransitConfig(BaseModel):
         }
         with open(path, "w") as f:
             yaml.safe_dump(data, f, sort_keys=False)
+
+
+# ---------------------------------------------------------------------------
+# Daylight schedule builder
+# ---------------------------------------------------------------------------
+
+# Timezone → representative (lat, lon) for astral sunrise/sunset calculation.
+# Users configure only the timezone; coordinates are an implementation detail.
+_TIMEZONE_COORDS: Dict[str, tuple] = {
+    "America/Los_Angeles": (47.6062, -122.3321),   # Seattle
+    "America/Denver": (39.7392, -104.9903),         # Denver
+    "America/Chicago": (41.8781, -87.6298),         # Chicago
+    "America/New_York": (40.7128, -74.0060),        # New York
+    "America/Phoenix": (33.4484, -112.0740),        # Phoenix
+    "America/Anchorage": (61.2181, -149.9003),      # Anchorage
+    "Pacific/Honolulu": (21.3069, -157.8583),       # Honolulu
+    "US/Pacific": (47.6062, -122.3321),
+    "US/Mountain": (39.7392, -104.9903),
+    "US/Central": (41.8781, -87.6298),
+    "US/Eastern": (40.7128, -74.0060),
+}
+_DEFAULT_COORDS = (39.8283, -98.5795)  # Geographic center of CONUS
+
+
+def build_daylight_schedule(
+    dt: datetime.date,
+    timezone: str,
+    dawn_ramp_minutes: int = 30,
+    dawn_ramp_steps: int = 6,
+    dusk_ramp_minutes: int = 60,
+    dusk_ramp_steps: int = 6,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+) -> List[DimmingEntry]:
+    """Build a dimming schedule from sunrise/sunset for the given date.
+
+    Returns a list of DimmingEntry objects that ramp brightness up before
+    sunrise and down after sunset, with full brightness during the day
+    and off at night.
+    """
+    from astral import LocationInfo
+    from astral.sun import sun
+
+    if latitude is not None and longitude is not None:
+        lat, lon = latitude, longitude
+    else:
+        fallback = _TIMEZONE_COORDS.get(timezone)
+        if fallback is None:
+            log.warning(
+                "No coordinates for timezone %r and no lat/lon configured — "
+                "using US default coords. Set daylight_latitude/daylight_longitude "
+                "in service.yaml for accurate sunrise/sunset times.",
+                timezone,
+            )
+        lat, lon = fallback or _DEFAULT_COORDS
+    location = LocationInfo(
+        name="auto", region="auto", timezone=timezone, latitude=lat, longitude=lon
+    )
+    s = sun(location.observer, date=dt, tzinfo=location.timezone)
+    sunrise = s["sunrise"]
+    sunset = s["sunset"]
+
+    entries: List[DimmingEntry] = []
+
+    # Dawn ramp: brightness 0→255 over dawn_ramp_minutes ending at sunrise
+    for i in range(dawn_ramp_steps):
+        fraction = (i + 1) / dawn_ramp_steps
+        minutes_before = dawn_ramp_minutes * (1 - fraction)
+        t = sunrise - datetime.timedelta(minutes=minutes_before)
+        brightness = int(255 * fraction)
+        entries.append(DimmingEntry(time=t.strftime("%H:%M"), brightness=brightness))
+
+    # Dusk ramp: brightness 255→0 over dusk_ramp_minutes starting at sunset
+    for i in range(dusk_ramp_steps):
+        fraction = (i + 1) / dusk_ramp_steps
+        minutes_after = dusk_ramp_minutes * fraction
+        t = sunset + datetime.timedelta(minutes=minutes_after)
+        brightness = int(255 * (1 - fraction))
+        entries.append(DimmingEntry(time=t.strftime("%H:%M"), brightness=brightness))
+
+    return entries
 
 
 def evaluate_dimming_schedule(

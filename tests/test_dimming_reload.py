@@ -163,9 +163,9 @@ def _make_handler(method, path, body=None):
 
 
 def test_rest_get_returns_current(tmp_path):
-    settings_file = str(tmp_path / "service.yaml")
     svc = ServiceSettings(
-        dimming_schedule=[DimmingEntry(time="22:00", brightness=20)],
+        daylight_dimming_enabled=True,
+        daylight_dimming_timezone="America/New_York",
         device_ip="10.0.0.1",
         display_brightness=64,
     )
@@ -177,21 +177,33 @@ def test_rest_get_returns_current(tmp_path):
     handler.send_response.assert_called_with(200)
     written = handler.wfile.getvalue().decode()
     data = json.loads(written)
-    assert len(data["dimming_schedule"]) == 1
-    assert data["dimming_schedule"][0]["time"] == "22:00"
+    assert data["daylight_dimming_enabled"] is True
+    assert data["daylight_dimming_timezone"] == "America/New_York"
     assert data["display_brightness"] == 64
     assert data["device_ip"] == "10.0.0.1"
+    assert "computed_schedule" in data  # present when daylight enabled
 
 
-def test_rest_post_valid_schedule(tmp_path):
-    settings_file = str(tmp_path / "service.yaml")
+def test_rest_get_disabled_no_schedule():
+    svc = ServiceSettings(daylight_dimming_enabled=False, display_brightness=128)
+
+    with mock.patch("transit_tracker.config.load_service_settings", return_value=svc):
+        handler = _make_handler("GET", "/api/dimming")
+        handler._serve_dimming_get()
+
+    handler.send_response.assert_called_with(200)
+    written = handler.wfile.getvalue().decode()
+    data = json.loads(written)
+    assert data["daylight_dimming_enabled"] is False
+    assert "computed_schedule" not in data
+
+
+def test_rest_post_enable_daylight():
     initial = ServiceSettings(display_brightness=128)
 
     body = json.dumps({
-        "dimming_schedule": [
-            {"time": "07:00", "brightness": 255},
-            {"time": "22:00", "brightness": 0},
-        ]
+        "daylight_dimming_enabled": True,
+        "daylight_dimming_timezone": "America/Chicago",
     }).encode()
 
     with mock.patch("transit_tracker.config.load_service_settings", return_value=initial), \
@@ -202,19 +214,8 @@ def test_rest_post_valid_schedule(tmp_path):
     handler.send_response.assert_called_with(200)
     mock_save.assert_called_once()
     saved = mock_save.call_args[0][0]
-    assert len(saved.dimming_schedule) == 2
-    assert saved.dimming_schedule[0].time == "07:00"
-
-
-def test_rest_post_invalid_time_rejects():
-    body = json.dumps({
-        "dimming_schedule": [{"time": "25:00", "brightness": 100}]
-    }).encode()
-
-    handler = _make_handler("POST", "/api/dimming", body)
-    handler._handle_dimming_post()
-
-    handler.send_response.assert_called_with(400)
+    assert saved.daylight_dimming_enabled is True
+    assert saved.daylight_dimming_timezone == "America/Chicago"
 
 
 def test_rest_post_invalid_json():

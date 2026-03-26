@@ -582,7 +582,7 @@ def test_handle_dimming_set_brightness():
         from unittest.mock import MagicMock
 
         settings = MagicMock()
-        settings.dimming_schedule = []
+        settings.daylight_dimming_enabled = False
         settings.display_brightness = 100
         settings.device_ip = None
         m_load.return_value = settings

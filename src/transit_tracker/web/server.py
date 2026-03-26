@@ -46,6 +46,18 @@ log = get_logger("transit_tracker.web")
 # All routes are served under this prefix
 PREFIX = "/transit-tracker"
 
+# Daylight dimming fields accepted via POST /api/dimming
+_DAYLIGHT_FIELDS: Dict[str, type] = {
+    "daylight_dimming_enabled": bool,
+    "daylight_dimming_timezone": str,
+    "daylight_latitude": float,
+    "daylight_longitude": float,
+    "dawn_ramp_minutes": int,
+    "dawn_ramp_steps": int,
+    "dusk_ramp_minutes": int,
+    "dusk_ramp_steps": int,
+}
+
 
 class TransitWebHandler(BaseHTTPRequestHandler):
     """HTTP request handler with a routes dict for extensibility."""
@@ -267,21 +279,19 @@ class TransitWebHandler(BaseHTTPRequestHandler):
             return
 
         settings = load_service_settings()
-        _DAYLIGHT_FIELDS = {
-            "daylight_dimming_enabled": bool,
-            "daylight_dimming_timezone": str,
-            "dawn_ramp_minutes": int,
-            "dawn_ramp_steps": int,
-            "dusk_ramp_minutes": int,
-            "dusk_ramp_steps": int,
-        }
+        updates = {}
         for field, typ in _DAYLIGHT_FIELDS.items():
             if field in data:
-                setattr(settings, field, typ(data[field]))
+                updates[field] = typ(data[field])
         if "device_ip" in data:
-            settings.device_ip = data["device_ip"]
+            updates["device_ip"] = data["device_ip"]
         if "display_brightness" in data:
-            settings.display_brightness = int(data["display_brightness"])
+            updates["display_brightness"] = int(data["display_brightness"])
+        if updates:
+            from ..config import ServiceSettings
+            settings = ServiceSettings.model_validate(
+                {**settings.model_dump(), **updates}
+            )
         save_service_settings(settings)
 
         self._json_response(
@@ -577,22 +587,20 @@ async def run_web(
             )
 
             settings = load_service_settings()
-            _DAYLIGHT_FIELDS = {
-                "daylight_dimming_enabled": bool,
-                "daylight_dimming_timezone": str,
-                "dawn_ramp_minutes": int,
-                "dawn_ramp_steps": int,
-                "dusk_ramp_minutes": int,
-                "dusk_ramp_steps": int,
-            }
+            updates = {}
             for field, typ in _DAYLIGHT_FIELDS.items():
                 if field in data:
-                    setattr(settings, field, typ(data[field]))
+                    updates[field] = typ(data[field])
             if "device_ip" in data:
-                settings.device_ip = data["device_ip"]
+                updates["device_ip"] = data["device_ip"]
             if "display_brightness" in data:
-                settings.display_brightness = int(
+                updates["display_brightness"] = int(
                     data["display_brightness"]
+                )
+            if updates:
+                from ..config import ServiceSettings
+                settings = ServiceSettings.model_validate(
+                    {**settings.model_dump(), **updates}
                 )
             try:
                 save_service_settings(settings)

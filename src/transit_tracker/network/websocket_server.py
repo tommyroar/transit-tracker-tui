@@ -574,6 +574,15 @@ class TransitServer:
         device_ip = svc.device_ip
 
         if svc.daylight_dimming_enabled:
+            try:
+                tz = zoneinfo.ZoneInfo(svc.daylight_dimming_timezone)
+            except (zoneinfo.ZoneInfoNotFoundError, KeyError):
+                log.warning(
+                    "Invalid timezone %r — skipping dimming",
+                    svc.daylight_dimming_timezone,
+                    extra={"component": "server"},
+                )
+                return False
             schedule = build_daylight_schedule(
                 dt=datetime.date.today(),
                 timezone=svc.daylight_dimming_timezone,
@@ -581,14 +590,16 @@ class TransitServer:
                 dawn_ramp_steps=svc.dawn_ramp_steps,
                 dusk_ramp_minutes=svc.dusk_ramp_minutes,
                 dusk_ramp_steps=svc.dusk_ramp_steps,
+                latitude=svc.daylight_latitude,
+                longitude=svc.daylight_longitude,
             )
         else:
-            return False
+            schedule = svc.dimming_schedule
+            tz = None
 
         if not schedule:
             return False
 
-        tz = zoneinfo.ZoneInfo(svc.daylight_dimming_timezone)
         now_time = datetime.datetime.now(tz).time()
         target = evaluate_dimming_schedule(schedule, now_time)
 

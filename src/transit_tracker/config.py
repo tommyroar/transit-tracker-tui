@@ -70,6 +70,8 @@ class ServiceSettings(BaseModel):
     # Daylight-based automatic dimming
     daylight_dimming_enabled: bool = False
     daylight_dimming_timezone: str = "America/Los_Angeles"
+    daylight_latitude: Optional[float] = None
+    daylight_longitude: Optional[float] = None
     dawn_ramp_minutes: int = Field(default=30, ge=5, le=120)
     dawn_ramp_steps: int = Field(default=6, ge=2, le=20)
     dusk_ramp_minutes: int = Field(default=60, ge=5, le=120)
@@ -444,6 +446,8 @@ def build_daylight_schedule(
     dawn_ramp_steps: int = 6,
     dusk_ramp_minutes: int = 60,
     dusk_ramp_steps: int = 6,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
 ) -> List[DimmingEntry]:
     """Build a dimming schedule from sunrise/sunset for the given date.
 
@@ -454,7 +458,18 @@ def build_daylight_schedule(
     from astral import LocationInfo
     from astral.sun import sun
 
-    lat, lon = _TIMEZONE_COORDS.get(timezone, _DEFAULT_COORDS)
+    if latitude is not None and longitude is not None:
+        lat, lon = latitude, longitude
+    else:
+        fallback = _TIMEZONE_COORDS.get(timezone)
+        if fallback is None:
+            log.warning(
+                "No coordinates for timezone %r and no lat/lon configured — "
+                "using US default coords. Set daylight_latitude/daylight_longitude "
+                "in service.yaml for accurate sunrise/sunset times.",
+                timezone,
+            )
+        lat, lon = fallback or _DEFAULT_COORDS
     location = LocationInfo(
         name="auto", region="auto", timezone=timezone, latitude=lat, longitude=lon
     )

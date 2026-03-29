@@ -254,8 +254,8 @@ class TransitServer:
         name = name.replace("->", ">").replace("\u2192", ">")
 
         for abbr in self.config.transit_tracker.abbreviations:
-            if abbr.original.lower() == name.lower():
-                return abbr.short
+            if abbr.from_.lower() == name.lower():
+                return abbr.to
         return name
 
     async def register(self, ws):
@@ -523,6 +523,11 @@ class TransitServer:
                         # last-seen vessel would show the wrong name for upcoming trips.
                         headsign = self.apply_abbreviations(str(arr.get("headsign") or arr.get("tripHeadsign") or "Transit"))
                         route_name = self.apply_abbreviations(str(arr.get("routeName") or arr.get("routeShortName") or ""))
+                        # Apply style name override (e.g. "2 Line" → "2")
+                        for style in self.config.transit_tracker.styles:
+                            if self.normalize_id(style.route_id) == full_route_id and style.name:
+                                route_name = style.name
+                                break
                         if is_ferry:
                             vehicle_id_full = arr.get("vehicleId") or (arr.get("tripStatus") or {}).get("vehicleId")
                             if vehicle_id_full:

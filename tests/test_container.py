@@ -159,7 +159,7 @@ def test_websocket_heartbeat(docker_container):
 @pytest.mark.docker
 def test_openapi_returns_json(docker_container):
     """Requirement 5.4: /api/spec returns valid JSON."""
-    resp = httpx.get(f"http://localhost:{HTTP_HOST_PORT}/api/spec", timeout=10)
+    resp = httpx.get(f"http://localhost:{HTTP_HOST_PORT}/transit-tracker/api/spec", timeout=10)
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
     data = resp.json()  # raises if not valid JSON
     assert isinstance(data, dict), "/api/spec should return a JSON object"

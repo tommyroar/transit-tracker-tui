@@ -190,7 +190,7 @@ def test_migrate_legacy_fields():
     assert "mapbox_access_token" not in tt
     assert "show_units" not in tt
     assert "list_mode" not in tt
-    assert "styles" not in tt
+    assert "styles" in tt  # styles is now a valid field, not dead
 
     # Service fields removed from profile data
     assert "oba_api_key" not in tt
@@ -230,4 +230,4 @@ def test_transit_tracker_settings_clean_schema():
     assert "arrival_threshold_minutes" not in field_names
     assert "show_units" not in field_names
     assert "list_mode" not in field_names
-    assert "styles" not in field_names
+    assert "styles" in field_names  # styles is a valid TransitTrackerSettings field

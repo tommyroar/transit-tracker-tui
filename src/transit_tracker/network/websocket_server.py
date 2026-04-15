@@ -262,7 +262,18 @@ class TransitServer:
         self.clients.add(ws)
         addr = ws.remote_address
         metrics.ws_connections.inc()
-        log.info("Client connected: %s", addr, extra={"component": "server", "client": f"{addr[0]}:{addr[1]}"})
+        try:
+            headers = ws.request.headers
+            ua = headers.get("User-Agent", "-")
+            origin = headers.get("Origin", "-")
+            path = ws.request.path
+        except Exception:
+            ua, origin, path = "-", "-", "-"
+        log.info(
+            "Client connected: %s ua=%r origin=%r path=%s",
+            addr, ua, origin, path,
+            extra={"component": "server", "client": f"{addr[0]}:{addr[1]}", "ua": ua, "origin": origin, "path": path},
+        )
         self.sync_state()
         try:
             async for message in ws:
@@ -749,7 +760,25 @@ async def run_server(host: str = "0.0.0.0", port: int = 8000, config: TransitCon
     server = TransitServer(config)
     log.info("Starting Transit Tracker API on %s:%d", host, port, extra={"component": "server"})
 
-    async with websockets.serve(server.register, host, port):
+    def _process_request(connection, request):
+        try:
+            peer = connection.transport.get_extra_info("peername")
+        except Exception:
+            peer = None
+        ua = request.headers.get("User-Agent", "-")
+        origin = request.headers.get("Origin", "-")
+        upgrade = request.headers.get("Upgrade", "-")
+        log.info(
+            "HTTP/WS request from %s path=%s upgrade=%s ua=%r origin=%r",
+            peer, request.path, upgrade, ua, origin,
+            extra={"component": "server", "peer": str(peer), "path": request.path, "upgrade": upgrade, "ua": ua, "origin": origin},
+        )
+        return None
+
+    async with websockets.serve(
+        server.register, host, port,
+        process_request=_process_request,
+    ):
         await asyncio.gather(
             server.data_refresh_loop(),
             server.broadcast_loop(),

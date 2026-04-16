@@ -1,116 +1,183 @@
-# 🏙️ Transit Notification Service Plan
+# Separation of Concerns Refactor
 
-This document outlines the design for a lightweight Python service that monitors public transit arrivals using the **Transit Tracker API** and sends push notifications via **ntfy.sh**. It also provides options for self-hosting the entire stack.
+The original plan (ntfy.sh notification service) was superseded. The codebase grew into four
+tangled concerns — a GTFS WebSocket proxy, a web monitor, an ESP32 firmware configurator,
+and a TUI wrapper — all sharing one flat package with ad-hoc cross-module coupling. This
+document tracks the refactor into cleanly separated packages within a single Python monorepo.
 
-## 🚀 Overview
+## Target Layout
 
-The service will maintain a persistent WebSocket connection to the Transit Tracker API (hosted or self-hosted), subscribe to specific stop/route pairs, and trigger a notification when a bus or train is within a user-defined arrival threshold (e.g., 5 minutes).
-
-## 🏠 Hosting Options
-
-### Option A: Using Hosted API (Fastest)
-- **API URL:** `wss://tt.horner.tj`
-- **Pros:** No server maintenance, works immediately.
-- **Cons:** Dependent on external service uptime.
-
-### Option B: Self-Hosting API via Docker (Recommended for Mac Mini)
-You can run your own instance of the Transit Tracker API on your Mac Mini. This allows you to add custom feeds or ensure 100% uptime for your commute.
-
-**Docker Compose Configuration (`docker-compose.yml`):**
-```yaml
-services:
-  api:
-    image: ghcr.io/tjhorner/transit-tracker-api:main
-    depends_on:
-      - postgres
-      - redis
-    environment:
-      REDIS_URL: "redis://redis:6379"
-      DATABASE_URL: "postgres://postgres:postgres@postgres:5432/gtfs?sslmode=disable"
-      FEED_SYNC_SCHEDULE: "0 0 * * *"
-      FEEDS_CONFIG: |
-        feeds:
-          st:
-            name: Sound Transit
-            description: Puget Sound, WA
-            gtfs:
-              static:
-                url: https://www.soundtransit.org/google_transit.zip
-              rtTripUpdates:
-                url: https://api.soundtransit.org/external-api/gtfs-rt/trip-updates.pb
-          kcm:
-            name: King County Metro
-            description: King County, WA
-            gtfs:
-              static:
-                url: https://metro.kingcounty.gov/GTFS/google_transit.zip
-              rtTripUpdates:
-                url: https://s3.amazonaws.com/kcm-alerts-realtime-prod/tripupdates.pb
-    ports:
-      - "3000:3000"
-
-  postgres:
-    image: postgres:17
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: gtfs
-    volumes:
-      - "db_data:/var/lib/postgresql/data"
-
-  redis:
-    image: redis:6
-
-volumes:
-  db_data:
+```
+src/
+  tt_core/            Shared types, protocol models, metrics, logging, service-state I/O
+  tt_proxy/           GTFS WebSocket proxy server + Mac container packaging
+  tt_webmonitor/      Read-only observability web UI (dashboard, simulator, topology)
+  tt_configurator/    Firmware management, device provisioning, config editing, dimming
+  tt_tui/             Thin rich/questionary wrapper of uncertain utility
+  transit_tracker/    Re-export shim (deleted last in Phase 7)
 ```
 
-## 🛠️ Technical Stack (Notification Service)
+## Dependency Graph (enforced)
 
-- **Language:** Python 3.14
-- **Libraries:**
-  - `websockets`: For real-time streaming from the API.
-  - `httpx`: For sending POST requests to `ntfy.sh`.
-  - `PyYAML`: For configuration management.
-- **Infrastructure:** `systemd` or `launchd` unit for background process management.
+```
+                   tt_tui
+                  /  |   \
+        tt_proxy  tt_configurator  tt_webmonitor
+                  \  |   /
+                   tt_core
+```
 
-## 📡 Data Flow
+No direct imports between `tt_proxy`, `tt_configurator`, and `tt_webmonitor`. Cross-process
+communication happens only through `tt_core` types and the `service_state.json` file.
 
-1.  **Connection:** Establish a WebSocket connection to `wss://tt.horner.tj` (or `ws://localhost:3000`).
-2.  **Subscription:** Send a `schedule:subscribe` event for configured `routeStopPairs`.
-3.  **Monitoring:** Listen for `schedule` events.
-4.  **ntfy.sh Integration:**
-    - When a bus is `threshold` minutes away, send a POST request:
-    ```bash
-    curl -d "Bus 255 arriving in 5 mins!" ntfy.sh/your-topic
-    ```
-    - Use headers like `X-Title`, `X-Priority: 4`, and `X-Tags: bus,warning` for rich notifications.
+## Risky Couplings to Resolve First
 
-## 📝 Implementation Phases
+- `SERVICE_STATE_FILE` read from 4 sites (`websocket_server.py:31`, `tui.py:85`, `web/server.py:177,428`, `monitor.py:53`) — consolidate into `tt_core.service_state`
+- `dimming_loop` in proxy (`websocket_server.py:672`) owns configurator policy + ESPHome REST POST (`websocket_server.py:636–657`) — relocate to `tt_configurator` as a WebSocket client that emits `control:brightness` frames
+- `_draft_config` module global in `web/api_handlers.py:105` — replace with `DraftConfigStore` class instance on the app
+- Global `metrics` singleton (`metrics.py:188`) — keep in `tt_core`, document writer=proxy / reader=webmonitor contract
+- `config.py` legacy-migration shim (`config.py:309–332`) absorbing old profile fields — keep in `tt_core.models`, make it a no-op on new configs
 
-### Phase 1: Environment Setup (Complete)
-- Create a virtual environment using `uv`.
-- (Optional) Set up the Docker containers for the self-hosted API.
+---
 
-### Phase 2: Core Development (Complete)
-- Write the WebSocket client in `main.py`.
-- Implement `ntfy.sh` alerting logic with deduplication (cache `tripId`s in memory).
+## Phase 0: Safety Net
 
-### Phase 3: Deployment (Complete)
-- Configure the service to run on boot on the Mac Mini.
-- Verify notifications on your mobile device via the ntfy app.
+- [ ] Freeze `scripts/ci_local.sh` as the green-bar oracle — full suite must pass before any moves
+- [ ] Add `tests/test_import_layering.py` that AST-walks `src/` and asserts the dependency graph above (warn mode initially)
+- [ ] Extract `schedule:subscribe` wire shape as typed pydantic models into `src/transit_tracker/protocol.py` (from implicit dicts in `websocket_server.py` ~280–360)
+- [ ] Verify: full test suite green, `test_proxy_equivalence.py` and `test_cloud_equivalence.py` still pass
 
-### Phase 4: Interactive TUI Configurator (Current)
-- Replace the basic configurator with an advanced TUI.
-- **Location & Route Selection:**
-  - Allow the user to select a route within a bounding box (bbox) near the current user location.
-  - Reverse geocode the location from nearest crossing streets.
-- **Stop Configuration:**
-  - Follow stops along the selected route to configure and add desired stops to the configuration.
-- **Simulator Accuracy (Fixed):**
-  - **Width:** Correctly uses `32 * num_panels` (64 chars for 2 panels).
-  - **Time Display:** Uses raw minutes (`display_offset: false`) and clamps at `0m` to match hardware behavior.
+## Phase 1: Create `tt_core`
 
-### Phase 5: Self-Hosted Infrastructure & Extensible API (Future)
-- **Container Service:** Self-host the container as a dedicated service on the Mac Mini.
-- **Web API:** Extend the application into an extensible Python web API running on the local network, hosted on the Mac Mini.
+- [ ] Create `src/tt_core/__init__.py`
+- [ ] `tt_core/models.py` — move from `config.py`: `TransitConfig`, `TransitStop`, `Abbreviation`, `ServiceSettings` (structure only), `TransitTrackerSettings`, `TransitConfig.load()`, `TransitConfig.save()`, legacy-migration helper. Drop dimming computation and `discover_profiles` (those move to configurator)
+- [ ] `tt_core/protocol.py` — move pydantic wire models from Phase 0's `protocol.py`
+- [ ] `tt_core/metrics.py` — move wholesale from `metrics.py`
+- [ ] `tt_core/logging.py` — move wholesale from `logging.py`
+- [ ] `tt_core/service_state.py` — extract `SERVICE_STATE_FILE` path constant, `read_snapshot()`, `write_snapshot()` helpers (replacing 5 duplicated read/write sites)
+- [ ] `tt_core/display.py` — move display format formatter (`format_trip_line` and template helpers)
+- [ ] Leave `src/transit_tracker/{config,metrics,logging,display,protocol}.py` as thin re-exports from `tt_core`
+- [ ] Verify: `test_config*.py`, `test_metrics.py`, `test_logging_module.py`, `test_protocol_comparison.py`, `test_service_isolation.py` green
+
+## Phase 2: Carve Out `tt_proxy`
+
+- [ ] Create `src/tt_proxy/__init__.py`
+- [ ] `tt_proxy/server.py` — move `TransitServer`, `data_refresh_loop`, `broadcast_loop`, rate-limit backoff, `WSF_VESSELS` ferry logic from `network/websocket_server.py` (lines 1–625). **Exclude** dimming_loop (lines 672–684) and ESPHome REST POST (lines 636–657). Keep `control:brightness` relay (lines 649–655)
+- [ ] `tt_proxy/oba_client.py` — move `transit_api.py` wholesale
+- [ ] `tt_proxy/gtfs.py` — move `gtfs_schedule.py` wholesale
+- [ ] `tt_proxy/throttle.py` — extract rate-limit/backoff + `throttle_log.jsonl` writer from `websocket_server.py:96` area
+- [ ] `tt_proxy/__main__.py` — `python -m tt_proxy` entry point (pure asyncio, no dimming)
+- [ ] `tt_proxy/container/` — move `Dockerfile`, `docker/` contents, `scripts/start_container.sh`, `scripts/stop_container.sh`, `scripts/download_gtfs.py`, `scripts/verify_launch.py`
+- [ ] `tt_proxy/container/compose.yaml` — new compose file: `tt-proxy` service, volumes for `service_state.json` + `gtfs_index.sqlite`, env vars (`OBA_API_KEY`, `GTFS_DB_PATH`, `TT_STATE_DIR`, `TT_LOG_LEVEL`), colima/docker-desktop agnostic for Mac
+- [ ] Leave `src/transit_tracker/network/websocket_server.py` and `transit_api.py` and `gtfs_schedule.py` as re-export shims
+- [ ] Verify: `test_network.py`, `test_transit_api.py`, `test_gtfs.py`, `test_proxy_equivalence.py`, `test_cloud_equivalence.py`, `test_metrics.py`, `test_container.py` green
+
+## Phase 3: Carve Out `tt_configurator`
+
+- [ ] Create `src/tt_configurator/__init__.py`
+- [ ] `tt_configurator/api.py` — move entire `web/api_handlers.py`. Replace `_draft_config` module global with `DraftConfigStore` class instance bound to app
+- [ ] `tt_configurator/pages.py` — configurator-only HTML stubs (station manager marked TODO/incomplete)
+- [ ] `tt_configurator/spec.py` — configurator portion of `web/spec.py`
+- [ ] `tt_configurator/server.py` — small HTTP app mounting configurator routes + WebSocket client that connects to `tt_proxy` for `control:brightness` emission
+- [ ] `tt_configurator/hardware.py` — move `hardware.py` wholesale (ESPHomeFlasher, flash_hardware, load_hardware_config, flash_base_firmware, get_usb_devices, is_bootstrapped)
+- [ ] `tt_configurator/capture.py` — move `capture.py` wholesale
+- [ ] `tt_configurator/dimming.py` — move from `config.py`: `build_daylight_schedule`, `evaluate_dimming_schedule`, `DimmingEntry`, `DimmingScheduleSettings`. Move from `websocket_server.py`: `dimming_loop` (672–684) + ESPHome REST POST block (636–657). Loop now runs as a configurator-side WebSocket client
+- [ ] `tt_configurator/profiles.py` — move `discover_profiles`, `save_service_settings`, profile-activation logic from `config.py`
+- [ ] `tt_configurator/verify_client.py` — move `network/websocket_service.py`
+- [ ] Leave `src/transit_tracker/{hardware,capture}.py` and `web/api_handlers.py` as re-export shims
+- [ ] Verify: `test_flashing.py`, `test_serial_protocol.py`, `test_firmware_contracts.py`, `test_firmware_correctness.py`, `test_display.py`, `test_dimming*.py`, `test_brightness.py`, `test_profiles_menu.py`, `test_live_config_isolation.py` green
+
+## Phase 4: Carve Out `tt_webmonitor`
+
+- [ ] Create `src/tt_webmonitor/__init__.py`
+- [ ] `tt_webmonitor/server.py` — kept routes from `web/server.py`: `/`, `/dashboard`, `/monitor`, `/simulator`, `/spec`, `/ws`, `/api/status`, `/api/metrics`, `/api/logs`, `/api/stops`. All `service_state.json` reads use `tt_core.service_state.read_snapshot()`
+- [ ] `tt_webmonitor/pages.py` — move `generate_index_html`, `generate_monitor_html`, `generate_dashboard_html`, `generate_simulator_html` from `web/pages.py`
+- [ ] `tt_webmonitor/spec.py` — monitor portion of `web/spec.py`
+- [ ] `tt_webmonitor/simulator.py` — move `simulator.py` wholesale (read-only LED renderer)
+- [ ] `tt_webmonitor/topology.py` — move `monitor.py` wholesale (read-only state observer)
+- [ ] Leave `src/transit_tracker/web/` and `simulator.py` and `monitor.py` as re-export shims
+- [ ] Verify: monitor half of `test_web.py`, `test_simulator.py`, `test_simulator_mock_equivalence.py` green
+
+## Phase 5: Carve Out `tt_tui`
+
+- [ ] Create `src/tt_tui/__init__.py`
+- [ ] `tt_tui/cli.py` — move `cli.py` lifecycle logic. Docker compose path now points to `tt_proxy/container/compose.yaml`. Start configurator + webmonitor as local asyncio tasks or separate launchd plists on macOS
+- [ ] `tt_tui/menus.py` — extract main_menu, profiles_menu, manage_service_menu from `tui.py`
+- [ ] `tt_tui/wizards.py` — extract change_threshold_wizard, change_brightness_wizard, change_panels_wizard, manage_dimming_schedule_wizard from `tui.py`
+- [ ] `tt_tui/live.py` — extract make_dashboard, ask_with_live_dashboard, hardware_monitor from `tui.py`
+- [ ] All cross-talk uses public APIs of `tt_proxy`, `tt_configurator`, `tt_webmonitor` — no reaching into private state
+- [ ] Leave `src/transit_tracker/{cli,tui}.py` as re-export shims
+- [ ] Verify: `test_cli.py`, `test_tui_main_menu.py`, `test_tui_wizards.py`, `test_tui_live_refresh.py` green
+
+## Phase 6: Rewire `pyproject.toml`
+
+- [ ] Update `[project.scripts]`:
+  - `transit-tracker = "tt_tui.cli:main"`
+  - `transit-tracker-capture = "tt_configurator.capture:main"`
+- [ ] Add direct-invocation entry points:
+  - `tt-proxy = "tt_proxy.__main__:main"`
+  - `tt-configurator = "tt_configurator.server:main"`
+  - `tt-webmonitor = "tt_webmonitor.server:main"`
+- [ ] Update `[tool.uv_build]` to list all five packages under `src/`
+- [ ] Update `[tool.coverage.run]` source paths
+- [ ] Update `[tool.mutmut]` paths
+- [ ] Update `[tool.ruff.lint.per-file-ignores]` for new page file paths
+- [ ] Verify: `uv sync` succeeds, all three new entry points start cleanly, `transit-tracker` still launches TUI, `./scripts/ci_local.sh` green
+
+## Phase 7: Delete the Shim
+
+- [ ] Convert remaining `scripts/*.py` imports from `transit_tracker.*` to new package imports
+- [ ] Delete `src/transit_tracker/` entirely
+- [ ] Flip `tests/test_import_layering.py` from warn to fail mode
+- [ ] Verify: `grep -r "from transit_tracker" src/ scripts/` returns nothing
+- [ ] Verify: full test suite green, `./scripts/ci_local.sh` green
+
+---
+
+## Test Reorganization
+
+```
+tests/
+  conftest.py              Shared fixtures (stays)
+  core/                    test_config*.py, test_metrics.py, test_logging_module.py,
+                           test_protocol_comparison.py, test_service_isolation.py
+  proxy/                   test_network.py, test_transit_api.py, test_gtfs.py,
+                           test_proxy_equivalence.py, test_cloud_equivalence.py,
+                           test_container.py
+  configurator/            test_flashing.py, test_serial_protocol.py, test_firmware_*.py,
+                           test_display.py, test_dimming*.py, test_brightness.py,
+                           test_profiles_menu.py, test_live_config_isolation.py
+  webmonitor/              test_simulator.py, test_simulator_mock_equivalence.py
+  tui/                     test_cli.py, test_tui_*.py
+```
+
+Contract tests (`test_proxy_equivalence.py`, `test_cloud_equivalence.py`, `test_protocol_comparison.py`)
+are the acceptance gate — must pass before any phase merges.
+
+## Per-Phase Verification
+
+| Phase | Gate tests |
+|-------|-----------|
+| 0 | Full suite + new `test_import_layering.py` |
+| 1 | `test_config*`, `test_metrics`, `test_logging_module`, `test_protocol_comparison` |
+| 2 | `tests/proxy/**` incl. `test_proxy_equivalence`, `test_cloud_equivalence` |
+| 3 | `tests/configurator/**` incl. `test_dimming*`, `test_brightness`, `test_firmware_contracts` |
+| 4 | `tests/webmonitor/**` incl. `test_simulator_mock_equivalence` |
+| 5 | `tests/tui/**` + `./scripts/ci_local.sh` |
+| 6 | Fresh `uv sync` + all entry points start + full suite |
+| 7 | Zero `transit_tracker.*` imports + full suite + `ci_local.sh` |
+
+## Files That Stay Put
+
+`LICENSE`, `README.md`, `CLAUDE.md`, `TESTING.md`, `data/`, `notebooks/`, `docs/`,
+`hardware_capture.json`, `validate_home.py`, and research/ops scripts in `scripts/`
+(`auto_crop.py`, `average_timelapse.py`, `build_route_map.py`, `build_stations_geojson.py`,
+`capture_cam.py`, `compare_*.py`, `process_hardware_img.py`, `render_sim.py`, etc.)
+
+## Out of Scope
+
+- No new features or API surface changes
+- No removal of Docker/launchctl service management UX
+- No new dependencies
+- No changes to the `schedule:subscribe` wire protocol
+- No changes to YAML config file format

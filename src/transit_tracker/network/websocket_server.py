@@ -70,6 +70,8 @@ class TransitServer:
         self.subscriptions = {} # ws -> List[Dict] (pairs)
         self.client_names = {} # ws -> str
         self.client_limits = {} # ws -> int
+        self.client_sort_by_dep = {} # ws -> bool (firmware-supplied sortByDeparture)
+        self.client_list_mode = {} # ws -> "sequential" | "nextPerRoute"
 
         # Centralized cache for arrivals
         # stop_id -> (timestamp, List[arrivals])
@@ -310,9 +312,16 @@ class TransitServer:
 
                     if pairs:
                         self.subscriptions[ws] = pairs
-                        limit = payload.get("limit")
+                        limit = payload.get("limit") or data.get("limit")
                         if limit:
                             self.client_limits[ws] = int(limit)
+                        # Mirror cloud proxy (schedule.service.ts L91): the firmware
+                        # sends sortByDeparture + listMode in the handshake and the
+                        # cloud filters/sorts by whichever key it requested.
+                        self.client_sort_by_dep[ws] = bool(data.get("sortByDeparture", False))
+                        list_mode = data.get("listMode", "sequential")
+                        if list_mode in ("sequential", "nextPerRoute"):
+                            self.client_list_mode[ws] = list_mode
 
                         self.sync_state()
                         log.info("Client %s subscribed to %d pairs", ws.remote_address, len(pairs),
@@ -360,6 +369,8 @@ class TransitServer:
             self.subscriptions.pop(ws, None)
             self.client_names.pop(ws, None)
             self.client_limits.pop(ws, None)
+            self.client_sort_by_dep.pop(ws, None)
+            self.client_list_mode.pop(ws, None)
             metrics.ws_disconnections.inc()
             self.sync_state()
             log.info("Client disconnected: %s", addr, extra={"component": "server", "client": f"{addr[0]}:{addr[1]}"})
@@ -523,10 +534,29 @@ class TransitServer:
                         else:
                             base_time = raw_arr if (raw_arr and raw_arr > now_minus_buffer) else (None if is_ferry else raw_dep)
 
-                        if not base_time or base_time < now_minus_buffer:
+                        if not base_time:
                             continue
 
                         final_display_time = base_time + offset_sec
+
+                        # Cloud-proxy parity (transit-tracker-api schedule.service.ts L91):
+                        # ship only trips whose user-visible time is strictly in the
+                        # future. The old pre-offset 60s grace let negative walking-time
+                        # offsets (e.g. -420s / -540s) push trips into the past and drive
+                        # the firmware reconnect-storm documented in
+                        # esphome-transit-tracker transit_tracker.cpp L26-53.
+                        if final_display_time <= now_ts:
+                            continue
+
+                        # departureTime must NEVER be shipped in the past even when OBA
+                        # reports a historical predictedDepartureTime (ferry destination
+                        # docks: arrivalEnabled=True, departureEnabled=False → OBA's
+                        # predictedDepartureTime is when the boat left the origin). If we
+                        # shipped that raw, the firmware stale-check (transit_tracker.cpp
+                        # L35: `now - departure_time <= 60`) would still fire. Clamp to
+                        # the user-visible time, which we just verified is future.
+                        raw_dep_for_wire = raw_dep if (raw_dep and raw_dep >= base_time) else base_time
+                        final_dep_time = raw_dep_for_wire + offset_sec
 
                         # For ferries, replace headsign with vessel name when vehicleId is live;
                         # fall back to destination headsign (e.g. "Bainbridge Island") otherwise,
@@ -555,7 +585,7 @@ class TransitServer:
                             "stopId": str(stop_id),
                             "headsign": headsign,
                             "arrivalTime": int(final_display_time),
-                            "departureTime": int((raw_dep or raw_arr) + offset_sec),
+                            "departureTime": int(final_dep_time),
                             "isRealtime": bool(arr.get("vehicleId")) if is_ferry else bool(arr.get("isRealtime"))
                         })
             except Exception as e:
@@ -563,7 +593,22 @@ class TransitServer:
                 # 429s during send_update are ignored (we use last cache)
                 pass
 
-        all_trips.sort(key=lambda x: x.get("arrivalTime", 0))
+        sort_key = "departureTime" if self.client_sort_by_dep.get(ws, False) else "arrivalTime"
+        all_trips.sort(key=lambda x: x.get(sort_key, 0))
+
+        # listMode=nextPerRoute: keep only the next trip per (routeId, headsign)
+        # pair, matching tjhorner/transit-tracker-api schedule.service.ts L94-108.
+        if self.client_list_mode.get(ws) == "nextPerRoute":
+            seen: set[tuple[str, str]] = set()
+            deduped = []
+            for t in all_trips:
+                key = (t.get("routeId", ""), t.get("headsign", ""))
+                if key in seen:
+                    continue
+                seen.add(key)
+                deduped.append(t)
+            all_trips = deduped
+
         limit = self.client_limits.get(ws, 3)
         final_trips = all_trips[:limit]
 

@@ -99,27 +99,30 @@ async def test_payload_identity():
 
 @pytest.mark.asyncio
 async def test_filtering_identity():
-    """Ensures past trips are filtered out, matching cloud behavior."""
+    """Past trips are filtered with cloud semantics: strict `departureTime > now`.
+
+    Mirrors tjhorner/transit-tracker-api schedule.service.ts L91. The firmware's
+    stale-check reconnects on trips whose departureTime is >60s in the past, so
+    we also cannot ship even recently-past trips.
+    """
     now = int(time.time())
     server = setup_test_server()
     ws = MockWS()
-    
+
     server.subscriptions[ws] = [{"routeId": "14", "stopId": "1_1234", "offset": 0}]
-    
-    # Mock 3 trips: 1 past, 1 now, 1 future
+
     server.cache["1_1234"] = (time.time(), [
-        {"tripId": "past", "routeId": "14", "predictedArrivalTime": (now - 120) * 1000}, # 2m ago
-        {"tripId": "now",  "routeId": "14", "predictedArrivalTime": (now - 10) * 1000},  # 10s ago (should keep)
-        {"tripId": "future", "routeId": "14", "predictedArrivalTime": (now + 300) * 1000} # 5m future
+        {"tripId": "past",     "routeId": "14", "predictedArrivalTime": (now - 120) * 1000},
+        {"tripId": "just_now", "routeId": "14", "predictedArrivalTime": (now - 10) * 1000},
+        {"tripId": "future",   "routeId": "14", "predictedArrivalTime": (now + 300) * 1000},
     ])
-    
+
     await server.send_update(ws)
-    
-    trips = ws.sent[0]["data"]["trips"]
-    ids = [t["tripId"] for t in trips]
-    
+
+    ids = [t["tripId"] for t in ws.sent[0]["data"]["trips"]]
+
     assert "past" not in ids
-    assert "now" in ids
+    assert "just_now" not in ids  # cloud excludes anything ≤ now
     assert "future" in ids
 
 @pytest.mark.asyncio

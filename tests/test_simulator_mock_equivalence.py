@@ -71,31 +71,29 @@ async def test_simulator_identity():
     local_json = ws.sent["data"]["trips"]
     
     # --- 2. CLOUD PROXY LOGIC (Simulated Based on Source Code) ---
-    # The cloud proxy does: arrivalTime: new Date(trip.arrivalTime).getTime() / 1000 + offset
-    # And filters: trip.arrivalTime > now
+    # tjhorner/transit-tracker-api, src/schedule/schedule.service.ts L85-91:
+    #   arrivalTime = raw + offset;  filter: trip[sortKey] > Date.now()/1000
+    # Note: STRICT > now, not a 60s grace. The grace variant is what caused the
+    # firmware reconnect storm this suite also guards against.
     cloud_json = []
     oba_data = get_mock_oba_response(now_ms)
-    
-    # 14 Downtown (8m real - 9m offset = -1m) -> SHOULD BE FILTERED
-    # 554 Downtown (15m real - 7m offset = 8m) -> SHOULD BE KEPT
-    
-    # Trip 1 (554)
+
+    # 14 Downtown (8m real - 9m offset = -1m) -> FILTERED (≤ now)
+    # 554 Downtown (15m real - 7m offset = 8m) -> KEPT
+
     t1 = oba_data[0]
     final_arr = (t1["predictedArrivalTime"] / 1000) - 420
-    # Our server filters trips that would arrive > 60s in the past
-    if final_arr >= now_ts - 60:
+    if final_arr > now_ts:
         cloud_json.append({
             "tripId": t1["tripId"], "routeId": t1["routeId"], "routeName": t1["routeName"],
             "arrivalTime": int(final_arr), "departureTime": int(final_arr + 30),
             "headsign": t1["headsign"], "routeColor": t1["routeColor"], "isRealtime": True,
             "stopId": "st:1_8494"
         })
-        
-    # Trip 2 (14)
+
     t2 = oba_data[1]
     final_arr_2 = (t2["predictedArrivalTime"] / 1000) - 540
-    # This trip results in -60s from now (Now-1m), so it should be filtered by the >= now_ts - 60 rule
-    if final_arr_2 >= now_ts - 60:
+    if final_arr_2 > now_ts:
         cloud_json.append({
             "tripId": t2["tripId"], "routeId": t2["routeId"], "routeName": t2["routeName"],
             "arrivalTime": int(final_arr_2), "departureTime": int(final_arr_2),

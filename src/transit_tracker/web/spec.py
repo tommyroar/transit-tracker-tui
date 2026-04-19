@@ -237,7 +237,7 @@ def generate_api_spec(config: TransitConfig) -> str:
                 "only when a vessel is actively tracked."
             ),
             "abbreviations": [
-                {"original": a.original, "short": a.short}
+                {"from": a.from_, "to": a.to}
                 for a in config.transit_tracker.abbreviations
             ],
         },
@@ -293,7 +293,7 @@ def generate_spec_html(spec_json: str) -> str:
     abbr_rows = ""
     for a in ferry.get("abbreviations", []):
         abbr_rows += (
-            f"<tr><td>{a['original']}</td><td><code>{a['short']}</code></td></tr>\n"
+            f"<tr><td>{a['from']}</td><td><code>{a['to']}</code></td></tr>\n"
         )
 
     # Client message

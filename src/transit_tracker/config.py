@@ -252,8 +252,10 @@ class TransitSubscription(BaseModel):
 
 
 class Abbreviation(BaseModel):
-    original: str
-    short: str
+    from_: str = Field(alias="from")
+    to: str
+
+    model_config = {"populate_by_name": True}
 
 
 class TransitStop(BaseModel):
@@ -271,6 +273,12 @@ class TransitStop(BaseModel):
         return v
 
 
+class RouteStyle(BaseModel):
+    route_id: str
+    name: Optional[str] = None
+    color: Optional[str] = None
+
+
 class TransitTrackerSettings(BaseModel):
     """Board subscription schema — matches the public reference project format.
 
@@ -282,6 +290,7 @@ class TransitTrackerSettings(BaseModel):
     scroll_headsigns: bool = Field(default=False)
     display_format: str = Field(default="{ROUTE}  {HEADSIGN}  {LIVE} {TIME}")
     stops: List[TransitStop] = Field(default_factory=list)
+    styles: List[RouteStyle] = Field(default_factory=list)
     abbreviations: List[Abbreviation] = Field(default_factory=list)
 
 
@@ -303,7 +312,7 @@ _LEGACY_TT_KEYS = {
 _LEGACY_ROOT_KEYS = {"use_local_api"}
 
 # Dead fields that should be silently stripped
-_DEAD_KEYS = {"mapbox_access_token", "show_units", "list_mode", "styles"}
+_DEAD_KEYS = {"mapbox_access_token", "show_units", "list_mode"}
 
 
 def _migrate_legacy_fields(data: dict, svc: ServiceSettings):
@@ -411,7 +420,7 @@ class TransitConfig(BaseModel):
             path = os.path.join(".local", path)
 
         data = {
-            "transit_tracker": self.transit_tracker.model_dump(exclude_defaults=False)
+            "transit_tracker": self.transit_tracker.model_dump(exclude_defaults=False, by_alias=True)
         }
         with open(path, "w") as f:
             yaml.safe_dump(data, f, sort_keys=False)

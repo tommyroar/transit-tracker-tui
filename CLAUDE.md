@@ -6,6 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Transit Tracker is a background service that proxies OneBusAway API data to ESP32 LED matrix hardware via WebSocket. It supports both cloud relay mode (via `wss://tt.horner.tj/`) and local self-hosted mode. A web UI at `/transit-tracker/` provides dashboards, an LED simulator, and a REST API for configuration.
 
+## Reference firmware (ESP32 client)
+
+The ESP32 LED-matrix display runs ESPHome firmware that is **not in this repo**. When debugging protocol / reconnect / payload issues, the upstream sources are:
+
+- **Device firmware (ESPHome YAML + factory binaries):** [`EastsideUrbanism/transit-tracker`](https://github.com/EastsideUrbanism/transit-tracker) — `firmware/transit-tracker.yaml` is the canonical build spec; releases publish `firmware.factory.bin`.
+- **ESPHome C++ component (WebSocket client, schedule parsing, stale-check logic):** [`tjhorner/esphome-transit-tracker`](https://github.com/tjhorner/esphome-transit-tracker) — imported via `external_components` in the YAML above. All `[D][transit_tracker.component:NNN]` serial log lines originate here (`components/transit_tracker/transit_tracker.cpp`).
+- **Reference API (the cloud server this Python proxy mimics):** [`tjhorner/transit-tracker-api`](https://github.com/tjhorner/transit-tracker-api) — container image `ghcr.io/tjhorner/transit-tracker-api:latest`, hosted at `wss://tt.horner.tj`.
+
+A local clone of the component lives at `../esphome-transit-tracker/` (sibling of this repo) for offline reference. Serial logs from the device appear on `/dev/cu.usbmodem*` at 115200 baud (native USB-JTAG — no UART converter needed for the ESP32-S3 Matrix Portal).
+
 ## Commands
 
 ### Run tests

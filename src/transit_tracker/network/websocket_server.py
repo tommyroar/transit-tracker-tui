@@ -254,15 +254,26 @@ class TransitServer:
         name = name.replace("->", ">").replace("\u2192", ">")
 
         for abbr in self.config.transit_tracker.abbreviations:
-            if abbr.original.lower() == name.lower():
-                return abbr.short
+            if abbr.from_.lower() == name.lower():
+                return abbr.to
         return name
 
     async def register(self, ws):
         self.clients.add(ws)
         addr = ws.remote_address
         metrics.ws_connections.inc()
-        log.info("Client connected: %s", addr, extra={"component": "server", "client": f"{addr[0]}:{addr[1]}"})
+        try:
+            headers = ws.request.headers
+            ua = headers.get("User-Agent", "-")
+            origin = headers.get("Origin", "-")
+            path = ws.request.path
+        except Exception:
+            ua, origin, path = "-", "-", "-"
+        log.info(
+            "Client connected: %s ua=%r origin=%r path=%s",
+            addr, ua, origin, path,
+            extra={"component": "server", "client": f"{addr[0]}:{addr[1]}", "ua": ua, "origin": origin, "path": path},
+        )
         self.sync_state()
         try:
             async for message in ws:
@@ -523,6 +534,11 @@ class TransitServer:
                         # last-seen vessel would show the wrong name for upcoming trips.
                         headsign = self.apply_abbreviations(str(arr.get("headsign") or arr.get("tripHeadsign") or "Transit"))
                         route_name = self.apply_abbreviations(str(arr.get("routeName") or arr.get("routeShortName") or ""))
+                        # Apply style name override (e.g. "2 Line" → "2")
+                        for style in self.config.transit_tracker.styles:
+                            if self.normalize_id(style.route_id) == full_route_id and style.name:
+                                route_name = style.name
+                                break
                         if is_ferry:
                             vehicle_id_full = arr.get("vehicleId") or (arr.get("tripStatus") or {}).get("vehicleId")
                             if vehicle_id_full:
@@ -744,7 +760,25 @@ async def run_server(host: str = "0.0.0.0", port: int = 8000, config: TransitCon
     server = TransitServer(config)
     log.info("Starting Transit Tracker API on %s:%d", host, port, extra={"component": "server"})
 
-    async with websockets.serve(server.register, host, port):
+    def _process_request(connection, request):
+        try:
+            peer = connection.transport.get_extra_info("peername")
+        except Exception:
+            peer = None
+        ua = request.headers.get("User-Agent", "-")
+        origin = request.headers.get("Origin", "-")
+        upgrade = request.headers.get("Upgrade", "-")
+        log.info(
+            "HTTP/WS request from %s path=%s upgrade=%s ua=%r origin=%r",
+            peer, request.path, upgrade, ua, origin,
+            extra={"component": "server", "peer": str(peer), "path": request.path, "upgrade": upgrade, "ua": ua, "origin": origin},
+        )
+        return None
+
+    async with websockets.serve(
+        server.register, host, port,
+        process_request=_process_request,
+    ):
         await asyncio.gather(
             server.data_refresh_loop(),
             server.broadcast_loop(),

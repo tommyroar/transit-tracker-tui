@@ -1,8 +1,9 @@
 """In-process metrics collector with time-series ring buffers.
 
-Designed for a single running instance.  Stores recent data points so
-the observability dashboard can render time-series charts without an
-external metrics backend.
+Designed for a single running instance. Counters, gauges, and time-series
+samples are kept in memory for `/api/status` and the `/logs` live tail,
+and mirrored asynchronously to InfluxDB (see `observability/`) for
+long-term retention and Grafana dashboards.
 
 All public functions are thread-safe.
 """
@@ -11,6 +12,8 @@ import threading
 import time
 from collections import deque
 from typing import Any, Dict, List, Optional
+
+from transit_tracker.observability import influx
 
 # ---------------------------------------------------------------------------
 # Ring-buffer time-series store
@@ -33,6 +36,7 @@ class _TimeSeries:
     def record(self, value: float, ts: Optional[float] = None) -> None:
         with self._lock:
             self._data.append((ts or time.time(), value))
+        influx.enqueue_gauge(self.name, value, self.unit, ts_seconds=ts)
 
     def snapshot(self, since: float = 0) -> List[List[float]]:
         """Return [[ts, value], ...] for points with ts >= *since*."""
@@ -59,6 +63,8 @@ class _Counter:
     def inc(self, n: int = 1) -> None:
         with self._lock:
             self._value += n
+            current = self._value
+        influx.enqueue_counter(self.name, current)
 
     @property
     def value(self) -> int:
@@ -84,6 +90,7 @@ class _Gauge:
     def set(self, value: float) -> None:
         with self._lock:
             self._value = value
+        influx.enqueue_gauge(self.name, value, self.unit)
 
     @property
     def value(self) -> float:
@@ -99,7 +106,7 @@ _MAX_LOG_ENTRIES = 500
 
 
 class _LogRing:
-    """Ring buffer for recent structured log entries shown in the dashboard."""
+    """Ring buffer for recent structured log entries served via /api/logs."""
 
     def __init__(self, maxlen: int = _MAX_LOG_ENTRIES):
         self._data: deque = deque(maxlen=maxlen)
@@ -134,6 +141,11 @@ class MetricsRegistry:
         self.ws_connections = _Counter("ws_connections_total")
         self.ws_disconnections = _Counter("ws_disconnections_total")
 
+        # InfluxDB writer self-instrumentation
+        self.influx_writes = _Counter("influx_writes_total")
+        self.influx_errors = _Counter("influx_errors_total")
+        self.influx_drops = _Counter("influx_drops_total")
+
         # Gauges
         self.active_clients = _Gauge("active_clients", "connections")
         self.refresh_interval = _Gauge("refresh_interval", "seconds")
@@ -167,6 +179,9 @@ class MetricsRegistry:
                 "messages_received": self.messages_received.value,
                 "ws_connections": self.ws_connections.value,
                 "ws_disconnections": self.ws_disconnections.value,
+                "influx_writes": self.influx_writes.value,
+                "influx_errors": self.influx_errors.value,
+                "influx_drops": self.influx_drops.value,
             },
             "gauges": {
                 "active_clients": self.active_clients.value,

@@ -114,7 +114,7 @@ def setup_logging(
     root.addHandler(handler)
 
     # Ring-buffer handler: feeds log entries into the metrics log ring
-    # so the /api/logs endpoint and dashboard can display them.
+    # so the /api/logs endpoint can stream them to the /logs live tail.
     root.addHandler(_RingBufferHandler())
 
     # Prevent propagation to the root logger (avoids duplicate output)

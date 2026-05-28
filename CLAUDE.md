@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Transit Tracker is a background service that proxies OneBusAway API data to ESP32 LED matrix hardware via WebSocket. It supports both cloud relay mode (via `wss://tt.horner.tj/`) and local self-hosted mode. A web UI at `/transit-tracker/` provides dashboards, an LED simulator, and a REST API for configuration.
+Transit Tracker is a background service that proxies OneBusAway API data to ESP32 LED matrix hardware via WebSocket. It supports both cloud relay mode (via `wss://tt.horner.tj/`) and local self-hosted mode. A web UI at `/transit-tracker/` provides a lean live log tail, an LED simulator, and a REST API for configuration. Observability (metrics, charts, the network-topology view, alerts) lives in Grafana — see `/Volumes/dev/CLAUDE.md` "Observability stack" and the `transit-tracker-monitor` dashboard.
 
 ## Reference firmware (ESP32 client)
 
@@ -49,7 +49,7 @@ trips immediately on client connect (before the OBA cache is warm).
 uv tool install .       # installs `transit-tracker` CLI to PATH
 transit-tracker         # launch TUI
 transit-tracker service # start background service (WebSocket server + client)
-transit-tracker web     # start HTTP web server with dashboard and API
+transit-tracker web     # start HTTP web server with log tail, simulator, and REST API
 ```
 
 ## Architecture
@@ -75,7 +75,8 @@ transit-tracker web     # start HTTP web server with dashboard and API
 | `transit_api.py` | Async httpx client for OBA API (geocode, stops, arrivals, polylines) |
 | `network/websocket_server.py` | Local proxy — subscriptions, OBA polling, rate-limit backoff, ferry logic |
 | `network/websocket_service.py` | Background client — connects to configured API endpoint, monitors config changes |
-| `web.py` | HTTP server with REST API, dashboards, LED simulator, WebSocket proxy; all routes under `/transit-tracker/` |
+| `web.py` | HTTP server with REST API, live log tail, LED simulator, WebSocket proxy; all routes under `/transit-tracker/` |
+| `observability/influxdb_writer.py` | Background InfluxDB writer — mirrors counters/gauges/trips to the local Influx bucket for Grafana. No-op when `INFLUXDB_TOKEN` is unset |
 | `tui.py` | `rich`/`questionary` interactive configurator — config files, device flashing, profiles, brightness |
 | `simulator.py` | 64×32 LED matrix emulator with BDF fonts |
 | `cli.py` | Entry point; `manage_service()` uses Docker/launchctl for daemon lifecycle |
@@ -85,14 +86,12 @@ transit-tracker web     # start HTTP web server with dashboard and API
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/transit-tracker/` | GET | Index page with links to all pages |
-| `/transit-tracker/dashboard` | GET | Live observability dashboard |
-| `/transit-tracker/monitor` | GET | Network topology monitor |
+| `/transit-tracker/logs` | GET | Lean live log tail (ad-hoc debugging; trends live in Grafana) |
 | `/transit-tracker/simulator` | GET | Browser-based LED matrix simulator |
 | `/transit-tracker/spec` | GET | API documentation page |
 | `/transit-tracker/ws` | WS | WebSocket proxy to internal `:8000` server |
 | `/transit-tracker/api/status` | GET | Service state (clients, rate limits, uptime) |
-| `/transit-tracker/api/metrics` | GET | Time-series metrics snapshot |
-| `/transit-tracker/api/logs` | GET | Recent log entries |
+| `/transit-tracker/api/logs` | GET | Recent log entries (feeds `/logs` live tail) |
 | `/transit-tracker/api/profiles` | GET | List available profiles |
 | `/transit-tracker/api/profile/activate` | GET | Switch active profile |
 | `/transit-tracker/api/dimming` | GET/POST | Dimming schedule and brightness |
@@ -111,7 +110,7 @@ transit-tracker web     # start HTTP web server with dashboard and API
 - OBA `arrivalEnabled`/`departureEnabled` per-trip flags determine whether to show arrival or departure time (origin docks show departure, destination docks show arrival)
 
 ### Rate limiting
-`TransitServer` tracks per-stop `rate_limit_until` timestamps. On 429: interval doubles (cap 600s). On recovery: interval reduces 20% per successful fetch. Throttle metrics (`throttle_total`, `api_calls_total`, `throttle_rate`) are synced to `service_state.json` and shown in the web dashboard. Per-event JSONL log at `~/.config/transit-tracker/throttle_log.jsonl`.
+`TransitServer` tracks per-stop `rate_limit_until` timestamps. On 429: interval doubles (cap 600s). On recovery: interval reduces 20% per successful fetch. Throttle metrics (`throttle_total`, `api_calls_total`, `throttle_rate`) are synced to `service_state.json` and surfaced via `/api/status`; the long-term view lives in Grafana. Per-event JSONL log at `~/.config/transit-tracker/throttle_log.jsonl`.
 
 ### Config (two-file system)
 - **Board subscription profiles** (`.local/*.yaml`, `data/needle_stops.yaml`): Pure stop/route data under `transit_tracker:` key. Schema: `TransitTrackerSettings` — only `base_url`, `time_display`, `scroll_headsigns`, `display_format`, `stops`, `abbreviations`. No API keys or service settings.

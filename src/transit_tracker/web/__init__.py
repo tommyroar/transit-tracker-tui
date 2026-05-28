@@ -23,9 +23,8 @@ from .api_handlers import (
     resolve_stop_coordinates,
 )
 from .pages import (
-    generate_dashboard_html,
     generate_index_html,
-    generate_monitor_html,
+    generate_logs_html,
     generate_simulator_html,
 )
 from .server import PREFIX, TransitWebHandler, run_web
@@ -50,9 +49,8 @@ __all__ = [
     "_handle_stops_for_route",
     "_reset_draft",
     "generate_api_spec",
-    "generate_dashboard_html",
     "generate_index_html",
-    "generate_monitor_html",
+    "generate_logs_html",
     "generate_simulator_html",
     "generate_spec_html",
     "resolve_stop_coordinates",

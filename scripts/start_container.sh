@@ -20,6 +20,8 @@ HTTP_PORT=8080
 PROFILES_DIR="$PROJECT_DIR/.local"
 SERVICE_YAML="$PROJECT_DIR/.local/service.yaml"
 GTFS_DB="$PROJECT_DIR/data/gtfs_index.sqlite"
+INFLUX_ENV_FILE="$PROJECT_DIR/.local/.env.influx"
+INFLUX_NETWORK="influxdb_default"
 DETACH=false
 
 # ---- Parse arguments ----
@@ -62,6 +64,21 @@ else
     echo "Image '$IMAGE_NAME' found."
 fi
 
+# ---- InfluxDB observability (optional) ----
+INFLUX_MOUNT=()
+INFLUX_NET_ARGS=()
+if [ -f "$INFLUX_ENV_FILE" ]; then
+    if docker network inspect "$INFLUX_NETWORK" >/dev/null 2>&1; then
+        echo "InfluxDB env found — service will mirror metrics + trips to InfluxDB."
+        INFLUX_MOUNT=(--env-file "$INFLUX_ENV_FILE")
+        INFLUX_NET_ARGS=(--network "$INFLUX_NETWORK")
+    else
+        echo "InfluxDB env found at $INFLUX_ENV_FILE but docker network '$INFLUX_NETWORK' is missing — running without InfluxDB."
+    fi
+else
+    echo "No InfluxDB env at $INFLUX_ENV_FILE — running without InfluxDB observability."
+fi
+
 # ---- Run container ----
 if [ "$DETACH" = true ]; then
     echo "Starting container '$CONTAINER_NAME' (detached, restart=always)..."
@@ -74,6 +91,8 @@ if [ "$DETACH" = true ]; then
         -v "$PROFILES_DIR:/config/profiles:ro" \
         -v "$SERVICE_YAML:/config/service.yaml" \
         "${GTFS_MOUNT[@]}" \
+        "${INFLUX_NET_ARGS[@]}" \
+        "${INFLUX_MOUNT[@]}" \
         -e PROFILES_DIR=/config/profiles \
         -e SERVICE_SETTINGS_PATH=/config/service.yaml \
         -e TZ=America/Los_Angeles \
@@ -105,6 +124,8 @@ else
         -v "$PROFILES_DIR:/config/profiles:ro" \
         -v "$SERVICE_YAML:/config/service.yaml" \
         "${GTFS_MOUNT[@]}" \
+        "${INFLUX_NET_ARGS[@]}" \
+        "${INFLUX_MOUNT[@]}" \
         -e PROFILES_DIR=/config/profiles \
         -e SERVICE_SETTINGS_PATH=/config/service.yaml \
         -e TZ=America/Los_Angeles \

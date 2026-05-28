@@ -24,6 +24,7 @@ from ..display import format_trip_line
 from ..gtfs_schedule import GTFSSchedule
 from ..logging import get_logger, is_message_logging_enabled
 from ..metrics import metrics
+from ..observability import influx
 from ..transit_api import TransitAPI
 
 log = get_logger("transit_tracker.server")
@@ -558,6 +559,7 @@ class TransitServer:
                             "departureTime": int((raw_dep or raw_arr) + offset_sec),
                             "isRealtime": bool(arr.get("vehicleId")) if is_ferry else bool(arr.get("isRealtime"))
                         })
+                        influx.enqueue_trip(all_trips[-1])
             except Exception as e:
                 log.error("Exception in send_update: %s", e, exc_info=True, extra={"component": "server"})
                 # 429s during send_update are ignored (we use last cache)
@@ -660,7 +662,11 @@ class TransitServer:
                     await http_client.post(url, headers={"Content-Length": "0"})
                 log.info("ESPHome brightness set to %d", target, extra={"component": "server"})
             except Exception as e:
-                log.warning("ESPHome brightness POST failed: %s", e, extra={"component": "server"})
+                log.warning(
+                    "ESPHome brightness POST failed (%s -> %s): %s",
+                    type(e).__name__, device_ip, e or "no message",
+                    extra={"component": "server"},
+                )
 
         # Broadcast to all WS clients
         msg = json.dumps({"event": "control:brightness", "data": {"value": target}})

@@ -32,9 +32,8 @@ from transit_tracker.web import (
     _handle_profiles_list,
     _reset_draft,
     generate_api_spec,
-    generate_dashboard_html,
     generate_index_html,
-    generate_monitor_html,
+    generate_logs_html,
     generate_simulator_html,
     resolve_stop_coordinates,
 )
@@ -463,53 +462,25 @@ def test_simulator_html_endpoint_selector():
     assert "Custom" in html
 
 
-# --- Monitor HTML generation ---
+# --- Logs HTML generation ---
 
 
-def test_monitor_html_has_topology():
-    html = generate_monitor_html()
-    assert "topo-svg" in html
-    assert "Network Topology" in html
-
-
-def test_monitor_html_has_simulator_toggle():
-    html = generate_monitor_html()
-    assert "sim-toggle" in html
-    assert "LED Simulator" in html
-    assert "sim-iframe" in html
-
-
-def test_monitor_html_has_message_feed():
-    html = generate_monitor_html()
-    assert "feed-list" in html
-    assert "Message Flow" in html
-
-
-# --- Dashboard HTML generation ---
-
-
-def test_dashboard_html_has_metrics():
-    html = generate_dashboard_html()
-    assert "fetchMetrics" in html
-
-
-def test_dashboard_html_has_charts():
-    html = generate_dashboard_html()
-    assert "chart" in html.lower() or "metric" in html.lower()
-    assert "api_calls" in html or "apiCalls" in html
-
-
-def test_monitor_html_has_trip_table():
-    html = generate_monitor_html()
-    assert "trip-table" in html
-    assert "Route" in html
-    assert "Headsign" in html
-
-
-def test_monitor_html_has_status_polling():
-    html = generate_monitor_html()
-    assert "/transit-tracker/api/status" in html
+def test_logs_html_polls_api_logs():
+    html = generate_logs_html()
+    assert "/transit-tracker/api/logs" in html
     assert "setInterval" in html
+
+
+def test_logs_html_has_level_filter():
+    html = generate_logs_html()
+    assert "level-filter" in html
+    assert "ERROR" in html
+
+
+def test_logs_html_has_log_list():
+    html = generate_logs_html()
+    assert 'id="list"' in html
+    assert "log-row" in html
 
 
 def test_simulator_html_has_pixel_rendering():

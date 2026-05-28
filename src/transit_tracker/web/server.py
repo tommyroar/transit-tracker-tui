@@ -34,9 +34,8 @@ from .api_handlers import (
     resolve_stop_coordinates,
 )
 from .pages import (
-    generate_dashboard_html,
     generate_index_html,
-    generate_monitor_html,
+    generate_logs_html,
     generate_simulator_html,
 )
 from .spec import generate_api_spec, generate_spec_html
@@ -75,17 +74,11 @@ class TransitWebHandler(BaseHTTPRequestHandler):
             if path == f"{PREFIX}/api/status":
                 self._serve_status(query)
                 return
-            if path == f"{PREFIX}/api/metrics":
-                self._serve_metrics(query)
-                return
             if path == f"{PREFIX}/api/logs":
                 self._serve_logs(query)
                 return
-            if path == f"{PREFIX}/dashboard":
-                self._serve_dashboard()
-                return
-            if path == f"{PREFIX}/monitor":
-                self._serve_monitor()
+            if path == f"{PREFIX}/logs":
+                self._serve_logs_page()
                 return
             if path == f"{PREFIX}/api/dimming":
                 self._serve_dimming_get()
@@ -192,31 +185,20 @@ class TransitWebHandler(BaseHTTPRequestHandler):
             body = json.dumps({"status": "error"})
         self._json_response(body)
 
-    def _serve_metrics(self, query: dict):
-        """Serve metrics snapshot with optional time-series windowing."""
-        since = float(query.get("since", [0])[0])
-        body = json.dumps(metrics.snapshot(series_since=since))
-        self._json_response(body)
-
     def _serve_logs(self, query: dict):
-        """Serve recent log entries from the in-memory ring buffer."""
+        """Serve recent log entries from the in-memory ring buffer.
+
+        Backs the lean /logs live tail (the dashboard + network monitor
+        views were retired in favor of Grafana).
+        """
         since = float(query.get("since", [0])[0])
         limit = int(query.get("limit", [200])[0])
         entries = metrics.logs.snapshot(since=since, limit=limit)
         self._json_response(json.dumps({"logs": entries}))
 
-    def _serve_dashboard(self):
-        """Serve the observability dashboard HTML."""
-        html = generate_dashboard_html()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-        self.wfile.write(html.encode("utf-8"))
-
-    def _serve_monitor(self):
-        """Serve the live network topology monitor HTML."""
-        html = generate_monitor_html()
+    def _serve_logs_page(self):
+        """Serve the lean live log-tail HTML page."""
+        html = generate_logs_html()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
@@ -349,14 +331,9 @@ async def run_web(
             "description": "Browser-based HUB75 LED matrix emulator with live data",
         },
         {
-            "path": f"{PREFIX}/dashboard",
-            "name": "Dashboard",
-            "description": "Live metrics and observability dashboard",
-        },
-        {
-            "path": f"{PREFIX}/monitor",
-            "name": "Network Monitor",
-            "description": "Live topology showing proxy, provider, and displays",
+            "path": f"{PREFIX}/logs",
+            "name": "Logs",
+            "description": "Live log tail (ad-hoc debugging; trends live in Grafana)",
         },
         {
             "path": f"{PREFIX}/spec",
@@ -379,14 +356,9 @@ async def run_web(
             "description": "Live service state (clients, rate limits, uptime)",
         },
         {
-            "path": f"{PREFIX}/api/metrics",
-            "name": "Metrics",
-            "description": "Time-series metrics snapshot (JSON)",
-        },
-        {
             "path": f"{PREFIX}/api/logs",
-            "name": "Logs",
-            "description": "Recent log entries from ring buffer (JSON)",
+            "name": "Logs (JSON)",
+            "description": "Recent log entries from ring buffer (JSON) — feeds /logs",
         },
     ]
     index_html = generate_index_html(pages)
@@ -400,7 +372,6 @@ async def run_web(
     }
     dynamic_routes = {
         f"{PREFIX}/api/status",
-        f"{PREFIX}/api/metrics",
         f"{PREFIX}/api/logs",
         f"{PREFIX}/api/dimming",
         f"{PREFIX}/api/dimming/set",
@@ -412,8 +383,7 @@ async def run_web(
         f"{PREFIX}/api/config/stops",
         f"{PREFIX}/api/config/save",
         f"{PREFIX}/api/config/settings",
-        f"{PREFIX}/dashboard",
-        f"{PREFIX}/monitor",
+        f"{PREFIX}/logs",
         f"{PREFIX}/simulator",
     }
     # Route patterns that need path parameter extraction
@@ -451,14 +421,6 @@ async def run_web(
                     "application/json",
                     json.dumps({"status": "error"}),
                 )
-
-        if path == f"{PREFIX}/api/metrics":
-            since = float(query.get("since", [0])[0])
-            return (
-                200,
-                "application/json",
-                json.dumps(metrics.snapshot(series_since=since)),
-            )
 
         if path == f"{PREFIX}/api/logs":
             since = float(query.get("since", [0])[0])
@@ -537,10 +499,8 @@ async def run_web(
                 json.dumps(_handle_config_settings_get()),
             )
 
-        if path == f"{PREFIX}/dashboard":
-            return (200, "text/html", generate_dashboard_html())
-        if path == f"{PREFIX}/monitor":
-            return (200, "text/html", generate_monitor_html())
+        if path == f"{PREFIX}/logs":
+            return (200, "text/html", generate_logs_html())
         if path == f"{PREFIX}/simulator":
             return (200, "text/html", generate_simulator_html())
 
@@ -800,7 +760,7 @@ async def run_web(
         extra={"component": "web"},
     )
     log.info(
-        "  %s/dashboard  — observability dashboard",
+        "  %s/logs       — live log tail",
         PREFIX,
         extra={"component": "web"},
     )

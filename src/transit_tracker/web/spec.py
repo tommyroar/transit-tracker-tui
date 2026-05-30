@@ -245,6 +245,46 @@ def generate_api_spec(config: TransitConfig) -> str:
             "backoff": "On HTTP 429, refresh interval doubles (max 600s). Recovers 20% per successful cycle.",
             "per_stop_cooldown": "Rate-limited stops have individual cooldown timestamps.",
         },
+        "rest_endpoints": {
+            "tiles_list": {
+                "method": "GET",
+                "path": "/transit-tracker/api/tiles",
+                "description": (
+                    "Per-stop processed departures for REST consumers "
+                    "(Home Assistant, dashboards). Read from an in-process "
+                    "cache fed by a single WS subscription — safe to poll."
+                ),
+                "example_response": {
+                    "tiles": [
+                        {
+                            "stop_id": "st:1_8494",
+                            "label": "Issaquah TC",
+                            "direction": None,
+                            "updated": 1773534000,
+                            "departures": [
+                                {
+                                    "route": "554",
+                                    "headsign": "Downtown Seattle",
+                                    "eta_minutes": 5,
+                                    "arrival_time": 1773534300,
+                                    "is_realtime": True,
+                                    "color": "#2B376E",
+                                    "trip_id": "40_141953498",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            },
+            "tile_one": {
+                "method": "GET",
+                "path": "/transit-tracker/api/tile/<stop_id>",
+                "description": (
+                    "Same shape as a single entry from /api/tiles. "
+                    "404 if stop_id is not in the active profile."
+                ),
+            },
+        },
     }
 
     return json.dumps(spec, indent=2)

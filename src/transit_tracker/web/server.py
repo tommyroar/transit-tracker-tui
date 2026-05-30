@@ -39,6 +39,7 @@ from .pages import (
     generate_simulator_html,
 )
 from .spec import generate_api_spec, generate_spec_html
+from .tile_cache import TileCache
 
 log = get_logger("transit_tracker.web")
 
@@ -324,11 +325,21 @@ async def run_web(
     spec_json = generate_api_spec(config)
     spec_html = generate_spec_html(spec_json)
 
+    tile_cache = TileCache(config)
+
     pages = [
         {
             "path": f"{PREFIX}/simulator",
             "name": "LED Simulator",
             "description": "Browser-based HUB75 LED matrix emulator with live data",
+        },
+        {
+            "path": f"{PREFIX}/api/tiles",
+            "name": "Stop Tiles (JSON)",
+            "description": (
+                "Per-stop processed departures for Home Assistant "
+                "or other REST consumers"
+            ),
         },
         {
             "path": f"{PREFIX}/logs",
@@ -380,6 +391,7 @@ async def run_web(
         f"{PREFIX}/api/geocode",
         f"{PREFIX}/api/routes",
         f"{PREFIX}/api/arrivals",
+        f"{PREFIX}/api/tiles",
         f"{PREFIX}/api/config/stops",
         f"{PREFIX}/api/config/save",
         f"{PREFIX}/api/config/settings",
@@ -388,6 +400,7 @@ async def run_web(
     }
     # Route patterns that need path parameter extraction
     route_pattern_prefix = f"{PREFIX}/api/routes/"
+    tile_pattern_prefix = f"{PREFIX}/api/tile/"
 
     # -- Also configure the legacy HTTPServer routes (used by tests) --
     TransitWebHandler.routes = static_routes
@@ -499,6 +512,13 @@ async def run_web(
                 json.dumps(_handle_config_settings_get()),
             )
 
+        if path == f"{PREFIX}/api/tiles":
+            return (
+                200,
+                "application/json",
+                json.dumps({"tiles": tile_cache.list_tiles()}),
+            )
+
         if path == f"{PREFIX}/logs":
             return (200, "text/html", generate_logs_html())
         if path == f"{PREFIX}/simulator":
@@ -527,6 +547,20 @@ async def run_web(
             if route_id:
                 status, resp = await _handle_stops_for_route(route_id)
                 return (status, "application/json", json.dumps(resp))
+        # Handle /api/tile/<stop_id>
+        if path.startswith(tile_pattern_prefix):
+            stop_id = path[len(tile_pattern_prefix) :]
+            if stop_id:
+                tile = tile_cache.get_tile(stop_id)
+                if tile is None:
+                    return (
+                        404,
+                        "application/json",
+                        json.dumps(
+                            {"error": f"Stop '{stop_id}' not configured"}
+                        ),
+                    )
+                return (200, "application/json", json.dumps(tile))
         return None
 
     async def _handle_post(path: str, body: bytes) -> tuple:
@@ -770,6 +804,11 @@ async def run_web(
         extra={"component": "web"},
     )
     log.info(
+        "  %s/api/tiles  — per-stop JSON tiles for Home Assistant",
+        PREFIX,
+        extra={"component": "web"},
+    )
+    log.info(
         "  %s/spec       — API documentation page",
         PREFIX,
         extra={"component": "web"},
@@ -781,4 +820,13 @@ async def run_web(
         port,
         process_request=process_request,
     ):
-        await asyncio.Future()  # Run forever
+        cache_task = asyncio.create_task(tile_cache.run())
+        try:
+            await asyncio.Future()  # Run forever
+        finally:
+            tile_cache.running = False
+            cache_task.cancel()
+            try:
+                await cache_task
+            except (asyncio.CancelledError, Exception):
+                pass

@@ -9,6 +9,7 @@ A lightweight, terminal-based transit data proxy for macOS. It monitors public t
 - **Background Daemon:** Runs silently in the background on your Mac using `launchd`.
 - **Reference Compatibility:** Provides the EXACT WebSocket payload expected by the reference ESP32 firmware.
 - **Web LED Simulator:** A browser-based HUB75 LED matrix emulator with live WebSocket data, pixel-perfect MicroFont rendering, and headsign scrolling.
+- **Home Assistant Tiles:** Per-stop JSON endpoints (`/transit-tracker/api/tiles`, `/transit-tracker/api/tile/<stop_id>`) fed by a long-lived WebSocket subscription, ready to drop into a REST sensor or template card.
 - **Walkshed Map:** Mapbox-powered isochrone map showing 5/10/15-minute walking distances from your stops, with route polylines and architectural styling.
 
 ## 🏗️ Architecture
@@ -92,6 +93,52 @@ The local proxy includes exponential backoff to handle OBA API rate limits (HTTP
 - Per-stop cooldown timestamps prevent retrying rate-limited stops before their cooldown expires.
 - On successful fetches, the interval gradually recovers (20% reduction per cycle) back to the configured `check_interval_seconds`.
 - The cache respects the backed-off interval — during backoff, cached data is reused for the full backoff period rather than triggering fresh API calls.
+
+## 🏠 Home Assistant Integration
+
+The web server exposes per-stop tile endpoints for REST-polling consumers like Home Assistant. A single background WebSocket client subscribes to every configured stop on startup and keeps the latest broadcast in memory, so REST polls never round-trip to the upstream API.
+
+| Endpoint | Returns |
+| :--- | :--- |
+| `GET /transit-tracker/api/tiles` | `{ "tiles": [<stop_tile>, ...] }` — one entry per configured stop |
+| `GET /transit-tracker/api/tile/<stop_id>` | A single stop tile; `404` if the stop is not in the active profile |
+
+Each tile is shaped for direct use in templates:
+
+```json
+{
+  "stop_id": "st:1_8494",
+  "label": "Issaquah TC",
+  "direction": null,
+  "updated": 1773534000,
+  "departures": [
+    {
+      "route": "554",
+      "headsign": "Downtown Seattle",
+      "eta_minutes": 5,
+      "arrival_time": 1773534300,
+      "is_realtime": true,
+      "color": "#2B376E",
+      "trip_id": "40_141953498"
+    }
+  ]
+}
+```
+
+`eta_minutes` is recomputed at request time, so a 30-second HA `scan_interval` always reflects the current ETA without re-subscribing. Drop the endpoint into `configuration.yaml`:
+
+```yaml
+sensor:
+  - platform: rest
+    name: transit_tiles
+    resource: http://<host>:8080/transit-tracker/api/tiles
+    scan_interval: 30
+    value_template: "{{ value_json.tiles | length }}"
+    json_attributes:
+      - tiles
+```
+
+…then iterate `state_attr('sensor.transit_tiles', 'tiles')` from a markdown or custom card.
 
 ## 📦 Installation
 

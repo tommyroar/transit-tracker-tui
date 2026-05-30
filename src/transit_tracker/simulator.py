@@ -18,7 +18,6 @@ import websockets
 
 from .config import TransitConfig
 from .display import build_bitmap_segments
-from .network.websocket_server import WSF_VESSELS
 
 # ---------------------------------------------------------------------------
 # MicroFont — shared font renderer for bitmap-based simulators
@@ -348,6 +347,8 @@ class BaseSimulator(ABC):
 
     def _process_trip(self, trip: dict, current_time_ms: int) -> Optional[dict]:
         """Process a single raw trip from the server into a display departure dict."""
+        from .tile import process_trip as _tile_process_trip
+
         trip_route_id = self.normalize_id(trip.get("routeId", ""))
         trip_stop_id = self.normalize_id(trip.get("stopId", ""))
 
@@ -362,111 +363,18 @@ class BaseSimulator(ABC):
 
         if not sub:
             return None
-        trip_id = trip.get("tripId")
-        if not trip_id:
-            return None
 
-        arr_val = (
-            trip.get("arrivalTime")
-            or trip.get("predictedArrivalTime")
-            or trip.get("scheduledArrivalTime")
+        dep = _tile_process_trip(
+            trip,
+            sub,
+            current_time_ms,
+            time_display=self.config.transit_tracker.time_display,
         )
-        dep_val = (
-            trip.get("departureTime")
-            or trip.get("predictedDepartureTime")
-            or trip.get("scheduledDepartureTime")
-            or arr_val
-        )
-
-        if arr_val is None:
+        if dep is None:
             return None
-
-        display_mode = self.config.transit_tracker.time_display
-        now_minus_buffer_ms = current_time_ms - (3600 * 1000)
-
-        if display_mode == "departure":
-            base_val = (
-                dep_val
-                if (dep_val and dep_val > now_minus_buffer_ms / 1000)
-                else arr_val
-            )
-        else:
-            base_val = (
-                arr_val
-                if (arr_val and arr_val > now_minus_buffer_ms / 1000)
-                else dep_val
-            )
-
-        if base_val is None:
-            return None
-
-        if isinstance(base_val, str):
-            try:
-                dt = datetime.fromisoformat(base_val.replace("Z", "+00:00"))
-                base_time_ms = int(dt.timestamp() * 1000)
-            except ValueError:
-                return None
-        elif base_val > 10**12:
-            base_time_ms = base_val
-        else:
-            base_time_ms = base_val * 1000
-
-        if base_time_ms < now_minus_buffer_ms:
-            return None
-
-        raw_diff_sec = (base_time_ms - current_time_ms) / 1000.0
-        display_mins = int(raw_diff_sec / 60)
-
-        if display_mins < -1:
-            return None
-
-        route_name = str(trip.get("routeName") or trip.get("routeShortName") or "")
-        if not route_name:
-            route_name = (
-                sub.label.split("-")[0].strip().split()[0]
-                if sub and sub.label
-                else sub.route.split("_")[-1]
-            )
-
-        headsign = trip.get("headsign")
-
-        vehicle_id_full = trip.get("vehicleId")
-        if vehicle_id_full and (
-            "95_" in vehicle_id_full or "wsf" in route_name.lower()
-        ):
-            vehicle_id_short = vehicle_id_full.split("_")[-1]
-            vessel_name = WSF_VESSELS.get(vehicle_id_short)
-            if vessel_name:
-                headsign = vessel_name
-
-        if not headsign:
-            if sub:
-                headsign = (
-                    sub.label.split("-")[-1].strip() if "-" in sub.label else sub.label
-                )
-
-        is_live = trip.get("isRealtime", False)
-
-        color_hex = trip.get("routeColor")
-        if "14" in route_name:
-            color = "hot_pink"
-        elif color_hex:
-            color = f"#{color_hex}"
-        else:
-            color = "yellow"
-
-        if display_mins < 0:
-            display_mins = 0
-
-        return {
-            "trip_id": trip_id,
-            "diff": display_mins,
-            "route": route_name,
-            "headsign": headsign or "Transit",
-            "color": color,
-            "live": is_live,
-            "stop_id": trip_stop_id,
-        }
+        dep.pop("base_time_ms", None)
+        dep["stop_id"] = trip_stop_id
+        return dep
 
     @staticmethod
     def _apply_diversity_cap(departures: list[dict], limit: int = 3) -> list[dict]:

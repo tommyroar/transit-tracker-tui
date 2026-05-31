@@ -210,71 +210,74 @@ class TransitAPI:
             response = await self.client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
-            if data.get("code") == 200:
-                arrivals = data["data"]["entry"]["arrivalsAndDepartures"]
-                # Include references for route names/colors if needed
-                routes = {
-                    r["id"]: r for r in data["data"]["references"].get("routes", [])
-                }
+            # OBA occasionally returns a literal `null` body (HTTP 200) for a
+            # valid-but-empty stop/platform — e.g. 40_E01-T1. Guard every level
+            # so we degrade to "no arrivals" instead of raising on None.
+            if not isinstance(data, dict) or data.get("code") != 200:
+                return []
+            entry = (data.get("data") or {}).get("entry") or {}
+            references = (data.get("data") or {}).get("references") or {}
+            arrivals = entry.get("arrivalsAndDepartures") or []
+            # Include references for route names/colors if needed
+            routes = {r["id"]: r for r in (references.get("routes") or [])}
 
-                # OBA sometimes returns duplicate entries for the same
-                # tripId (e.g. two vehicleIds for one trip).  Deduplicate,
-                # preferring the entry that has a vehicleId (realtime).
-                seen_trips: dict = {}
-                dupes = 0
-                for arr in arrivals:
-                    tid = arr["tripId"]
-                    if tid in seen_trips:
-                        dupes += 1
-                        prev = seen_trips[tid]
-                        # Keep whichever has a vehicleId; if both do, keep first
-                        if not prev.get("vehicleId") and arr.get("vehicleId"):
-                            seen_trips[tid] = arr
-                        continue
-                    seen_trips[tid] = arr
-                if dupes:
-                    log.warning(
-                        "Deduplicated %d OBA arrival(s) for stop %s (%d unique of %d total)",
-                        dupes, stop_id, len(seen_trips), len(arrivals),
-                        extra={"component": "api", "stop_id": stop_id},
-                    )
+            # OBA sometimes returns duplicate entries for the same
+            # tripId (e.g. two vehicleIds for one trip).  Deduplicate,
+            # preferring the entry that has a vehicleId (realtime).
+            seen_trips: dict = {}
+            dupes = 0
+            for arr in arrivals:
+                tid = arr["tripId"]
+                if tid in seen_trips:
+                    dupes += 1
+                    prev = seen_trips[tid]
+                    # Keep whichever has a vehicleId; if both do, keep first
+                    if not prev.get("vehicleId") and arr.get("vehicleId"):
+                        seen_trips[tid] = arr
+                    continue
+                seen_trips[tid] = arr
+            if dupes:
+                log.warning(
+                    "Deduplicated %d OBA arrival(s) for stop %s (%d unique of %d total)",
+                    dupes, stop_id, len(seen_trips), len(arrivals),
+                    extra={"component": "api", "stop_id": stop_id},
+                )
 
-                results = []
-                for arr in seen_trips.values():
-                    route_id = arr["routeId"]
-                    route_info = routes.get(route_id, {})
+            results = []
+            for arr in seen_trips.values():
+                route_id = arr["routeId"]
+                route_info = routes.get(route_id, {})
 
-                    predicted_arr = arr.get("predictedArrivalTime")
-                    scheduled_arr = arr.get("scheduledArrivalTime")
-                    predicted_dep = arr.get("predictedDepartureTime")
-                    scheduled_dep = arr.get("scheduledDepartureTime")
-                    
-                    # If predicted is 0 or None, it means no real-time data available
-                    is_realtime = bool(predicted_arr and predicted_arr > 0) or bool(predicted_dep and predicted_dep > 0)
-                    
-                    results.append(
-                        {
-                            "tripId": arr["tripId"],
-                            "routeId": route_id,
-                            "stopId": stop_id,
-                            "arrivalTime": (predicted_arr if (predicted_arr and predicted_arr > 0) else scheduled_arr),
-                            "departureTime": (predicted_dep if (predicted_dep and predicted_dep > 0) else scheduled_dep),
-                            "predictedArrivalTime": predicted_arr if predicted_arr and predicted_arr > 0 else None,
-                            "scheduledArrivalTime": scheduled_arr,
-                            "predictedDepartureTime": predicted_dep if predicted_dep and predicted_dep > 0 else None,
-                            "scheduledDepartureTime": scheduled_dep,
-                            "routeName": route_info.get("shortName")
-                            or arr.get("routeShortName"),
-                            "headsign": arr.get("tripHeadsign"),
-                            "isRealtime": is_realtime,
-                            "routeColor": route_info.get("color"),
-                            "vehicleId": arr.get("vehicleId"),
-                            "arrivalEnabled": arr.get("arrivalEnabled", True),
-                            "departureEnabled": arr.get("departureEnabled", True),
-                        }
-                    )
-                return results
-            return []
+                predicted_arr = arr.get("predictedArrivalTime")
+                scheduled_arr = arr.get("scheduledArrivalTime")
+                predicted_dep = arr.get("predictedDepartureTime")
+                scheduled_dep = arr.get("scheduledDepartureTime")
+
+                # If predicted is 0 or None, it means no real-time data available
+                is_realtime = bool(predicted_arr and predicted_arr > 0) or bool(predicted_dep and predicted_dep > 0)
+
+                results.append(
+                    {
+                        "tripId": arr["tripId"],
+                        "routeId": route_id,
+                        "stopId": stop_id,
+                        "arrivalTime": (predicted_arr if (predicted_arr and predicted_arr > 0) else scheduled_arr),
+                        "departureTime": (predicted_dep if (predicted_dep and predicted_dep > 0) else scheduled_dep),
+                        "predictedArrivalTime": predicted_arr if predicted_arr and predicted_arr > 0 else None,
+                        "scheduledArrivalTime": scheduled_arr,
+                        "predictedDepartureTime": predicted_dep if predicted_dep and predicted_dep > 0 else None,
+                        "scheduledDepartureTime": scheduled_dep,
+                        "routeName": route_info.get("shortName")
+                        or arr.get("routeShortName"),
+                        "headsign": arr.get("tripHeadsign"),
+                        "isRealtime": is_realtime,
+                        "routeColor": route_info.get("color"),
+                        "vehicleId": arr.get("vehicleId"),
+                        "arrivalEnabled": arr.get("arrivalEnabled", True),
+                        "departureEnabled": arr.get("departureEnabled", True),
+                    }
+                )
+            return results
         except Exception as e:
             raise TransitAPIError(f"Failed to fetch arrivals: {e}") from e
 

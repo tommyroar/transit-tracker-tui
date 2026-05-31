@@ -174,6 +174,36 @@ class TestGetArrivals:
             await api.get_arrivals("1_8494")
 
     @pytest.mark.asyncio
+    async def test_null_body_returns_empty(self):
+        """OBA returns a literal `null` body (HTTP 200) for some valid stops
+        (e.g. 40_E01-T1). It must degrade to [] instead of raising on None."""
+        api = TransitAPI(oba_api_key="TEST")
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = None  # body was literal `null`
+        api.client = AsyncMock()
+        api.client.get = AsyncMock(return_value=mock_response)
+
+        result = await api.get_arrivals("40_E01-T1")
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_null_entry_and_references_return_empty(self):
+        """`data.entry` / `data.references` being None must not raise."""
+        api = TransitAPI(oba_api_key="TEST")
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "code": 200,
+            "data": {"entry": None, "references": None},
+        }
+        api.client = AsyncMock()
+        api.client.get = AsyncMock(return_value=mock_response)
+
+        result = await api.get_arrivals("40_E01-T1")
+        assert result == []
+
+    @pytest.mark.asyncio
     async def test_predicted_zero_is_scheduled(self):
         """predictedArrivalTime=0 should be treated as scheduled (not realtime)."""
         api = TransitAPI(oba_api_key="TEST")

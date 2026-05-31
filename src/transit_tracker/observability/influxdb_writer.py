@@ -91,6 +91,11 @@ _DEFAULT_MAXSIZE = 5000
 _DEFAULT_BATCH = 500
 _DEFAULT_FLUSH_INTERVAL = 2.0
 
+# When InfluxDB is unreachable the writer fails every flush (~every 2s). Log the
+# first failure immediately, then suppress repeats and emit one summary at most
+# this often — so a multi-hour outage costs a handful of lines, not thousands.
+_FAIL_LOG_INTERVAL_S = 60.0
+
 
 class InfluxDBWriter:
     """Background writer that POSTs line-protocol batches to InfluxDB.
@@ -122,6 +127,10 @@ class InfluxDBWriter:
         self._queue: queue.Queue[str] = queue.Queue(maxsize=maxsize)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        # Rate-limit state for write-failure logging (see _FAIL_LOG_INTERVAL_S).
+        self._fail_streak = 0          # consecutive failed flushes
+        self._fail_suppressed = 0      # failures since the last emitted warning
+        self._fail_last_log = 0.0      # monotonic time of the last emitted warning
         if self.enabled:
             self._thread = threading.Thread(
                 target=self._run, name="influxdb-writer", daemon=True
@@ -221,9 +230,13 @@ class InfluxDBWriter:
                 pass
 
             now = time.monotonic()
-            if batch and (len(batch) >= self.batch_size or now >= deadline):
-                self._flush(batch)
-                batch = []
+            if len(batch) >= self.batch_size or now >= deadline:
+                # Always reset the deadline when it expires, even with an empty
+                # batch — otherwise `timeout` pins to 0 and `get()` busy-spins
+                # the thread at 100% CPU whenever no data is enqueued.
+                if batch:
+                    self._flush(batch)
+                    batch = []
                 deadline = now + self.flush_interval_s
         # Drain whatever remains after stop is signalled.
         while True:
@@ -253,19 +266,50 @@ class InfluxDBWriter:
             with urllib.request.urlopen(req, timeout=5) as resp:
                 if 200 <= resp.status < 300:
                     _bump("influx_writes", n=len(batch))
+                    self._note_success()
                 else:
                     _bump("influx_errors")
-                    log.warning("influx write returned HTTP %s", resp.status)
+                    self._note_failure(f"influx write returned HTTP {resp.status}")
         except urllib.error.HTTPError as e:
             _bump("influx_errors")
-            log.warning(
-                "influx HTTP %s: %s",
-                e.code,
-                e.read().decode("utf-8", "replace")[:300],
-            )
+            body_txt = e.read().decode("utf-8", "replace")[:300]
+            self._note_failure(f"influx HTTP {e.code}: {body_txt}")
         except OSError as e:
             _bump("influx_errors")
-            log.warning("influx write failed: %s", e)
+            self._note_failure(f"influx write failed: {e}")
+
+    def _note_failure(self, msg: str) -> None:
+        """Log a flush failure, rate-limited to one line per _FAIL_LOG_INTERVAL_S.
+
+        The first failure of a streak logs immediately; subsequent failures are
+        counted and folded into a periodic summary so an outage can't flood the
+        logs (a failed flush recurs roughly every flush_interval_s).
+        """
+        now = time.monotonic()
+        self._fail_streak += 1
+        if self._fail_streak == 1 or now - self._fail_last_log >= _FAIL_LOG_INTERVAL_S:
+            if self._fail_suppressed:
+                log.warning(
+                    "%s (+%d more failures suppressed in the last %.0fs)",
+                    msg, self._fail_suppressed, now - self._fail_last_log,
+                )
+            else:
+                log.warning("%s", msg)
+            self._fail_last_log = now
+            self._fail_suppressed = 0
+        else:
+            self._fail_suppressed += 1
+
+    def _note_success(self) -> None:
+        """Reset failure state; log recovery if we were in a failing streak."""
+        if self._fail_streak:
+            log.info(
+                "influx writes recovered after %d consecutive failures",
+                self._fail_streak,
+            )
+        self._fail_streak = 0
+        self._fail_suppressed = 0
+        self._fail_last_log = 0.0
 
 
 # ---------------------------------------------------------------------------

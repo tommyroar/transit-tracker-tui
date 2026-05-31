@@ -932,7 +932,6 @@ async def async_main_menu():
         choices = [
             "Configurator",
             "Profiles",
-            "Live Monitor",
             questionary.Choice(
                 "Simulator",
                 disabled="Please load/save config first" if not has_config else None,
@@ -983,11 +982,6 @@ async def async_main_menu():
             if new_path and new_path != config_path and os.path.exists(new_path):
                 config_path = new_path
                 config = TransitConfig.load(config_path)
-
-        elif action == "Live Monitor":
-            from .monitor import run_monitor
-
-            await run_monitor(config)
 
         elif action == "Configurator":
             while True:

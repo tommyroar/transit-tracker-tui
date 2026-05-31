@@ -29,9 +29,11 @@ from .pages import (
 )
 from .server import PREFIX, TransitWebHandler, run_web
 from .spec import generate_api_spec, generate_spec_html
+from .tile_cache import TileCache
 
 __all__ = [
     "PREFIX",
+    "TileCache",
     "TransitWebHandler",
     "_get_draft",
     "_handle_arrivals",

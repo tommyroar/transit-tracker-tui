@@ -235,6 +235,47 @@ class TestWriterDisabled:
         assert w.enabled is False
 
 
+class TestIdleDoesNotBusySpin:
+    """An idle writer (empty queue past its flush deadline) must block on
+    `get()`, not busy-spin. Regression test for the 100% CPU bug where the
+    flush deadline was only reset alongside a non-empty batch, pinning the
+    `get()` timeout to 0 and looping the worker thread tightly forever.
+    """
+
+    def test_empty_queue_blocks_instead_of_spinning(self, monkeypatch):
+        t = _CapturingTransport()
+        monkeypatch.setattr(urllib.request, "urlopen", t)
+
+        # Count how many times the worker calls queue.get while idle.
+        w = InfluxDBWriter(
+            url="http://influxdb:8086",
+            token="t",
+            org="home",
+            bucket="b",
+            flush_interval_s=0.1,
+        )
+        try:
+            calls = {"n": 0}
+            real_get = w._queue.get
+
+            def _counting_get(*args, **kwargs):
+                calls["n"] += 1
+                return real_get(*args, **kwargs)
+
+            monkeypatch.setattr(w._queue, "get", _counting_get)
+
+            # Sit idle for several flush intervals with nothing enqueued.
+            time.sleep(0.6)
+
+            # With the fix, get() is called ~once per flush_interval (~6 over
+            # 0.6s). The busy-spin bug called it many thousands of times.
+            assert calls["n"] < 50, (
+                f"writer busy-spun: {calls['n']} get() calls while idle"
+            )
+        finally:
+            w.shutdown(timeout=2)
+
+
 class TestBackpressure:
     """Bounded queue drops on full and bumps influx_drops."""
 

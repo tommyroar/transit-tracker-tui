@@ -221,9 +221,13 @@ class InfluxDBWriter:
                 pass
 
             now = time.monotonic()
-            if batch and (len(batch) >= self.batch_size or now >= deadline):
-                self._flush(batch)
-                batch = []
+            if len(batch) >= self.batch_size or now >= deadline:
+                # Always reset the deadline when it expires, even with an empty
+                # batch — otherwise `timeout` pins to 0 and `get()` busy-spins
+                # the thread at 100% CPU whenever no data is enqueued.
+                if batch:
+                    self._flush(batch)
+                    batch = []
                 deadline = now + self.flush_interval_s
         # Drain whatever remains after stop is signalled.
         while True:

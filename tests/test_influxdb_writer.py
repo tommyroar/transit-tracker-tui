@@ -8,10 +8,11 @@ without a real InfluxDB. Mirrors the test style of `test_metrics.py`
 from __future__ import annotations
 
 import io
+import logging
 import time
 import urllib.error
 import urllib.request
-from typing import Any, List, Tuple
+from typing import List, Tuple
 
 import pytest
 
@@ -217,6 +218,91 @@ class TestWriterEnabled:
         finally:
             w.shutdown(timeout=2)
         assert metrics.influx_errors.value > before
+
+
+class TestFailureLogRateLimiting:
+    """A multi-hour outage must not flood the logs (see _FAIL_LOG_INTERVAL_S).
+
+    Uses a token-less (thread-less) writer so the rate-limit helpers can be
+    driven directly against a fake monotonic clock. The module logger has
+    propagate=False, so we attach our own recording handler rather than caplog.
+    """
+
+    @pytest.fixture
+    def records(self):
+        captured: List[logging.LogRecord] = []
+
+        class _Recorder(logging.Handler):
+            def emit(self, record):
+                captured.append(record)
+
+        handler = _Recorder()
+        logger = influxdb_writer.log
+        prev_level = logger.level
+        logger.setLevel(logging.DEBUG)
+        logger.addHandler(handler)
+        try:
+            yield captured
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(prev_level)
+
+    def _writer(self):
+        # token="" => no background thread; failure-state attrs still init.
+        return InfluxDBWriter(url="http://influxdb:8086", token="", org="home", bucket="b")
+
+    def _at(self, monkeypatch, t):
+        clock = {"t": t}
+        monkeypatch.setattr(influxdb_writer.time, "monotonic", lambda: clock["t"])
+        return clock
+
+    def test_first_failure_logs_then_repeats_are_suppressed(self, monkeypatch, records):
+        clock = self._at(monkeypatch, 1000.0)
+        w = self._writer()
+
+        w._note_failure("influx write failed: boom")  # logs immediately
+        for _ in range(20):  # all within the interval -> suppressed
+            clock["t"] += 2.0
+            w._note_failure("influx write failed: boom")
+
+        warnings = [r for r in records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert w._fail_streak == 21
+        assert w._fail_suppressed == 20
+
+    def test_summary_emitted_once_per_interval(self, monkeypatch, records):
+        clock = self._at(monkeypatch, 1000.0)
+        w = self._writer()
+
+        w._note_failure("boom")            # 1st -> logs
+        clock["t"] += 30.0
+        w._note_failure("boom")            # within 60s -> suppressed
+        clock["t"] += 31.0                 # now > 60s since last log
+        w._note_failure("boom")            # -> summary line
+
+        warnings = [r for r in records if r.levelno == logging.WARNING]
+        assert len(warnings) == 2
+        assert "suppressed" in warnings[1].getMessage()
+
+    def test_success_logs_recovery_and_resets(self, monkeypatch, records):
+        clock = self._at(monkeypatch, 1000.0)
+        w = self._writer()
+
+        w._note_failure("boom")
+        clock["t"] += 2.0
+        w._note_failure("boom")
+        w._note_success()
+
+        recovery = [r for r in records if "recovered" in r.getMessage()]
+        assert len(recovery) == 1
+        assert "2 consecutive failures" in recovery[0].getMessage()
+        assert w._fail_streak == 0 and w._fail_suppressed == 0
+
+    def test_success_without_prior_failure_is_silent(self, monkeypatch, records):
+        self._at(monkeypatch, 1000.0)
+        w = self._writer()
+        w._note_success()
+        assert [r for r in records if "recovered" in r.getMessage()] == []
 
 
 class TestWriterDisabled:

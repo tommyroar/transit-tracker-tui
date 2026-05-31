@@ -318,7 +318,9 @@ class TransitServer:
                         self.sync_state()
                         log.info("Client %s subscribed to %d pairs", ws.remote_address, len(pairs),
                                  extra={"component": "server", "pairs": len(pairs)})
-                        # Send immediate update from cache (or fetch if new)
+                        # Immediate push from the current cache (+ GTFS fallback).
+                        # A brand-new stop/route pair isn't cached yet, so this
+                        # first push can be empty until data_refresh_loop warms it.
                         await self.send_update(ws)
 
                         # Push current brightness to newly connected client

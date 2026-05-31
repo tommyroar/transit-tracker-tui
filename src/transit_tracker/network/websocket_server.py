@@ -31,6 +31,14 @@ log = get_logger("transit_tracker.server")
 
 SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"), "service_state.json")
 
+# When a subscribed stop is served purely from the GTFS static schedule (OBA has
+# no realtime for it — e.g. an upstream OBA feed gap like Judkins Park / 40_E01),
+# the sign shows scheduled times with no live marker. Surface that, but only after
+# the stop has had zero OBA realtime continuously for this long (so a normal gap
+# between trains doesn't trigger it), then repeat at most this often while it lasts.
+_GTFS_ONLY_WARN_AFTER_S = 300.0      # grace period before the first warning
+_GTFS_ONLY_WARN_INTERVAL_S = 1800.0  # re-warn cadence while it persists
+
 # Official WSDOT Ferry Vessel Mapping (Agency 95)
 WSF_VESSELS = {
     "1": "Cathlamet", "2": "Chelan", "3": "Issaquah", "4": "Kitsap",
@@ -99,6 +107,11 @@ class TransitServer:
         # GTFS static schedule fallback (None if DB not built yet)
         self.gtfs = GTFSSchedule()
 
+        # Per-stop realtime tracking, for the "served from GTFS only" warning.
+        # Both map stop_id -> monotonic time (last OBA realtime / last warning).
+        self._stop_rt_last_seen: dict = {}
+        self._gtfs_only_warned: dict = {}
+
         # Service settings hot-reload (file mtime tracking)
         self._service_settings_path = _resolve_settings_path()
         try:
@@ -108,6 +121,41 @@ class TransitServer:
 
         # Sync initial gauge values
         metrics.refresh_interval.set(self.current_refresh_interval)
+
+    def _note_stop_data_source(
+        self, stop_id: str, oba_realtime_count: int, produced: int
+    ) -> None:
+        """Surface stops served purely from GTFS schedule (no OBA realtime).
+
+        Edge-triggered with hysteresis: a stop must have had zero OBA realtime
+        continuously for _GTFS_ONLY_WARN_AFTER_S before the first warning, so a
+        normal gap between trains doesn't trip it. Logs a one-line recovery when
+        realtime returns. Keyed on the original stop_id for readable logs.
+        """
+        if not produced:
+            return
+        now = time.monotonic()
+        if oba_realtime_count > 0:
+            self._stop_rt_last_seen[stop_id] = now
+            if stop_id in self._gtfs_only_warned:
+                del self._gtfs_only_warned[stop_id]
+                log.info("Stop %s: OBA realtime resumed (live markers restored)",
+                         stop_id, extra={"component": "server", "stop_id": stop_id})
+            return
+        # No OBA realtime this round. Start the clock on first sight so a stop
+        # that's GTFS-only from cold start still gets the grace period.
+        last_rt = self._stop_rt_last_seen.setdefault(stop_id, now)
+        if now - last_rt < _GTFS_ONLY_WARN_AFTER_S:
+            return
+        last_warn = self._gtfs_only_warned.get(stop_id)
+        if last_warn is None or now - last_warn >= _GTFS_ONLY_WARN_INTERVAL_S:
+            self._gtfs_only_warned[stop_id] = now
+            log.warning(
+                "Stop %s: no OBA realtime for %.0f min — serving GTFS schedule only "
+                "(no live markers). Likely an OBA realtime-feed gap for this stop.",
+                stop_id, (now - last_rt) / 60,
+                extra={"component": "server", "stop_id": stop_id},
+            )
 
     def _record_metrics_snapshot(self):
         """Push current gauge values into the time-series ring buffers."""
@@ -421,10 +469,16 @@ class TransitServer:
 
         for stop_id, stop_subs in stop_to_subs.items():
             try:
+                trips_before = len(all_trips)
                 clean_stop_id = self.normalize_id(stop_id)
                 # Always start with live OBA data (may be empty on cold start).
                 # Copy the list so GTFS appends below don't mutate the cache.
                 live_arrivals = list(self.cache[clean_stop_id][1]) if clean_stop_id in self.cache else []
+                # Count OBA realtime arrivals before the GTFS merge below, so the
+                # GTFS-only-fallback warning sees only genuine live data.
+                oba_realtime_count = sum(
+                    1 for a in live_arrivals if a.get("isRealtime")
+                )
 
                 # Merge GTFS scheduled trips when the static DB is available.
                 # Live trips supersede GTFS trips with the same tripId.
@@ -562,6 +616,10 @@ class TransitServer:
                             "isRealtime": bool(arr.get("vehicleId")) if is_ferry else bool(arr.get("isRealtime"))
                         })
                         influx.enqueue_trip(all_trips[-1])
+
+                self._note_stop_data_source(
+                    stop_id, oba_realtime_count, len(all_trips) - trips_before
+                )
             except Exception as e:
                 log.error("Exception in send_update: %s", e, exc_info=True, extra={"component": "server"})
                 # 429s during send_update are ignored (we use last cache)

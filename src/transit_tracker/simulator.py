@@ -84,6 +84,16 @@ class MicroFont:
         [3, 0, 2, 0, 1, 1],
     ]
 
+    # 6x6 exclamation-mark glyph for the service-alert indicator.
+    ALERT_ICON = [
+        [0, 0, 1, 1, 0, 0],
+        [0, 0, 1, 1, 0, 0],
+        [0, 0, 1, 1, 0, 0],
+        [0, 0, 1, 1, 0, 0],
+        [0, 0, 0, 0, 0, 0],
+        [0, 0, 1, 1, 0, 0],
+    ]
+
     _bdf_font = None
     _bdf_loaded = False
 
@@ -160,6 +170,23 @@ class MicroFont:
         rows[6] = [0] * 6
         return rows
 
+    @classmethod
+    def get_alert_icon_frame(cls, elapsed: float) -> list[list[int]]:
+        """Calculates the current frame of the 6x6 service-alert icon.
+
+        Blinks the exclamation glyph ~60% on per 1s cycle — an attention cue
+        analogous to the realtime icon's pulse. Returns 0 transparent, 1 dim,
+        2 lit (matching get_live_icon_frame's contract).
+        """
+        lit = (int(elapsed * 1000) % 1000) < 600
+        rows = [[] for _ in range(7)]
+        for r in range(6):
+            for c in range(6):
+                on = cls.ALERT_ICON[r][c]
+                rows[r].append((2 if lit else 1) if on else 0)
+        rows[6] = [0] * 6
+        return rows
+
 
 # ---------------------------------------------------------------------------
 # BaseSimulator — shared config, WS connection, and trip processing
@@ -176,9 +203,22 @@ class BaseSimulator(ABC):
     - ID normalization and ferry vessel mapping
     """
 
-    def __init__(self, config: TransitConfig, force_live: bool = True):
+    # In-memory sample alert for `--demo-alert` (never touches any profile).
+    DEMO_ALERT = {
+        "id": "demo",
+        "severity": "noImpact",
+        "reason": "MAINTENANCE",
+        "summary": "Shuttle buses replacing 2 Line trains.",
+        "affects": ["40_2LINE"],
+        "active_to": None,
+    }
+
+    def __init__(
+        self, config: TransitConfig, force_live: bool = True, demo_alert: bool = False
+    ):
         self.config = config
         self.force_live = force_live
+        self.demo_alert = demo_alert
         self.state: dict = {}
         self.running = True
         self.start_time = time.time()
@@ -279,6 +319,7 @@ class BaseSimulator(ABC):
                             d = data.get("data", {})
                             self.state["live"] = {
                                 "trips": d.get("trips", []),
+                                "alerts": d.get("alerts", []),
                                 "timestamp": time.time(),
                             }
                             self.on_trips_updated(d.get("trips", []))
@@ -288,6 +329,22 @@ class BaseSimulator(ABC):
 
     def on_trips_updated(self, trips: list[dict]):  # noqa: B027
         """Hook called when new trip data arrives. Override in subclasses."""
+
+    def get_active_alerts(self) -> list[dict]:
+        """Service alerts from the last broadcast, filtered to still-active.
+
+        With `--demo-alert`, a synthetic alert is injected in-memory so the
+        banner can be exercised without a live OBA alert — no profile changes.
+        """
+        live = self.state.get("live") or {}
+        now = time.time()
+        alerts = [
+            a for a in (live.get("alerts") or [])
+            if not a.get("active_to") or now <= a["active_to"]
+        ]
+        if self.demo_alert and not any(a.get("id") == "demo" for a in alerts):
+            alerts.insert(0, dict(self.DEMO_ALERT))
+        return alerts
 
     # -- ID normalization --
 
@@ -456,6 +513,37 @@ class BaseSimulator(ABC):
 class TUISimulator(BaseSimulator):
     """Terminal LED matrix simulator using Rich for rendering."""
 
+    def _render_alert_row(self, alert: dict, elapsed: float) -> list:
+        """Render a 7-line service-alert banner: a blinking alert icon (drawn
+        like the realtime icon) followed by the alert reason/affected route."""
+        from rich.text import Text
+
+        icon = self.microfont.get_alert_icon_frame(elapsed)
+        reason = (alert.get("reason") or "ALERT").replace("_", " ").title()
+        affects = alert.get("affects") or []
+        route = next((a.split("_", 1)[-1] for a in affects if a), "")
+        label = f"{route} {reason}".strip()
+        text_bm = self.microfont.get_bitmap(label)
+
+        lines = []
+        for r in range(7):
+            line = Text(no_wrap=True)
+            for c in range(6):  # blinking icon
+                val = icon[r][c] if r < len(icon) else 0
+                if val == 2:
+                    line.append("●", style="bold yellow")
+                elif val == 1:
+                    line.append("●", style="yellow")
+                else:
+                    line.append("·", style="dim black")
+            line.append("·", style="dim black")  # gap
+            for c in range(len(text_bm[0])):  # alert label
+                lit = r < len(text_bm) and text_bm[r][c]
+                line.append("●" if lit else "·",
+                            style="bold yellow" if lit else "dim black")
+            lines.append(line)
+        return lines
+
     def _render_trip_row(self, dep: dict, elapsed: float) -> list:
         """Renders a single trip row (7 lines) matching hardware layout exactly."""
         from rich.text import Text
@@ -596,6 +684,17 @@ class TUISimulator(BaseSimulator):
         is_mock = "mock" in self.state
 
         all_lines = []
+
+        # A blinking service-alert banner takes the top slot whenever an alert
+        # is active \u2014 including when there are no departures (a closure is
+        # exactly when there's nothing to show but the most reason to explain).
+        active_alerts = self.get_active_alerts()
+        trip_cap = 3
+        if active_alerts:
+            all_lines.extend(self._render_alert_row(active_alerts[0], elapsed))
+            all_lines.append(Text(""))
+            trip_cap = 2
+
         if not all_departures:
             msg = (
                 "Connecting..."
@@ -612,7 +711,7 @@ class TUISimulator(BaseSimulator):
                     )
                 all_lines.append(line)
         else:
-            for dep in all_departures[:3]:
+            for dep in all_departures[:trip_cap]:
                 all_lines.extend(self._render_trip_row(dep, elapsed))
                 all_lines.append(Text(""))
 
@@ -672,7 +771,9 @@ LEDSimulator = TUISimulator
 # ---------------------------------------------------------------------------
 
 
-async def async_run_simulator(config: TransitConfig, force_live: bool = False):
+async def async_run_simulator(
+    config: TransitConfig, force_live: bool = False, demo_alert: bool = False
+):
     from rich.console import Console
 
     if not config.subscriptions and not config.mock_state and not config.captures:
@@ -680,15 +781,17 @@ async def async_run_simulator(config: TransitConfig, force_live: bool = False):
             "[bold red]Error:[/bold red] No stops or mock state/captures configured."
         )
         return
-    sim = TUISimulator(config, force_live=force_live)
+    sim = TUISimulator(config, force_live=force_live, demo_alert=demo_alert)
     try:
         await sim.run()
     except KeyboardInterrupt:
         pass
 
 
-def run_simulator(config: TransitConfig, force_live: bool = False):
+def run_simulator(
+    config: TransitConfig, force_live: bool = False, demo_alert: bool = False
+):
     try:
-        asyncio.run(async_run_simulator(config, force_live))
+        asyncio.run(async_run_simulator(config, force_live, demo_alert))
     except KeyboardInterrupt:
         pass

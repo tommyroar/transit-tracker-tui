@@ -173,6 +173,28 @@ class InfluxDBWriter:
         line = build_line("trip_prediction", tags, fields, ts)
         self._submit(line)
 
+    def enqueue_alert(self, alert: Mapping[str, Any], ts_seconds: Optional[float] = None) -> None:
+        """Mirror one active service alert into a `service_alert` point.
+
+        Tagged by id/severity/reason so Grafana can annotate the
+        live-vs-scheduled graph with *why* realtime dropped.
+        """
+        if not self.enabled:
+            return
+        ts = ts_seconds if ts_seconds is not None else time.time()
+        tags = {
+            "alert_id": alert.get("id"),
+            "severity": alert.get("severity"),
+            "reason": alert.get("reason"),
+        }
+        fields = {
+            "active": True,
+            "summary": (alert.get("summary") or "")[:400],
+            "affects": ",".join(alert.get("affects") or []),
+        }
+        line = build_line("service_alert", tags, fields, ts)
+        self._submit(line)
+
     def enqueue_counter(self, name: str, value: int, ts_seconds: Optional[float] = None) -> None:
         if not self.enabled:
             return

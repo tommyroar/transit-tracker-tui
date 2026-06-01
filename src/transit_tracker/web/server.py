@@ -18,6 +18,7 @@ from ..config import TransitConfig
 from ..logging import get_logger
 from ..metrics import metrics
 from .api_handlers import (
+    _handle_alerts,
     _handle_arrivals,
     _handle_config_save,
     _handle_config_settings_get,
@@ -77,6 +78,9 @@ class TransitWebHandler(BaseHTTPRequestHandler):
                 return
             if path == f"{PREFIX}/api/logs":
                 self._serve_logs(query)
+                return
+            if path == f"{PREFIX}/api/alerts":
+                self._json_response(json.dumps(_handle_alerts()))
                 return
             if path == f"{PREFIX}/logs":
                 self._serve_logs_page()
@@ -220,6 +224,7 @@ class TransitWebHandler(BaseHTTPRequestHandler):
     def _serve_dimming_get(self):
         """Return the current daylight dimming settings."""
         import datetime as _dt
+
         from ..config import build_daylight_schedule, load_service_settings
 
         settings = load_service_settings()
@@ -342,6 +347,11 @@ async def run_web(
             ),
         },
         {
+            "path": f"{PREFIX}/api/alerts",
+            "name": "Service Alerts (JSON)",
+            "description": "Active OBA service alerts for subscribed routes",
+        },
+        {
             "path": f"{PREFIX}/logs",
             "name": "Logs",
             "description": "Live log tail (ad-hoc debugging; trends live in Grafana)",
@@ -392,6 +402,7 @@ async def run_web(
         f"{PREFIX}/api/routes",
         f"{PREFIX}/api/arrivals",
         f"{PREFIX}/api/tiles",
+        f"{PREFIX}/api/alerts",
         f"{PREFIX}/api/config/stops",
         f"{PREFIX}/api/config/save",
         f"{PREFIX}/api/config/settings",
@@ -447,6 +458,7 @@ async def run_web(
 
         if path == f"{PREFIX}/api/dimming":
             import datetime as _dt
+
             from ..config import build_daylight_schedule, load_service_settings
 
             settings = load_service_settings()
@@ -518,6 +530,9 @@ async def run_web(
                 "application/json",
                 json.dumps({"tiles": tile_cache.list_tiles()}),
             )
+
+        if path == f"{PREFIX}/api/alerts":
+            return (200, "application/json", json.dumps(_handle_alerts()))
 
         if path == f"{PREFIX}/logs":
             return (200, "text/html", generate_logs_html())

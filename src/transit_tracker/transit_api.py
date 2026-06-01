@@ -13,6 +13,37 @@ class TransitAPIError(Exception):
     pass
 
 
+def _parse_situation(s: Dict[str, Any]) -> Dict[str, Any]:
+    """Flatten one OBA `situation` (service alert) into a compact dict.
+
+    OBA `activeWindows` use epoch-milliseconds; we expose epoch-seconds as
+    `active_from` / `active_to` (None when unbounded). `affects` is the sorted
+    set of route/stop IDs the alert applies to.
+    """
+    windows = s.get("activeWindows") or []
+    froms = [w["from"] for w in windows if w.get("from")]
+    tos = [w["to"] for w in windows if w.get("to")]
+    affects = sorted({
+        a.get("routeId") or a.get("stopId")
+        for a in (s.get("allAffects") or [])
+        if a.get("routeId") or a.get("stopId")
+    })
+    url = s.get("url")
+    if isinstance(url, dict):
+        url = url.get("value")
+    return {
+        "id": s.get("id"),
+        "severity": s.get("severity"),
+        "reason": s.get("reason"),
+        "summary": (s.get("summary") or {}).get("value", ""),
+        "description": (s.get("description") or {}).get("value", ""),
+        "url": url,
+        "active_from": int(min(froms) / 1000) if froms else None,
+        "active_to": int(max(tos) / 1000) if tos else None,
+        "affects": affects,
+    }
+
+
 class TransitAPI:
     def __init__(self, oba_api_key: str | None = None):
         self.oba_base_url = "https://api.pugetsound.onebusaway.org/api/where"
@@ -280,6 +311,32 @@ class TransitAPI:
             return results
         except Exception as e:
             raise TransitAPIError(f"Failed to fetch arrivals: {e}") from e
+
+    async def get_route_alerts(self, route_id: str) -> List[Dict[str, Any]]:
+        """Fetch active service alerts (situations) for a route.
+
+        Uses `trips-for-route`, which carries route-wide situations from any
+        active trip on the line — so alerts surface even when the board's own
+        stops are dark (e.g. a full segment closure), as long as the route is
+        running somewhere. Returns [] on any error rather than raising, since
+        alerts are advisory and must never break the data refresh.
+        """
+        clean_id = self._clean_stop_id(route_id)
+        encoded_id = urllib.parse.quote(clean_id)
+        url = f"{self.oba_base_url}/trips-for-route/{encoded_id}.json"
+        params = {"key": self.oba_key, "includeStatus": "false", "includeSchedule": "false"}
+        try:
+            response = await self.client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict) or data.get("code") != 200:
+                return []
+            references = (data.get("data") or {}).get("references") or {}
+            return [_parse_situation(s) for s in (references.get("situations") or [])]
+        except Exception as e:
+            log.debug("Failed to fetch alerts for route %s: %s", route_id, e,
+                      extra={"component": "api", "route_id": route_id})
+            return []
 
     async def close(self):
         await self.client.aclose()

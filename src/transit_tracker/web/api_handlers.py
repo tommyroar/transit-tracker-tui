@@ -18,6 +18,26 @@ log = get_logger("transit_tracker.web")
 # -- Shared API helpers (used by both legacy HTTPServer and websockets paths) --
 
 
+def _handle_alerts() -> dict:
+    """Return active service alerts from the shared state file.
+
+    Populated by the proxy's route-level OBA situation polling. Empty list
+    when there are no active alerts or the service isn't running.
+    """
+    import json
+
+    from ..network.websocket_server import SERVICE_STATE_FILE
+
+    try:
+        if os.path.exists(SERVICE_STATE_FILE):
+            with open(SERVICE_STATE_FILE, "r") as f:
+                state = json.load(f)
+            return {"alerts": state.get("alerts", [])}
+    except Exception:
+        pass
+    return {"alerts": []}
+
+
 def _handle_profiles_list() -> dict:
     """Return profiles list and active profile as a dict."""
     from ..config import get_last_config_path, list_profiles

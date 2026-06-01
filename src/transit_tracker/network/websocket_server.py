@@ -39,6 +39,10 @@ SERVICE_STATE_FILE = os.path.join(os.path.expanduser("~/.config/transit-tracker"
 _GTFS_ONLY_WARN_AFTER_S = 300.0      # grace period before the first warning
 _GTFS_ONLY_WARN_INTERVAL_S = 1800.0  # re-warn cadence while it persists
 
+# Service alerts (OBA situations) change slowly and are fetched per route, so
+# poll them on a much slower cadence than per-stop arrivals to spare the API.
+_ALERT_REFRESH_INTERVAL_S = 300.0
+
 # Official WSDOT Ferry Vessel Mapping (Agency 95)
 WSF_VESSELS = {
     "1": "Cathlamet", "2": "Chelan", "3": "Issaquah", "4": "Kitsap",
@@ -112,6 +116,11 @@ class TransitServer:
         self._stop_rt_last_seen: dict = {}
         self._gtfs_only_warned: dict = {}
 
+        # Service alerts (OBA situations) for subscribed routes.
+        self.active_alerts: dict = {}     # situation id -> parsed alert dict
+        self._alert_logged: set = set()   # alert ids already logged this episode
+        self._last_alert_check = 0.0      # wall-clock of the last alert poll
+
         # Service settings hot-reload (file mtime tracking)
         self._service_settings_path = _resolve_settings_path()
         try:
@@ -156,6 +165,50 @@ class TransitServer:
                 stop_id, (now - last_rt) / 60,
                 extra={"component": "server", "stop_id": stop_id},
             )
+
+    async def refresh_alerts(self):
+        """Poll route-level OBA service alerts for all subscribed routes.
+
+        Aggregates + dedupes by situation id, keeps only currently-active
+        alerts, logs each newly-active alert once (and clears on resolution),
+        and mirrors them to InfluxDB and the shared state file.
+        """
+        routes = {
+            s.get("routeId")
+            for subs in self.subscriptions.values()
+            for s in subs
+            if s.get("routeId")
+        }
+        collected: dict = {}
+        now = time.time()
+        for route_id in sorted(routes):
+            for alert in await self.api.get_route_alerts(route_id):
+                aid = alert.get("id")
+                if not aid:
+                    continue
+                af, at = alert.get("active_from"), alert.get("active_to")
+                if (af and now < af) or (at and now > at):
+                    continue  # not in its active window
+                collected[aid] = alert
+
+        for aid, alert in collected.items():
+            if aid not in self._alert_logged:
+                until = alert.get("active_to")
+                until_s = time.strftime("%a %H:%M", time.localtime(until)) if until else "?"
+                log.warning(
+                    "Active service alert [%s] (%s, until %s): %s",
+                    ",".join(alert.get("affects") or []) or "?",
+                    alert.get("reason") or "?", until_s, alert.get("summary") or "",
+                    extra={"component": "server", "alert_id": aid},
+                )
+            influx.enqueue_alert(alert)
+
+        for aid in self._alert_logged - set(collected):
+            log.info("Service alert %s cleared", aid,
+                     extra={"component": "server", "alert_id": aid})
+
+        self._alert_logged = set(collected)
+        self.active_alerts = collected
 
     def _record_metrics_snapshot(self):
         """Push current gauge values into the time-series ring buffers."""
@@ -208,6 +261,8 @@ class TransitServer:
 
             key = self.config.service.oba_api_key or os.environ.get("OBA_API_KEY") or "TEST"
             state["oba_api_key"] = key[:8] + "…" if len(key) > 8 else key
+
+            state["alerts"] = list(self.active_alerts.values())
 
             os.makedirs(os.path.dirname(SERVICE_STATE_FILE), exist_ok=True)
             with open(SERVICE_STATE_FILE, "w") as f:
@@ -458,6 +513,14 @@ class TransitServer:
                     log.info("Recovery — refresh interval reduced to %ds", int(self.current_refresh_interval),
                              extra={"component": "server", "interval": int(self.current_refresh_interval)})
 
+        # Poll service alerts on a slow cadence (advisory; never break refresh).
+        if time.time() - self._last_alert_check >= _ALERT_REFRESH_INTERVAL_S:
+            self._last_alert_check = time.time()
+            try:
+                await self.refresh_alerts()
+            except Exception:
+                log.debug("alert refresh failed", exc_info=True, extra={"component": "server"})
+
     async def send_update(self, ws: websockets.WebSocketServerProtocol):
         subs = self.subscriptions.get(ws, [])
         if not subs: return
@@ -629,11 +692,19 @@ class TransitServer:
         limit = self.client_limits.get(ws, 3)
         final_trips = all_trips[:limit]
 
-        # TJ Horner protocol uses 'data' key, not 'payload'
+        # TJ Horner protocol uses 'data' key, not 'payload'. `alerts` is an
+        # additive field: the ESP32 firmware ignores unknown keys; the
+        # simulator renders them. Trimmed (no description) to keep payloads lean.
+        alerts = [
+            {k: a.get(k) for k in
+             ("id", "severity", "reason", "summary", "affects", "active_to")}
+            for a in self.active_alerts.values()
+        ]
         response = {
             "event": "schedule",
             "data": {
-                "trips": final_trips
+                "trips": final_trips,
+                "alerts": alerts,
             }
         }
 

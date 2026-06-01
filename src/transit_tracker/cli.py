@@ -255,7 +255,10 @@ def main():
     elif primary_cmd == "simulator":
         from .simulator import run_simulator
 
-        run_simulator(config, force_live=True)
+        # `--demo-alert` injects a sample service alert in-memory to preview the
+        # alert banner; it changes nothing in the profile served to the firmware.
+        demo_alert = "--demo-alert" in sys.argv
+        run_simulator(config, force_live=True, demo_alert=demo_alert)
     elif primary_cmd == "web":
         from .web import run_web
 

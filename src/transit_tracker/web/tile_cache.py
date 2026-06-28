@@ -33,10 +33,14 @@ class TileCache:
         config: TransitConfig,
         ws_url: str = "ws://localhost:8000",
         tile_limit: int = 5,
+        server=None,
     ):
         self.config = config
         self.ws_url = ws_url
         self.tile_limit = tile_limit
+        # When set, subscribe in-process via TransitServer.register instead of
+        # opening a loopback WebSocket to ``ws_url``.
+        self.server = server
         self.running = True
         # normalised stop_id -> {"trips": [raw_trip, ...], "updated_ms": int}
         self._cache: dict[str, dict] = {}
@@ -143,6 +147,32 @@ class TileCache:
                 "TileCache: no subscriptions configured — skipping",
                 extra={"component": "web"},
             )
+            return
+
+        # Single-process mode: register directly with the shared TransitServer
+        # so the cache is fed in-process, with no loopback TCP connection.
+        if self.server is not None:
+            from ..network.websocket_server import InProcessClient
+
+            def _on_message(raw: str) -> None:
+                try:
+                    msg = json.loads(raw)
+                except (TypeError, json.JSONDecodeError):
+                    return
+                if msg.get("event") == "schedule":
+                    self._ingest_trips(msg.get("data", {}).get("trips", []))
+
+            client = InProcessClient(
+                self.build_subscribe_payload(), _on_message, client_name="TileCache"
+            )
+            log.info(
+                "TileCache attached in-process to TransitServer",
+                extra={"component": "web"},
+            )
+            try:
+                await self.server.register(client)
+            finally:
+                await client.close()
             return
 
         payload_json = json.dumps(self.build_subscribe_payload())

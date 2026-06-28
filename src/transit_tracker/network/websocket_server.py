@@ -56,6 +56,64 @@ WSF_VESSELS = {
     "69": "Samish", "74": "Chimacum", "75": "Suquamish"
 }
 
+class _InProcessRequest:
+    """Minimal stand-in for the ``request`` attribute of a websockets server
+    connection, so ``TransitServer.register`` can read headers/path uniformly."""
+
+    def __init__(self, path: str = "/", headers: Dict[str, str] = None):
+        self.path = path
+        self.headers = headers or {}
+
+
+class InProcessClient:
+    """Duck-typed websocket that plugs an in-process consumer into
+    ``TransitServer.register`` without a loopback TCP connection.
+
+    The server drives it like any client: it reads our outbound frames via
+    async iteration — we yield a single ``schedule:subscribe`` handshake, then
+    idle until closed — and pushes ``schedule`` updates back through ``send``,
+    which we hand to the ``on_message`` callback. ``remote_address`` defaults
+    to loopback so the server's per-push logging stays quiet, exactly as it did
+    for the old loopback clients.
+    """
+
+    def __init__(
+        self,
+        subscribe_payload: Dict[str, Any],
+        on_message,
+        *,
+        client_name: str = "InProcess",
+        remote_address=("127.0.0.1", 0),
+    ):
+        self._handshake = json.dumps(subscribe_payload)
+        self._sent_handshake = False
+        self._on_message = on_message
+        self._closed = asyncio.Event()
+        self.remote_address = remote_address
+        self.request = _InProcessRequest(
+            path="/", headers={"User-Agent": client_name, "Origin": "in-process"}
+        )
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> str:
+        if not self._sent_handshake:
+            self._sent_handshake = True
+            return self._handshake
+        # Handshake delivered; stay registered until closed/cancelled.
+        await self._closed.wait()
+        raise StopAsyncIteration
+
+    async def send(self, message: str) -> None:
+        result = self._on_message(message)
+        if asyncio.iscoroutine(result):
+            await result
+
+    async def close(self) -> None:
+        self._closed.set()
+
+
 def get_service_state() -> Dict[str, Any]:
     if os.path.exists(SERVICE_STATE_FILE):
         try:
@@ -892,9 +950,22 @@ class TransitServer:
             # Broadcast loop remains consistent to keep hardware alive
             await asyncio.sleep(self.base_interval)
 
-async def run_server(host: str = "0.0.0.0", port: int = 8000, config: TransitConfig = None):
-    if config is None: config = TransitConfig.load()
-    server = TransitServer(config)
+async def run_server(
+    host: str = "0.0.0.0",
+    port: int = 8000,
+    config: TransitConfig = None,
+    server: "TransitServer" = None,
+):
+    """Serve the local proxy on ``:8000`` and run its background loops.
+
+    Pass an existing ``server`` to share one ``TransitServer`` instance with the
+    web server (single-process, in-process clients). Without one, a fresh server
+    is built from ``config`` (standalone use).
+    """
+    if server is None:
+        if config is None:
+            config = TransitConfig.load()
+        server = TransitServer(config)
     log.info("Starting Transit Tracker API on %s:%d", host, port, extra={"component": "server"})
 
     def _process_request(connection, request):

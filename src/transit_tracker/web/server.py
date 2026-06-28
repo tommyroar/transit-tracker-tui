@@ -303,9 +303,18 @@ class TransitWebHandler(BaseHTTPRequestHandler):
 
 
 async def run_web(
-    config: TransitConfig, host: str = "0.0.0.0", port: int = None
+    config: TransitConfig,
+    host: str = "0.0.0.0",
+    port: int = None,
+    server=None,
 ):
-    """Start the Transit Tracker web server with API spec and stop data."""
+    """Start the Transit Tracker web server with API spec and stop data.
+
+    When a shared ``server`` (``TransitServer``) is supplied, browser ``/ws``
+    connections and the Home-Assistant tile cache register with it directly,
+    in-process — no loopback TCP hop to ``:8000``. Without one (standalone
+    ``transit-tracker web``), both fall back to connecting to ``ws://localhost:8000``.
+    """
     if port is None:
         port = int(os.environ.get("PORT", 8080))
 
@@ -330,7 +339,7 @@ async def run_web(
     spec_json = generate_api_spec(config)
     spec_html = generate_spec_html(spec_json)
 
-    tile_cache = TileCache(config)
+    tile_cache = TileCache(config, server=server)
 
     pages = [
         {
@@ -695,9 +704,20 @@ async def run_web(
         headers.append(("Content-Type", "text/html; charset=utf-8"))
         return (404, headers, b"<h1>404 Not Found</h1>")
 
-    # -- WebSocket proxy: relay /ws connections to the internal WS server --
+    # -- WebSocket bridge for /ws connections --
     async def ws_proxy_handler(ws):
-        """Proxy a WebSocket connection to the internal server on :8000."""
+        """Bridge a browser WebSocket to the transit server.
+
+        With a shared in-process ``server`` we register the browser connection
+        directly (no loopback). Standalone, we proxy to the internal server
+        on :8000.
+        """
+        if server is not None:
+            try:
+                await server.register(ws)
+            except websockets.exceptions.ConnectionClosed:
+                pass
+            return
         try:
             async with websockets.connect(
                 "ws://localhost:8000"

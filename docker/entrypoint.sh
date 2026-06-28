@@ -69,41 +69,10 @@ EOF
 
 _resolve_default_profile
 
-# ---- Start services ----
-echo "[ENTRYPOINT] Starting WebSocket service on :8000 ..."
-python -m transit_tracker.cli service &
-SERVICE_PID=$!
-
-echo "[ENTRYPOINT] Starting HTTP web server on :8080 ..."
-python -m transit_tracker.cli web &
-WEB_PID=$!
-
-echo "[ENTRYPOINT] Services running (service=$SERVICE_PID, web=$WEB_PID)"
-
-# ---- Wait for either process to exit ----
-# If one dies, kill the other and exit with the failed process's code.
-wait_for_exit() {
-    while true; do
-        # Check if either process has exited
-        if ! kill -0 "$SERVICE_PID" 2>/dev/null; then
-            wait "$SERVICE_PID"
-            EXIT_CODE=$?
-            echo "[ENTRYPOINT] WebSocket service exited ($EXIT_CODE) — shutting down"
-            kill "$WEB_PID" 2>/dev/null || true
-            exit "$EXIT_CODE"
-        fi
-        if ! kill -0 "$WEB_PID" 2>/dev/null; then
-            wait "$WEB_PID"
-            EXIT_CODE=$?
-            echo "[ENTRYPOINT] Web server exited ($EXIT_CODE) — shutting down"
-            kill "$SERVICE_PID" 2>/dev/null || true
-            exit "$EXIT_CODE"
-        fi
-        sleep 1
-    done
-}
-
-# Handle SIGTERM/SIGINT gracefully
-trap 'echo "[ENTRYPOINT] Caught signal — stopping services"; kill "$SERVICE_PID" "$WEB_PID" 2>/dev/null; wait; exit 0' TERM INT
-
-wait_for_exit
+# ---- Start service ----
+# The WebSocket server (:8000), HTTP web server (:8080), and verification
+# monitor now run together in a single asyncio event loop, so one process
+# serves both ports. exec hands the container's main PID to Python so Docker's
+# stop signals reach it directly for a graceful shutdown.
+echo "[ENTRYPOINT] Starting Transit Tracker (WebSocket :8000 + HTTP :8080) ..."
+exec python -m transit_tracker.cli service

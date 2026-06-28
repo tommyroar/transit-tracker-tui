@@ -171,7 +171,19 @@ def _manage_service_launchctl(action: str):
 
 
 async def run_full_service():
-    """Runs both the WebSocket server (for HW) and the notification client."""
+    """Run the proxy, web server, and (in cloud mode) the verification monitor
+    in a single asyncio event loop.
+
+    One ``TransitServer`` instance backs everything. Hardware connects to the
+    ``:8000`` WebSocket server; the ``:8080`` web server shares that same server,
+    so browser ``/ws`` clients and the Home-Assistant tile cache register with
+    it in-process — no loopback TCP hops. In cloud mode the monitor still
+    connects out to the public API to verify it; in local mode the server
+    already holds the data in-process, so no self-connection is made.
+    """
+    from .network.websocket_server import TransitServer
+    from .web import run_web
+
     path = get_last_config_path()
     if path and os.path.exists(path):
         log.info("Loading config from %s", path, extra={"component": "service"})
@@ -179,21 +191,18 @@ async def run_full_service():
     else:
         config = TransitConfig.load()
 
-    tasks = []
+    server = TransitServer(config)
 
-    # Always start the local proxy server (for hardware/monitors)
-    tasks.append(run_server(config=config))
+    tasks = [
+        run_server(config=config, server=server),  # :8000 hardware + background loops
+        run_web(config, server=server),            # :8080 web, in-process /ws + tiles
+    ]
 
-    if config.service.use_local_api:
-        # Force notification client to use the local server we just started
-        config.api_url = "ws://localhost:8000"
-    else:
-        # If using public API, ensure it's not pointing to localhost
+    if not config.service.use_local_api:
+        # Cloud mode: verify the public API with a real (non-loopback) client.
         if "localhost" in config.api_url or "127.0.0.1" in config.api_url:
             config.api_url = "wss://tt.horner.tj/"
-
-    # Notification client connects to configured target (Cloud or Local)
-    tasks.append(run_client(config=config))
+        tasks.append(run_client(config=config))
 
     await asyncio.gather(*tasks)
 

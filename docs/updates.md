@@ -7,7 +7,7 @@ on the dev-wiki changelog page.)
 ## 2026-06-28 — Single-process container (single in-process asyncio loop)
 
 The container now runs one asyncio process instead of two glued by a shell supervisor
-([#69](https://github.com/tommyroar/transit-tracker-tui/pull/69)).
+([#69](https://github.com/robogeosociety/transit-tracker-tui/pull/69)).
 
 - `docker/entrypoint.sh` resolves the active profile, then `exec`s a single process
   (`python -m transit_tracker.cli service`) that serves the WebSocket proxy (`:8000`), the
